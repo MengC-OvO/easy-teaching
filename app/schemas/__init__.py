@@ -13,6 +13,7 @@ from app.schemas.graph_state import (
     TraceEvent,
     WorkflowStatus,
 )
+from app.schemas.intent_routing import IntentRouteResult
 
 __all__ = [
     "Approval",
@@ -22,6 +23,7 @@ __all__ = [
     "GraphError",
     "GraphState",
     "Intent",
+    "IntentRouteResult",
     "RiskLevel",
     "SafetyFlag",
     "TraceEvent",

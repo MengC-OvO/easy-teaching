@@ -21,6 +21,8 @@ def test_graph_state_has_safe_defaults() -> None:
     )
 
     assert state.intent is Intent.UNKNOWN
+    assert state.needs_clarification is False
+    assert state.clarification_question is None
     assert state.workflow_status is WorkflowStatus.CREATED
     assert state.draft is None
     assert state.citations == []

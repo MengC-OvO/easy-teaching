@@ -80,6 +80,8 @@ class GraphState(BaseModel):
     session_id: str
     user_message: str
     intent: Intent = Intent.UNKNOWN
+    needs_clarification: bool = False
+    clarification_question: Optional[str] = None
     workflow_status: WorkflowStatus = WorkflowStatus.CREATED
     draft: Optional[Draft] = None
     citations: Annotated[List[Citation], operator.add] = Field(default_factory=list)
