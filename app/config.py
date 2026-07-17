@@ -10,6 +10,17 @@ class Settings(BaseSettings):
         default="data/local/eduflow.sqlite3",
         validation_alias="DATABASE_PATH",
     )
+    model_base_url: str = Field(default="", validation_alias="MODEL_BASE_URL")
+    model_chat_completions_path: str = Field(
+        default="/chat/completions",
+        validation_alias="MODEL_CHAT_COMPLETIONS_PATH",
+    )
+    model_api_key: str = Field(default="", validation_alias="MODEL_API_KEY")
+    model_name: str = Field(default="gemini-2.5-flash", validation_alias="MODEL_NAME")
+    model_timeout_seconds: float = Field(
+        default=10.0,
+        validation_alias="MODEL_TIMEOUT_SECONDS",
+    )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

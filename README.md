@@ -23,8 +23,24 @@ Day 2 adds the first controlled tool layer:
 - SQLAlchemy-backed SQLite mock data store
 - Mock tools for class profile lookup, policy index search, and draft saving
 
+Day 3 adds the model provider layer:
+
+- Gemini/OpenAI-compatible chat completions configuration
+- Model request and response contracts
+- Model error types for configuration, timeout, HTTP, and invalid response cases
+- `ChatCompletionsModelProvider` for `/chat/completions`
+- Local smoke test scripts for real model calls
+
+Day 4 adds intent routing:
+
+- `IntentRouteResult` structured output
+- IntentRouter prompt and service
+- LangGraph intent router node
+- Conditional edges for four workflow categories and clarification
+
 The current baseline includes the repository layout, a minimal FastAPI health
-endpoint, Pydantic graph state, LangGraph skeleton, and executable mock tools.
+endpoint, Pydantic graph state, LangGraph conditional routing, executable mock
+tools, and a real model provider wrapper.
 
 ## Product Scope
 
@@ -174,6 +190,72 @@ result = registry.execute(
 )
 ```
 
+## Model Provider
+
+Model calls are wrapped by `ChatCompletionsModelProvider`, which targets
+OpenAI-compatible `/chat/completions` APIs. The current local configuration uses
+Gemini through the OpenAI-compatible endpoint.
+
+Required local environment variables:
+
+```text
+MODEL_BASE_URL
+MODEL_CHAT_COMPLETIONS_PATH
+MODEL_API_KEY
+MODEL_NAME
+MODEL_TIMEOUT_SECONDS
+```
+
+The real API key belongs only in `.env`, which is ignored by Git.
+
+Provider responses are normalized into `ModelResponse`. Provider failures are
+wrapped as project-specific errors:
+
+- `ModelConfigurationError`
+- `ModelTimeoutError`
+- `ModelHTTPError`
+- `ModelInvalidResponseError`
+- `ModelProviderError`
+
+Run the model smoke test:
+
+```bash
+python scripts/model_smoke_test.py
+```
+
+## Intent Routing
+
+`IntentRouter` classifies teacher requests into one of:
+
+- `activity_planning`
+- `learning_record`
+- `policy_qa`
+- `family_communication`
+- `unknown`
+
+The router returns an `IntentRouteResult` with intent, confidence,
+clarification state, and reason. It is connected to the LangGraph main graph as
+the `intent_router` node.
+
+Current graph route:
+
+```text
+initialize
+  -> intent_router
+  -> conditional edge
+      -> planning_placeholder
+      -> documentation_placeholder
+      -> policy_placeholder
+      -> family_placeholder
+      -> clarification_placeholder
+```
+
+Run the intent router smoke test:
+
+```bash
+python scripts/intent_router_smoke_test.py
+```
+
 ## Repository Layout
 
 ```text
@@ -188,6 +270,7 @@ app/
 docs/              # Architecture notes and project documentation
 tests/             # Unit and integration tests
 data/synthetic/    # Synthetic demo data only
+scripts/           # Local smoke tests and project utilities
 ```
 
 ## Local Setup
