@@ -3,8 +3,22 @@ from typing import Any, Dict, Mapping, Optional, Protocol, Union
 from langgraph.graph import END, StateGraph
 
 from app.agents import IntentRouter
-from app.schemas import GraphError, GraphState, Intent, IntentRouteResult, TraceEvent, WorkflowStatus
+from app.schemas import (
+    Approval,
+    ApprovalStatus,
+    Draft,
+    GraphError,
+    GraphState,
+    Intent,
+    IntentRouteResult,
+    ReActState,
+    RiskLevel,
+    StopReason,
+    TraceEvent,
+    WorkflowStatus,
+)
 from app.services import ModelProviderError
+from app.workflows.react_graph import build_react_graph
 
 
 GraphStateInput = Union[GraphState, Mapping[str, Any]]
@@ -12,6 +26,11 @@ GraphStateInput = Union[GraphState, Mapping[str, Any]]
 
 class RouterProtocol(Protocol):
     def route(self, user_message: str) -> IntentRouteResult:
+        ...
+
+
+class WorkflowProtocol(Protocol):
+    def invoke(self, state: ReActState):
         ...
 
 
@@ -90,15 +109,80 @@ def route_by_intent(state: GraphStateInput) -> str:
     return "clarification"
 
 
-def planning_placeholder(state: GraphStateInput) -> Dict[str, Any]:
-    return {
-        "trace": [
+def build_planning_react_node(planning_workflow: WorkflowProtocol):
+    def planning_react_node(state: GraphStateInput) -> Dict[str, Any]:
+        current_state = _state_from_input(state)
+        result = planning_workflow.invoke(
+            ReActState(
+                user_message=current_state.user_message,
+                max_steps=4,
+            )
+        )
+        react_state = ReActState.model_validate(result)
+
+        trace = [
             TraceEvent(
-                step="planning_placeholder",
-                message="Routed to activity planning workflow placeholder.",
+                step="planning_react",
+                message="Activity planning ReAct workflow completed.",
+                metadata={
+                    "stop_reason": react_state.stop_reason.value,
+                    "current_step": react_state.current_step,
+                    "observations": [
+                        {
+                            "tool_name": observation.tool_name,
+                            "success": observation.success,
+                            "error_code": (
+                                observation.error.get("code")
+                                if observation.error
+                                else None
+                            ),
+                        }
+                        for observation in react_state.observations
+                    ],
+                },
             )
         ]
-    }
+
+        if react_state.stop_reason is StopReason.COMPLETED:
+            return {
+                "workflow_status": WorkflowStatus.COMPLETED,
+                "draft": Draft(
+                    title="Activity planning draft",
+                    content=react_state.final_answer or "",
+                    is_draft=True,
+                ),
+                "trace": trace,
+            }
+
+        if react_state.stop_reason is StopReason.APPROVAL_REQUIRED:
+            return {
+                "workflow_status": WorkflowStatus.WAITING_FOR_APPROVAL,
+                "approval": Approval(
+                    status=ApprovalStatus.REQUIRED,
+                    risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+                    reason="A controlled write tool requires teacher approval.",
+                ),
+                "trace": trace,
+            }
+
+        return {
+            "workflow_status": WorkflowStatus.FAILED,
+            "errors": [
+                GraphError(
+                    code=react_state.stop_reason.value,
+                    message="Activity planning ReAct workflow stopped before completion.",
+                    recoverable=react_state.stop_reason
+                    in {
+                        StopReason.MAX_STEPS_REACHED,
+                        StopReason.TOOL_ERROR,
+                        StopReason.MODEL_ERROR,
+                    },
+                )
+            ],
+            "trace": trace,
+        }
+
+    return planning_react_node
 
 
 def documentation_placeholder(state: GraphStateInput) -> Dict[str, Any]:
@@ -145,12 +229,25 @@ def clarification_placeholder(state: GraphStateInput) -> Dict[str, Any]:
     }
 
 
-def build_main_graph(router: Optional[RouterProtocol] = None):
+def build_main_graph(
+    router: Optional[RouterProtocol] = None,
+    planning_workflow: Optional[WorkflowProtocol] = None,
+):
     resolved_router = router or IntentRouter()
+    resolved_planning_workflow = planning_workflow or build_react_graph(
+        allowed_tool_names={
+            "get_class_profile",
+            "search_policy_index",
+            "save_draft",
+        }
+    )
     graph = StateGraph(GraphState)
     graph.add_node("initialize", initialize)
     graph.add_node("intent_router", build_intent_router_node(resolved_router))
-    graph.add_node("planning_placeholder", planning_placeholder)
+    graph.add_node(
+        "planning_react",
+        build_planning_react_node(resolved_planning_workflow),
+    )
     graph.add_node("documentation_placeholder", documentation_placeholder)
     graph.add_node("policy_placeholder", policy_placeholder)
     graph.add_node("family_placeholder", family_placeholder)
@@ -161,7 +258,7 @@ def build_main_graph(router: Optional[RouterProtocol] = None):
         "intent_router",
         route_by_intent,
         {
-            "planning": "planning_placeholder",
+            "planning": "planning_react",
             "documentation": "documentation_placeholder",
             "policy": "policy_placeholder",
             "family": "family_placeholder",
@@ -169,7 +266,7 @@ def build_main_graph(router: Optional[RouterProtocol] = None):
             "end": END,
         },
     )
-    graph.add_edge("planning_placeholder", END)
+    graph.add_edge("planning_react", END)
     graph.add_edge("documentation_placeholder", END)
     graph.add_edge("policy_placeholder", END)
     graph.add_edge("family_placeholder", END)

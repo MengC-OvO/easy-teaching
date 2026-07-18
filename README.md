@@ -141,7 +141,7 @@ The service layer exposes `EduFlowStore`, which provides:
 - `initialize()`
 - `get_class_profile(class_id)`
 - `search_policy_index(query)`
-- `save_draft(...)`
+- `save_draft(..., idempotency_key=...)`
 
 Tool handlers call `EduFlowStore`; they do not write SQL directly.
 
@@ -153,7 +153,7 @@ The current mock tool registry registers three tools:
 | --- | --- | --- | --- |
 | `get_class_profile` | L0 read-only | Auto execute | Read synthetic class profile data |
 | `search_policy_index` | L0 read-only | Auto execute | Search synthetic policy index metadata |
-| `save_draft` | L2 controlled write | Requires approval | Save a draft record after teacher approval |
+| `save_draft` | L2 controlled write | Requires approval | Save a draft record after teacher approval; requires an idempotency key |
 
 Example registry setup:
 
@@ -182,6 +182,7 @@ result = registry.execute(
     "save_draft",
     {
         "draft_id": "draft-001",
+        "idempotency_key": "request-001:save-draft",
         "draft_type": "activity_plan",
         "title": "Outdoor sensory walk",
         "content": "Synthetic draft content.",

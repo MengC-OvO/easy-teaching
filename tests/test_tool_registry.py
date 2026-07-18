@@ -61,6 +61,16 @@ def test_registry_registers_and_lists_tools() -> None:
     assert registry.list_tools() == [tool]
 
 
+def test_registry_lists_only_allowed_tools() -> None:
+    registry = ToolRegistry()
+    registry.register(make_echo_tool(name="allowed"))
+    registry.register(make_echo_tool(name="blocked"))
+
+    tools = registry.list_tools(allowed_tool_names={"allowed"})
+
+    assert [tool.name for tool in tools] == ["allowed"]
+
+
 def test_registry_rejects_duplicate_tool_names() -> None:
     registry = ToolRegistry()
     registry.register(make_echo_tool())
@@ -77,6 +87,25 @@ def test_registry_returns_structured_error_for_missing_tool() -> None:
     assert result.success is False
     assert result.error is not None
     assert result.error.code is ToolErrorCode.TOOL_NOT_FOUND
+    assert result.error.recoverable is False
+    assert result.risk_level is RiskLevel.L3_FORBIDDEN
+
+
+def test_registry_blocks_tool_outside_allowlist() -> None:
+    registry = ToolRegistry()
+    registry.register(make_echo_tool())
+
+    result = registry.execute(
+        "echo",
+        {"text": "hello"},
+        allowed_tool_names={"other_tool"},
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code is ToolErrorCode.PERMISSION_DENIED
+    assert result.error.recoverable is False
+    assert result.error.details == {"tool_name": "echo"}
     assert result.risk_level is RiskLevel.L3_FORBIDDEN
 
 

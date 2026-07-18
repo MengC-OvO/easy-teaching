@@ -45,6 +45,7 @@ class SearchPolicyIndexOutput(BaseModel):
 
 class SaveDraftInput(BaseModel):
     draft_id: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
     draft_type: str = Field(min_length=1)
     title: str = Field(min_length=1)
     content: str = Field(min_length=1)
@@ -112,6 +113,7 @@ def build_save_draft_tool(store: EduFlowStore) -> ToolDefinition:
             draft_type=data.draft_type,
             title=data.title,
             content=data.content,
+            idempotency_key=data.idempotency_key,
         )
         return ToolResult.ok(data=saved, risk_level=RiskLevel.L2_CONTROLLED_WRITE)
 

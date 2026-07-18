@@ -35,6 +35,30 @@ def test_store_saves_draft(tmp_path) -> None:
     }
 
 
+def test_store_save_draft_is_idempotent_with_key(tmp_path) -> None:
+    store = EduFlowStore(f"sqlite:///{tmp_path / 'eduflow-test.sqlite3'}")
+    store.initialize()
+
+    first = store.save_draft(
+        draft_id="draft-001",
+        draft_type="activity_plan",
+        title="Outdoor sensory walk",
+        content="Synthetic draft content.",
+        idempotency_key="request-001:save-draft",
+    )
+    second = store.save_draft(
+        draft_id="draft-002",
+        draft_type="activity_plan",
+        title="Should not replace original",
+        content="Different synthetic content.",
+        idempotency_key="request-001:save-draft",
+    )
+
+    assert second == first
+    assert second["draft_id"] == "draft-001"
+    assert second["title"] == "Outdoor sensory walk"
+
+
 def test_store_initialization_is_idempotent(tmp_path) -> None:
     store = EduFlowStore(f"sqlite:///{tmp_path / 'eduflow-test.sqlite3'}")
 
