@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from pydantic import ValidationError
 
@@ -28,8 +28,15 @@ class ToolRegistry:
     def get(self, name: str) -> Optional[ToolDefinition]:
         return self._tools.get(name)
 
-    def list_tools(self) -> List[ToolDefinition]:
-        return list(self._tools.values())
+    def list_tools(
+        self,
+        *,
+        allowed_tool_names: Optional[Iterable[str]] = None,
+    ) -> List[ToolDefinition]:
+        allowed = self._allowed_tool_name_set(allowed_tool_names)
+        if allowed is None:
+            return list(self._tools.values())
+        return [tool for name, tool in self._tools.items() if name in allowed]
 
     def execute(
         self,
@@ -37,14 +44,24 @@ class ToolRegistry:
         raw_args: Dict[str, Any],
         *,
         approved: bool = False,
+        allowed_tool_names: Optional[Iterable[str]] = None,
     ) -> ToolResult:
+        if not self._is_allowed(name, allowed_tool_names):
+            return ToolResult.fail(
+                code=ToolErrorCode.PERMISSION_DENIED,
+                message=f"Tool is not allowed in this workflow: {name}",
+                risk_level=RiskLevel.L3_FORBIDDEN,
+                recoverable=False,
+                details={"tool_name": name},
+            )
+
         tool = self.get(name)
         if tool is None:
             return ToolResult.fail(
                 code=ToolErrorCode.TOOL_NOT_FOUND,
                 message=f"Tool is not registered: {name}",
                 risk_level=RiskLevel.L3_FORBIDDEN,
-                recoverable=True,
+                recoverable=False,
                 details={"tool_name": name},
             )
 
@@ -102,3 +119,19 @@ class ToolRegistry:
         if result.trace is None:
             result.trace = trace
         return result
+
+    def _allowed_tool_name_set(
+        self,
+        allowed_tool_names: Optional[Iterable[str]],
+    ) -> Optional[Set[str]]:
+        if allowed_tool_names is None:
+            return None
+        return set(allowed_tool_names)
+
+    def _is_allowed(
+        self,
+        name: str,
+        allowed_tool_names: Optional[Iterable[str]],
+    ) -> bool:
+        allowed = self._allowed_tool_name_set(allowed_tool_names)
+        return allowed is None or name in allowed

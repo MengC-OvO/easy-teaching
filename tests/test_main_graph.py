@@ -1,4 +1,13 @@
-from app.schemas import GraphState, Intent, IntentRouteResult, WorkflowStatus
+from app.schemas import (
+    ApprovalStatus,
+    GraphState,
+    Intent,
+    IntentRouteResult,
+    Observation,
+    ReActState,
+    StopReason,
+    WorkflowStatus,
+)
 from app.services import ModelTimeoutError
 from app.workflows import build_main_graph
 
@@ -18,6 +27,16 @@ class FailingRouter:
         raise ModelTimeoutError("router timed out")
 
 
+class StubPlanningWorkflow:
+    def __init__(self, result: ReActState) -> None:
+        self.result = result
+        self.input_state = None
+
+    def invoke(self, state: ReActState):
+        self.input_state = state
+        return self.result
+
+
 def test_main_graph_runs_intent_router_node() -> None:
     router = StubRouter(
         IntentRouteResult(
@@ -26,7 +45,15 @@ def test_main_graph_runs_intent_router_node() -> None:
             reason="The request asks for an activity plan.",
         )
     )
-    graph = build_main_graph(router)
+    planning_workflow = StubPlanningWorkflow(
+        ReActState(
+            user_message="Plan an outdoor activity.",
+            current_step=1,
+            final_answer="Draft activity plan.",
+            stop_reason=StopReason.COMPLETED,
+        )
+    )
+    graph = build_main_graph(router, planning_workflow=planning_workflow)
     initial_state = GraphState(
         request_id="req-graph-001",
         session_id="session-001",
@@ -36,13 +63,16 @@ def test_main_graph_runs_intent_router_node() -> None:
     result = graph.invoke(initial_state)
     final_state = GraphState.model_validate(result)
 
-    assert final_state.workflow_status is WorkflowStatus.ROUTED
+    assert final_state.workflow_status is WorkflowStatus.COMPLETED
     assert final_state.intent is Intent.ACTIVITY_PLANNING
+    assert final_state.draft is not None
+    assert final_state.draft.content == "Draft activity plan."
     assert router.user_message == "Plan an outdoor activity."
+    assert planning_workflow.input_state.user_message == "Plan an outdoor activity."
     assert [event.step for event in final_state.trace] == [
         "initialize",
         "intent_router",
-        "planning_placeholder",
+        "planning_react",
     ]
 
 
@@ -110,6 +140,54 @@ def test_main_graph_routes_learning_record_to_documentation_placeholder() -> Non
     )
 
     assert final_state.trace[-1].step == "documentation_placeholder"
+
+
+def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
+    graph = build_main_graph(
+        StubRouter(
+            IntentRouteResult(
+                intent=Intent.ACTIVITY_PLANNING,
+                confidence=0.9,
+                reason="The request asks for planning.",
+            )
+        ),
+        planning_workflow=StubPlanningWorkflow(
+            ReActState(
+                user_message="Save a draft.",
+                current_step=1,
+                stop_reason=StopReason.APPROVAL_REQUIRED,
+                observations=[
+                    Observation(
+                        tool_name="save_draft",
+                        success=False,
+                        error={"code": "permission_denied", "recoverable": True},
+                    )
+                ],
+            )
+        ),
+    )
+
+    final_state = GraphState.model_validate(
+        graph.invoke(
+            {
+                "request_id": "req-approval",
+                "session_id": "session-approval",
+                "user_message": "Plan and save an activity draft.",
+            }
+        )
+    )
+
+    assert final_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
+    assert final_state.approval.status is ApprovalStatus.REQUIRED
+    assert final_state.trace[-1].step == "planning_react"
+    assert final_state.trace[-1].metadata["stop_reason"] == "approval_required"
+    assert final_state.trace[-1].metadata["observations"] == [
+        {
+            "tool_name": "save_draft",
+            "success": False,
+            "error_code": "permission_denied",
+        }
+    ]
 
 
 def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:

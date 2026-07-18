@@ -14,6 +14,14 @@ from app.schemas.graph_state import (
     WorkflowStatus,
 )
 from app.schemas.intent_routing import IntentRouteResult
+from app.schemas.react import (
+    Observation,
+    ReActAction,
+    ReActDecision,
+    ReActState,
+    StopReason,
+    ToolCall,
+)
 
 __all__ = [
     "Approval",
@@ -24,8 +32,14 @@ __all__ = [
     "GraphState",
     "Intent",
     "IntentRouteResult",
+    "Observation",
+    "ReActAction",
+    "ReActDecision",
+    "ReActState",
     "RiskLevel",
     "SafetyFlag",
+    "StopReason",
     "TraceEvent",
+    "ToolCall",
     "WorkflowStatus",
 ]

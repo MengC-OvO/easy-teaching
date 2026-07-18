@@ -56,6 +56,7 @@ class DraftRecord(Base):
     __tablename__ = "drafts"
 
     draft_id: Mapped[str] = mapped_column(String, primary_key=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
     draft_type: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(String, nullable=False)
@@ -122,24 +123,34 @@ class EduFlowStore:
         title: str,
         content: str,
         status: str = "draft",
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, str]:
-        draft = DraftRecord(
-            draft_id=draft_id,
-            draft_type=draft_type,
-            title=title,
-            content=content,
-            status=status,
-        )
         with self.session_factory() as session:
+            if idempotency_key:
+                existing = (
+                    session.execute(
+                        select(DraftRecord).where(
+                            DraftRecord.idempotency_key == idempotency_key
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                if existing is not None:
+                    return self._draft_to_dict(existing)
+
+            draft = DraftRecord(
+                draft_id=draft_id,
+                idempotency_key=idempotency_key,
+                draft_type=draft_type,
+                title=title,
+                content=content,
+                status=status,
+            )
             session.add(draft)
             session.commit()
 
-        return {
-            "draft_id": draft_id,
-            "draft_type": draft_type,
-            "title": title,
-            "status": status,
-        }
+        return self._draft_to_dict(draft)
 
     def count_class_profiles(self) -> int:
         with self.session_factory() as session:
@@ -179,4 +190,12 @@ class EduFlowStore:
             "source": entry.source,
             "section": entry.section,
             "summary": entry.summary,
+        }
+
+    def _draft_to_dict(self, draft: DraftRecord) -> Dict[str, str]:
+        return {
+            "draft_id": draft.draft_id,
+            "draft_type": draft.draft_type,
+            "title": draft.title,
+            "status": draft.status,
         }
