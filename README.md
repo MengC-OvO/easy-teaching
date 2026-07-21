@@ -41,13 +41,13 @@ flowchart TD
     ReActAgent --> ReActExecutor[ReActToolExecutor]
     ReActExecutor --> ToolRegistry[ToolRegistry]
     ToolRegistry --> ClassTool[get_class_profile]
-    ToolRegistry --> EvidenceTool[retrieve_policy_evidence]
+    ToolRegistry --> EvidenceTool[retrieve_risk_guidance]
     ToolRegistry --> SafetyTool[check_activity_safety]
     ToolRegistry --> EylfTool[align_to_eylf_outcomes]
     ToolRegistry --> DraftTool[save_draft]
     ClassTool --> Store[EduFlowStore SQLite]
     DraftTool --> Store
-    EvidenceTool --> PlanningRetrieval[KnowledgeRetriever BM25]
+    EvidenceTool --> PlanningRetrieval[KnowledgeRetriever Hybrid]
     EylfTool --> PlanningRetrieval
     SafetyTool --> SafetyRules[Deterministic safety rules]
 
@@ -160,7 +160,12 @@ app/agents/
   IntentRouter, ReActAgent, and ReActToolExecutor orchestration logic.
 
 app/tools/
-  ToolDefinition, ToolResult, ToolRegistry, and controlled tools.
+  ToolDefinition, ToolResult, ToolRegistry, and controlled tool modules.
+  controlled_tools/get_class_profile.py reads class context.
+  controlled_tools/retrieve_risk_guidance.py retrieves risk, safety, and regulatory guidance.
+  controlled_tools/check_activity_safety.py checks activity safety risks.
+  controlled_tools/align_to_eylf_outcomes.py aligns activities to EYLF outcomes.
+  controlled_tools/save_draft.py saves approved drafts.
 
 app/services/
   Model provider, embedding provider, SQLAlchemy store, knowledge ingestion,
@@ -224,7 +229,7 @@ Current controlled tools:
 | Tool | Risk | Permission | Purpose |
 | --- | --- | --- | --- |
 | `get_class_profile` | L0 read-only | Auto execute | Read synthetic class profile data |
-| `retrieve_policy_evidence` | L0 read-only | Auto execute | Retrieve citable local policy evidence |
+| `retrieve_risk_guidance` | L0 read-only | Auto execute | Retrieve local risk, safety, and regulatory guidance |
 | `check_activity_safety` | L0 read-only | Auto execute | Check activity drafts for common safety risks |
 | `align_to_eylf_outcomes` | L0 read-only | Auto execute | Map activity drafts to likely EYLF outcomes with evidence |
 | `save_draft` | L2 controlled write | Requires approval | Save a draft record with an idempotency key |

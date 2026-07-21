@@ -264,7 +264,7 @@ def build_main_graph(
     resolved_planning_workflow = planning_workflow or build_react_graph(
         allowed_tool_names={
             "get_class_profile",
-            "retrieve_policy_evidence",
+            "retrieve_risk_guidance",
             "check_activity_safety",
             "align_to_eylf_outcomes",
             "save_draft",

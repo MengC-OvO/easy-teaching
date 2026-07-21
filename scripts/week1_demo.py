@@ -57,7 +57,7 @@ def final_answer(content: str) -> ReActDecision:
 def planning_decisions(*, include_final_answer: bool) -> List[ReActDecision]:
     decisions = [
         call_tool("get_class_profile", {"class_id": "kangaroo-room"}),
-        call_tool("retrieve_policy_evidence", {"query": "outdoor sensory play", "top_k": 3}),
+        call_tool("retrieve_risk_guidance", {"query": "outdoor sensory play", "top_k": 3}),
         call_tool(
             "check_activity_safety",
             {
@@ -103,7 +103,7 @@ def build_demo_graph(database_url: str, *, approved: bool, include_final_answer:
         registry=registry,
         allowed_tool_names={
             "get_class_profile",
-            "retrieve_policy_evidence",
+            "retrieve_risk_guidance",
             "check_activity_safety",
             "align_to_eylf_outcomes",
             "save_draft",
