@@ -8,8 +8,14 @@ from app.schemas import (
     RerankerMode,
     RiskLevel,
 )
-from app.services import EduFlowStore
-from app.tools import ToolErrorCode, build_default_tool_registry
+from app.services import EduFlowStore, ModelResponse
+from app.tools import (
+    AlignToEylfOutcomesOutput,
+    EylfOutcomeAlignment,
+    RetrieveRiskGuidanceOutput,
+    ToolErrorCode,
+    build_default_tool_registry,
+)
 
 
 def make_store(tmp_path) -> EduFlowStore:
@@ -58,12 +64,68 @@ class StubPolicyRetriever:
         )
 
 
+class StubEylfAlignmentProvider:
+    def __init__(self) -> None:
+        self.messages = []
+        self.response_model = None
+
+    def generate_structured(self, *, messages, response_model, temperature=0.0):
+        self.messages = messages
+        self.response_model = response_model
+        structured = AlignToEylfOutcomesOutput(
+            alignments=[
+                EylfOutcomeAlignment(
+                    outcome="Outcome 4",
+                    reason="The retrieved evidence supports play, inquiry, and active learning.",
+                    confidence=0.88,
+                    evidence_ids=["E1"],
+                )
+            ],
+            evidence=[],
+            mode=RetrievalMode.HYBRID,
+            reranker=RerankerMode.LEXICAL,
+        )
+        return ModelResponse(
+            content=structured.model_dump_json(),
+            model="stub-eylf-alignment",
+            structured=structured,
+        )
+
+
+class StubRiskGuidanceProvider:
+    def __init__(self) -> None:
+        self.messages = []
+        self.response_model = None
+
+    def generate_structured(self, *, messages, response_model, temperature=0.0):
+        self.messages = messages
+        self.response_model = response_model
+        structured = RetrieveRiskGuidanceOutput(
+            guidance_summary="Outdoor play needs active supervision and risk controls.",
+            risk_level="medium",
+            required_controls=[
+                "Set clear boundaries.",
+                "Maintain active supervision.",
+            ],
+            evidence_ids=["E1"],
+            evidence=[],
+            mode=RetrievalMode.HYBRID,
+            reranker=RerankerMode.LEXICAL,
+            returned_count=1,
+        )
+        return ModelResponse(
+            content=structured.model_dump_json(),
+            model="stub-risk-guidance",
+            structured=structured,
+        )
+
+
 def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
     assert [tool.name for tool in registry.list_tools()] == [
         "get_class_profile",
-        "retrieve_policy_evidence",
+        "retrieve_risk_guidance",
         "check_activity_safety",
         "align_to_eylf_outcomes",
         "save_draft",
@@ -83,25 +145,42 @@ def test_get_class_profile_tool_reads_synthetic_data(tmp_path) -> None:
     assert result.trace.tool_name == "get_class_profile"
 
 
-def test_retrieve_policy_evidence_tool_returns_citable_chunks(tmp_path) -> None:
+def test_retrieve_risk_guidance_tool_returns_citable_chunks(tmp_path) -> None:
     retriever = StubPolicyRetriever()
+    provider = StubRiskGuidanceProvider()
     registry = build_default_tool_registry(
         make_store(tmp_path),
-        policy_retriever=retriever,
+        knowledge_retriever=retriever,
+        risk_guidance_model_provider=provider,
     )
 
     result = registry.execute(
-        "retrieve_policy_evidence",
+        "retrieve_risk_guidance",
         {"query": "play based learning", "top_k": 4, "source_type": "official"},
     )
 
     assert result.success is True
+    assert result.data["guidance_summary"] == (
+        "Outdoor play needs active supervision and risk controls."
+    )
+    assert result.data["risk_level"] == "medium"
+    assert result.data["required_controls"] == [
+        "Set clear boundaries.",
+        "Maintain active supervision.",
+    ]
+    assert result.data["evidence_ids"] == ["E1"]
     assert result.data["returned_count"] == 1
     assert result.data["evidence"][0]["evidence_id"] == "E1"
     assert result.data["evidence"][0]["citation"]["source_id"] == "eylf-v2"
-    assert retriever.requests[0].query == "play based learning"
+    assert "play based learning" in retriever.requests[0].query
+    assert "NQS" in retriever.requests[0].query
+    assert "safety" in retriever.requests[0].query
     assert retriever.requests[0].top_k == 4
+    assert retriever.requests[0].mode is RetrievalMode.HYBRID
     assert retriever.requests[0].filters.source_types == [KnowledgeSourceType.OFFICIAL]
+    assert provider.response_model is RetrieveRiskGuidanceOutput
+    assert "Activity/risk query:" in provider.messages[1].content
+    assert "[E1]" in provider.messages[1].content
 
 
 def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
@@ -129,9 +208,11 @@ def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
 
 def test_align_to_eylf_outcomes_tool_uses_retrieved_evidence(tmp_path) -> None:
     retriever = StubPolicyRetriever()
+    provider = StubEylfAlignmentProvider()
     registry = build_default_tool_registry(
         make_store(tmp_path),
-        policy_retriever=retriever,
+        knowledge_retriever=retriever,
+        eylf_alignment_model_provider=provider,
     )
 
     result = registry.execute(
@@ -147,13 +228,13 @@ def test_align_to_eylf_outcomes_tool_uses_retrieved_evidence(tmp_path) -> None:
 
     assert result.success is True
     assert result.data["evidence"][0]["evidence_id"] == "E1"
-    assert [item["outcome"] for item in result.data["alignments"]] == [
-        "Outcome 2",
-        "Outcome 4",
-        "Outcome 5",
-    ]
+    assert [item["outcome"] for item in result.data["alignments"]] == ["Outcome 4"]
     assert result.data["alignments"][0]["evidence_ids"] == ["E1"]
-    assert "EYLF outcomes" in retriever.requests[0].query
+    assert "EYLF curriculum framework" in retriever.requests[0].query
+    assert retriever.requests[0].mode is RetrievalMode.HYBRID
+    assert provider.response_model is AlignToEylfOutcomesOutput
+    assert "Activity draft:" in provider.messages[1].content
+    assert "[E1]" in provider.messages[1].content
 
 
 def test_save_draft_tool_requires_approval(tmp_path) -> None:

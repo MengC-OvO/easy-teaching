@@ -20,7 +20,7 @@ DEFAULT_MESSAGE = """
 Plan and save a synthetic outdoor sensory activity draft for the Kangaroo Room.
 Use the available tools step by step:
 1. Read class context with get_class_profile using class_id kangaroo-room.
-2. Retrieve policy evidence with retrieve_policy_evidence using query outdoor sensory play.
+2. Retrieve risk guidance with retrieve_risk_guidance using query outdoor sensory play.
 3. Check the draft idea with check_activity_safety.
 4. Align the draft idea to EYLF outcomes with align_to_eylf_outcomes.
 5. Save the draft with save_draft. Include draft_id gemini-demo-draft-001,
@@ -67,7 +67,7 @@ def build_graph(database_url: str, *, approved: bool):
         registry=registry,
         allowed_tool_names={
             "get_class_profile",
-            "retrieve_policy_evidence",
+            "retrieve_risk_guidance",
             "check_activity_safety",
             "align_to_eylf_outcomes",
             "save_draft",
