@@ -5,7 +5,7 @@ from langgraph.graph import END, StateGraph
 from app.agents import ReActAgent, ReActToolExecutor
 from app.schemas import ReActState, StopReason
 from app.services import EduFlowStore, ModelProviderError
-from app.tools import ToolDefinition, ToolRegistry, build_mock_tool_registry
+from app.tools import ToolDefinition, ToolRegistry, build_default_tool_registry
 
 
 ReActStateInput = Union[ReActState, Mapping[str, Any]]
@@ -88,7 +88,7 @@ def route_after_tool_executor(state: ReActStateInput) -> str:
 def _default_registry() -> ToolRegistry:
     store = EduFlowStore()
     store.initialize()
-    return build_mock_tool_registry(store)
+    return build_default_tool_registry(store)
 
 
 def build_react_graph(

@@ -7,14 +7,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.schemas import ReActState
 from app.services import EduFlowStore, ModelProviderError
-from app.tools import build_mock_tool_registry
+from app.tools import build_default_tool_registry
 from app.workflows import build_react_graph
 
 
 def run_react_graph_smoke_test() -> None:
     store = EduFlowStore()
     store.initialize()
-    registry = build_mock_tool_registry(store)
+    registry = build_default_tool_registry(store)
     graph = build_react_graph(registry=registry)
 
     result = graph.invoke(

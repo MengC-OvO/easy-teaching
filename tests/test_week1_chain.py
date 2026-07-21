@@ -2,18 +2,25 @@ from typing import List
 
 from app.schemas import (
     ApprovalStatus,
+    CitationMetadata,
     GraphState,
     Intent,
     IntentRouteResult,
+    KnowledgeSourceType,
+    RetrievedKnowledgeChunk,
     ReActAction,
     ReActDecision,
     ReActState,
+    RetrievalMode,
+    RetrievalResult,
+    RetrievalStats,
+    RerankerMode,
     StopReason,
     ToolCall,
     WorkflowStatus,
 )
 from app.services import EduFlowStore
-from app.tools import ToolDefinition, build_mock_tool_registry
+from app.tools import ToolDefinition, build_default_tool_registry
 from app.workflows import build_main_graph, build_react_graph
 
 
@@ -34,6 +41,40 @@ class SequencedPlanningAgent:
     def decide(self, state: ReActState, available_tools: List[ToolDefinition]) -> ReActDecision:
         self.calls += 1
         return self.decisions.pop(0)
+
+
+class StubPolicyRetriever:
+    def retrieve(self, request):
+        citation = CitationMetadata(
+            source_id="eylf-v2",
+            source_type=KnowledgeSourceType.OFFICIAL,
+            title="EYLF V2.0",
+            version="2.0-2022",
+            section="Learning through play",
+            page=21,
+        )
+        return RetrievalResult(
+            query=request.query,
+            chunks=[
+                RetrievedKnowledgeChunk(
+                    chunk_id="chunk-001",
+                    content="Play-based learning supports children's agency.",
+                    citation=citation,
+                    content_hash="b" * 64,
+                    distance=0.3,
+                )
+            ],
+            stats=RetrievalStats(
+                requested_top_k=request.top_k,
+                mode=RetrievalMode.BM25,
+                reranker=RerankerMode.LEXICAL,
+                raw_result_count=1,
+                bm25_result_count=1,
+                deduplicated_count=1,
+                returned_count=1,
+                reranked=True,
+            ),
+        )
 
 
 def call_tool(name: str, args) -> ReActDecision:
@@ -59,7 +100,10 @@ def make_store(tmp_path) -> EduFlowStore:
 
 
 def build_planning_chain(tmp_path, *, approved: bool, agent: SequencedPlanningAgent):
-    registry = build_mock_tool_registry(make_store(tmp_path))
+    registry = build_default_tool_registry(
+        make_store(tmp_path),
+        policy_retriever=StubPolicyRetriever(),
+    )
     planning_workflow = build_react_graph(
         agent=agent,
         registry=registry,

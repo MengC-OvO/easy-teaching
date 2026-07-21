@@ -7,13 +7,11 @@ def test_store_initializes_schema_and_seed_data(tmp_path) -> None:
     store.initialize()
 
     profile = store.get_class_profile("kangaroo-room")
-    policies = store.search_policy_index("program")
 
     assert profile is not None
     assert profile["name"] == "Kangaroo Room"
     assert profile["age_group"] == "3-5"
     assert "outdoor play" in profile["interests"]
-    assert policies[0]["policy_id"] == "nqs-qa1-program"
 
 
 def test_store_saves_draft(tmp_path) -> None:

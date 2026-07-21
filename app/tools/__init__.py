@@ -10,7 +10,7 @@ from app.tools.definition import (
     ToolResult,
     ToolTrace,
 )
-from app.tools.mock_tools import (
+from app.tools.controlled_tools import (
     GetClassProfileInput,
     GetClassProfileOutput,
     PolicyIndexItem,
@@ -19,8 +19,8 @@ from app.tools.mock_tools import (
     SearchPolicyIndexInput,
     SearchPolicyIndexOutput,
     build_get_class_profile_tool,
-    build_mock_tool_definitions,
-    build_mock_tool_registry,
+    build_default_tool_definitions,
+    build_default_tool_registry,
     build_save_draft_tool,
     build_search_policy_index_tool,
 )
@@ -45,8 +45,8 @@ __all__ = [
     "ToolTrace",
     "ToolRegistry",
     "build_get_class_profile_tool",
-    "build_mock_tool_definitions",
-    "build_mock_tool_registry",
+    "build_default_tool_definitions",
+    "build_default_tool_registry",
     "build_save_draft_tool",
     "build_search_policy_index_tool",
 ]
