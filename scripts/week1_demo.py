@@ -57,7 +57,25 @@ def final_answer(content: str) -> ReActDecision:
 def planning_decisions(*, include_final_answer: bool) -> List[ReActDecision]:
     decisions = [
         call_tool("get_class_profile", {"class_id": "kangaroo-room"}),
-        call_tool("search_policy_index", {"query": "program"}),
+        call_tool("retrieve_policy_evidence", {"query": "outdoor sensory play", "top_k": 3}),
+        call_tool(
+            "check_activity_safety",
+            {
+                "activity_text": "Outdoor sensory walk for Kangaroo Room.",
+                "age_group": "3-5",
+                "class_size": 18,
+            },
+        ),
+        call_tool(
+            "align_to_eylf_outcomes",
+            {
+                "activity_text": (
+                    "Children explore outdoor natural materials through play "
+                    "and describe sounds, textures, and patterns."
+                ),
+                "top_k": 3,
+            },
+        ),
         call_tool(
             "save_draft",
             {
@@ -85,7 +103,9 @@ def build_demo_graph(database_url: str, *, approved: bool, include_final_answer:
         registry=registry,
         allowed_tool_names={
             "get_class_profile",
-            "search_policy_index",
+            "retrieve_policy_evidence",
+            "check_activity_safety",
+            "align_to_eylf_outcomes",
             "save_draft",
         },
         approved=approved,

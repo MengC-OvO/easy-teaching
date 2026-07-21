@@ -109,7 +109,7 @@ def build_planning_chain(tmp_path, *, approved: bool, agent: SequencedPlanningAg
         registry=registry,
         allowed_tool_names={
             "get_class_profile",
-            "search_policy_index",
+            "retrieve_policy_evidence",
             "save_draft",
         },
         approved=approved,
@@ -120,7 +120,7 @@ def build_planning_chain(tmp_path, *, approved: bool, agent: SequencedPlanningAg
 def planning_decisions(include_final_answer: bool = True) -> List[ReActDecision]:
     decisions = [
         call_tool("get_class_profile", {"class_id": "kangaroo-room"}),
-        call_tool("search_policy_index", {"query": "program"}),
+        call_tool("retrieve_policy_evidence", {"query": "program"}),
         call_tool(
             "save_draft",
             {
@@ -157,7 +157,7 @@ def test_week1_chain_routes_to_react_tools_and_waits_for_approval(tmp_path) -> N
     assert final_state.trace[-1].metadata["stop_reason"] == "approval_required"
     assert [item["tool_name"] for item in final_state.trace[-1].metadata["observations"]] == [
         "get_class_profile",
-        "search_policy_index",
+        "retrieve_policy_evidence",
         "save_draft",
     ]
     assert agent.calls == 3
