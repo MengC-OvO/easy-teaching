@@ -18,6 +18,7 @@ from app.schemas import (
     WorkflowStatus,
 )
 from app.services import ModelProviderError
+from app.workflows.policy_rag_graph import build_policy_rag_graph
 from app.workflows.react_graph import build_react_graph
 
 
@@ -31,6 +32,11 @@ class RouterProtocol(Protocol):
 
 class WorkflowProtocol(Protocol):
     def invoke(self, state: ReActState):
+        ...
+
+
+class GraphWorkflowProtocol(Protocol):
+    def invoke(self, state: GraphState):
         ...
 
 
@@ -185,6 +191,26 @@ def build_planning_react_node(planning_workflow: WorkflowProtocol):
     return planning_react_node
 
 
+def build_policy_rag_workflow_node(policy_workflow: GraphWorkflowProtocol):
+    def policy_rag_workflow_node(state: GraphStateInput) -> Dict[str, Any]:
+        current_state = _state_from_input(state)
+        result = policy_workflow.invoke(current_state)
+        result_state = _state_from_input(result)
+        return {
+            "needs_clarification": result_state.needs_clarification,
+            "clarification_question": result_state.clarification_question,
+            "workflow_status": result_state.workflow_status,
+            "draft": result_state.draft,
+            "citations": result_state.citations[len(current_state.citations) :],
+            "approval": result_state.approval,
+            "trace": result_state.trace[len(current_state.trace) :],
+            "errors": result_state.errors[len(current_state.errors) :],
+            "safety_flags": result_state.safety_flags[len(current_state.safety_flags) :],
+        }
+
+    return policy_rag_workflow_node
+
+
 def documentation_placeholder(state: GraphStateInput) -> Dict[str, Any]:
     return {
         "trace": [
@@ -232,6 +258,7 @@ def clarification_placeholder(state: GraphStateInput) -> Dict[str, Any]:
 def build_main_graph(
     router: Optional[RouterProtocol] = None,
     planning_workflow: Optional[WorkflowProtocol] = None,
+    policy_workflow: Optional[GraphWorkflowProtocol] = None,
 ):
     resolved_router = router or IntentRouter()
     resolved_planning_workflow = planning_workflow or build_react_graph(
@@ -241,6 +268,7 @@ def build_main_graph(
             "save_draft",
         }
     )
+    resolved_policy_workflow = policy_workflow or build_policy_rag_graph()
     graph = StateGraph(GraphState)
     graph.add_node("initialize", initialize)
     graph.add_node("intent_router", build_intent_router_node(resolved_router))
@@ -249,7 +277,7 @@ def build_main_graph(
         build_planning_react_node(resolved_planning_workflow),
     )
     graph.add_node("documentation_placeholder", documentation_placeholder)
-    graph.add_node("policy_placeholder", policy_placeholder)
+    graph.add_node("policy_rag", build_policy_rag_workflow_node(resolved_policy_workflow))
     graph.add_node("family_placeholder", family_placeholder)
     graph.add_node("clarification_placeholder", clarification_placeholder)
     graph.set_entry_point("initialize")
@@ -260,7 +288,7 @@ def build_main_graph(
         {
             "planning": "planning_react",
             "documentation": "documentation_placeholder",
-            "policy": "policy_placeholder",
+            "policy": "policy_rag",
             "family": "family_placeholder",
             "clarification": "clarification_placeholder",
             "end": END,
@@ -268,7 +296,7 @@ def build_main_graph(
     )
     graph.add_edge("planning_react", END)
     graph.add_edge("documentation_placeholder", END)
-    graph.add_edge("policy_placeholder", END)
+    graph.add_edge("policy_rag", END)
     graph.add_edge("family_placeholder", END)
     graph.add_edge("clarification_placeholder", END)
     return graph.compile()

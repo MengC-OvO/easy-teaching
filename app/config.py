@@ -21,6 +21,32 @@ class Settings(BaseSettings):
         default=10.0,
         validation_alias="MODEL_TIMEOUT_SECONDS",
     )
+    embedding_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta",
+        validation_alias="EMBEDDING_BASE_URL",
+    )
+    embedding_api_key: str = Field(default="", validation_alias="EMBEDDING_API_KEY")
+    embedding_model_name: str = Field(
+        default="gemini-embedding-001",
+        validation_alias="EMBEDDING_MODEL_NAME",
+    )
+    embedding_dimension: int = Field(default=768, validation_alias="EMBEDDING_DIMENSION")
+    embedding_timeout_seconds: float = Field(
+        default=20.0,
+        validation_alias="EMBEDDING_TIMEOUT_SECONDS",
+    )
+    chroma_path: str = Field(
+        default="data/chroma",
+        validation_alias="CHROMA_PATH",
+    )
+    chroma_collection_name: str = Field(
+        default="eduflow_knowledge",
+        validation_alias="CHROMA_COLLECTION_NAME",
+    )
+    reranker_model_name: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        validation_alias="RERANKER_MODEL_NAME",
+    )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
