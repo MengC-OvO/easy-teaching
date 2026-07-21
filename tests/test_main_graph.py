@@ -37,6 +37,16 @@ class StubPlanningWorkflow:
         return self.result
 
 
+class StubPolicyWorkflow:
+    def __init__(self, result: GraphState) -> None:
+        self.result = result
+        self.input_state = None
+
+    def invoke(self, state: GraphState):
+        self.input_state = state
+        return self.result
+
+
 def test_main_graph_runs_intent_router_node() -> None:
     router = StubRouter(
         IntentRouteResult(
@@ -191,6 +201,13 @@ def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
 
 
 def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:
+    policy_state = GraphState(
+        request_id="req-policy",
+        session_id="session-policy",
+        user_message="What does NQS QA1 require?",
+        workflow_status=WorkflowStatus.COMPLETED,
+    )
+    policy_workflow = StubPolicyWorkflow(policy_state)
     graph = build_main_graph(
         StubRouter(
             IntentRouteResult(
@@ -198,7 +215,8 @@ def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:
                 confidence=0.88,
                 reason="The request asks about policy.",
             )
-        )
+        ),
+        policy_workflow=policy_workflow,
     )
 
     final_state = GraphState.model_validate(
@@ -211,7 +229,8 @@ def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:
         )
     )
 
-    assert final_state.trace[-1].step == "policy_placeholder"
+    assert final_state.workflow_status is WorkflowStatus.COMPLETED
+    assert policy_workflow.input_state.user_message == "What does NQS QA1 require?"
 
 
 def test_main_graph_routes_family_communication_to_family_placeholder() -> None:

@@ -4,6 +4,9 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 langgraph==0.2.76
 SQLAlchemy==2.0.45
+pypdf==6.4.1
+chromadb==1.5.9
+sentence-transformers==5.1.2
 
 pytest==8.4.1
 httpx==0.28.1

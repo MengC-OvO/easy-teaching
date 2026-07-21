@@ -10,4 +10,5 @@ build/
 *.egg-info/
 data/local/
 chroma/
+data/chroma/
 *.db

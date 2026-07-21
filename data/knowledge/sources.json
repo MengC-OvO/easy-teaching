@@ -1,0 +1,32 @@
+[
+  {
+    "source_id": "eylf-v2",
+    "source_type": "official",
+    "title": "Belonging, Being and Becoming: The Early Years Learning Framework for Australia V2.0",
+    "version": "2.0-2022",
+    "uri": "https://www.acecqa.gov.au/sites/default/files/2023-01/EYLF-2022-V2.0.pdf",
+    "path": "data/knowledge/raw/official/eylf-v2.0.pdf",
+    "format": "pdf",
+    "notes": "Official ACECQA-hosted EYLF V2.0 PDF."
+  },
+  {
+    "source_id": "nqs-guide-qa1",
+    "source_type": "official",
+    "title": "Guide to the National Quality Framework - Quality Area 1",
+    "version": "2026-03-26",
+    "uri": "https://www.acecqa.gov.au/sites/default/files/2026-03/Guide-to-the-NQF-260326.pdf",
+    "path": "data/knowledge/raw/official/guide-to-the-nqf.pdf",
+    "format": "pdf",
+    "notes": "Official ACECQA Guide to the NQF PDF. Day1 ingestion will extract NQS Quality Area 1 sections."
+  },
+  {
+    "source_id": "synthetic-centre-policies",
+    "source_type": "synthetic",
+    "title": "Synthetic Centre Policies",
+    "version": "2026.07",
+    "uri": null,
+    "path": "data/knowledge/raw/synthetic/centre-policies.md",
+    "format": "markdown",
+    "notes": "Synthetic demo policy file for EduFlow AU. Not real centre policy or legal advice."
+  }
+]
