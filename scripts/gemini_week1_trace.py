@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.agents import IntentRouter, ReActAgent
 from app.schemas import GraphState, ReActDecision, ReActState
 from app.services import EduFlowStore, ModelProviderError
-from app.tools import ToolDefinition, build_mock_tool_registry
+from app.tools import ToolDefinition, build_default_tool_registry
 from app.workflows import build_main_graph, build_react_graph
 
 
@@ -59,7 +59,7 @@ class TracingReActAgent:
 def build_graph(database_url: str, *, approved: bool):
     store = EduFlowStore(database_url)
     store.initialize()
-    registry = build_mock_tool_registry(store)
+    registry = build_default_tool_registry(store)
     planning_workflow = build_react_graph(
         agent=TracingReActAgent(),
         registry=registry,

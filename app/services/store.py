@@ -19,24 +19,6 @@ SYNTHETIC_CLASS_PROFILES = [
 ]
 
 
-SYNTHETIC_POLICY_INDEX = [
-    {
-        "policy_id": "eylf-belonging",
-        "title": "EYLF V2.0 Belonging, Being and Becoming",
-        "source": "synthetic-policy-index",
-        "section": "Learning outcomes overview",
-        "summary": "Synthetic index entry for EYLF-aligned learning outcomes.",
-    },
-    {
-        "policy_id": "nqs-qa1-program",
-        "title": "NQS QA1 Educational Program and Practice",
-        "source": "synthetic-policy-index",
-        "section": "Quality Area 1",
-        "summary": "Synthetic index entry for program planning and reflective practice.",
-    },
-]
-
-
 class Base(DeclarativeBase):
     pass
 
@@ -63,16 +45,6 @@ class DraftRecord(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="draft")
 
 
-class PolicyIndexEntry(Base):
-    __tablename__ = "policy_index"
-
-    policy_id: Mapped[str] = mapped_column(String, primary_key=True)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    source: Mapped[str] = mapped_column(String, nullable=False)
-    section: Mapped[str] = mapped_column(String, nullable=False)
-    summary: Mapped[str] = mapped_column(String, nullable=False)
-
-
 class EduFlowStore:
     def __init__(self, database_url: Optional[str] = None) -> None:
         self.database_url = database_url or self._sqlite_url(settings.database_path)
@@ -87,7 +59,6 @@ class EduFlowStore:
         Base.metadata.create_all(self.engine)
         with self.session_factory() as session:
             self._seed_class_profiles(session)
-            self._seed_policy_index(session)
             session.commit()
 
     def get_class_profile(self, class_id: str) -> Optional[Dict[str, Any]]:
@@ -96,24 +67,6 @@ class EduFlowStore:
             if profile is None:
                 return None
             return self._class_profile_to_dict(profile)
-
-    def search_policy_index(self, query: str) -> List[Dict[str, str]]:
-        pattern = f"%{query.lower()}%"
-        with self.session_factory() as session:
-            entries = (
-                session.execute(
-                    select(PolicyIndexEntry)
-                    .where(
-                        PolicyIndexEntry.title.ilike(pattern)
-                        | PolicyIndexEntry.section.ilike(pattern)
-                        | PolicyIndexEntry.summary.ilike(pattern)
-                    )
-                    .order_by(PolicyIndexEntry.policy_id)
-                )
-                .scalars()
-                .all()
-            )
-            return [self._policy_entry_to_dict(entry) for entry in entries]
 
     def save_draft(
         self,
@@ -162,12 +115,6 @@ class EduFlowStore:
                 continue
             session.add(ClassProfile(**profile))
 
-    def _seed_policy_index(self, session: Session) -> None:
-        for policy in SYNTHETIC_POLICY_INDEX:
-            if session.get(PolicyIndexEntry, policy["policy_id"]) is not None:
-                continue
-            session.add(PolicyIndexEntry(**policy))
-
     def _sqlite_url(self, database_path: str) -> str:
         path = Path(database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,15 +128,6 @@ class EduFlowStore:
             "child_count": profile.child_count,
             "interests": profile.interests,
             "safety_notes": profile.safety_notes,
-        }
-
-    def _policy_entry_to_dict(self, entry: PolicyIndexEntry) -> Dict[str, str]:
-        return {
-            "policy_id": entry.policy_id,
-            "title": entry.title,
-            "source": entry.source,
-            "section": entry.section,
-            "summary": entry.summary,
         }
 
     def _draft_to_dict(self, draft: DraftRecord) -> Dict[str, str]:

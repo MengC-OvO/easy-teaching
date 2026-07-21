@@ -40,8 +40,12 @@ flowchart TD
     ReActAgent --> ModelProvider[ChatCompletionsModelProvider]
     ReActAgent --> ReActExecutor[ReActToolExecutor]
     ReActExecutor --> ToolRegistry[ToolRegistry]
-    ToolRegistry --> MockTools[Controlled tools]
-    MockTools --> Store[EduFlowStore SQLite]
+    ToolRegistry --> ClassTool[get_class_profile]
+    ToolRegistry --> PolicyTool[search_policy_index]
+    ToolRegistry --> DraftTool[save_draft]
+    ClassTool --> Store[EduFlowStore SQLite]
+    DraftTool --> Store
+    PolicyTool --> PlanningRetrieval[KnowledgeRetriever BM25]
 
     PolicyRAG --> PolicyService[PolicyRAGService]
     PolicyService --> Retrieval[KnowledgeRetriever]
@@ -152,7 +156,7 @@ app/agents/
   IntentRouter, ReActAgent, and ReActToolExecutor orchestration logic.
 
 app/tools/
-  ToolDefinition, ToolResult, ToolRegistry, and controlled mock tools.
+  ToolDefinition, ToolResult, ToolRegistry, and controlled tools.
 
 app/services/
   Model provider, embedding provider, SQLAlchemy store, knowledge ingestion,
@@ -216,7 +220,7 @@ Current controlled tools:
 | Tool | Risk | Permission | Purpose |
 | --- | --- | --- | --- |
 | `get_class_profile` | L0 read-only | Auto execute | Read synthetic class profile data |
-| `search_policy_index` | L0 read-only | Auto execute | Search synthetic policy index metadata |
+| `search_policy_index` | L0 read-only | Auto execute | Search local knowledge chunks through `KnowledgeRetriever` |
 | `save_draft` | L2 controlled write | Requires approval | Save a draft record with an idempotency key |
 
 ## Local Setup
