@@ -41,11 +41,15 @@ flowchart TD
     ReActAgent --> ReActExecutor[ReActToolExecutor]
     ReActExecutor --> ToolRegistry[ToolRegistry]
     ToolRegistry --> ClassTool[get_class_profile]
-    ToolRegistry --> PolicyTool[search_policy_index]
+    ToolRegistry --> EvidenceTool[retrieve_policy_evidence]
+    ToolRegistry --> SafetyTool[check_activity_safety]
+    ToolRegistry --> EylfTool[align_to_eylf_outcomes]
     ToolRegistry --> DraftTool[save_draft]
     ClassTool --> Store[EduFlowStore SQLite]
     DraftTool --> Store
-    PolicyTool --> PlanningRetrieval[KnowledgeRetriever BM25]
+    EvidenceTool --> PlanningRetrieval[KnowledgeRetriever BM25]
+    EylfTool --> PlanningRetrieval
+    SafetyTool --> SafetyRules[Deterministic safety rules]
 
     PolicyRAG --> PolicyService[PolicyRAGService]
     PolicyService --> Retrieval[KnowledgeRetriever]
@@ -220,7 +224,9 @@ Current controlled tools:
 | Tool | Risk | Permission | Purpose |
 | --- | --- | --- | --- |
 | `get_class_profile` | L0 read-only | Auto execute | Read synthetic class profile data |
-| `search_policy_index` | L0 read-only | Auto execute | Search local knowledge chunks through `KnowledgeRetriever` |
+| `retrieve_policy_evidence` | L0 read-only | Auto execute | Retrieve citable local policy evidence |
+| `check_activity_safety` | L0 read-only | Auto execute | Check activity drafts for common safety risks |
+| `align_to_eylf_outcomes` | L0 read-only | Auto execute | Map activity drafts to likely EYLF outcomes with evidence |
 | `save_draft` | L2 controlled write | Requires approval | Save a draft record with an idempotency key |
 
 ## Local Setup

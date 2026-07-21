@@ -63,7 +63,9 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
 
     assert [tool.name for tool in registry.list_tools()] == [
         "get_class_profile",
-        "search_policy_index",
+        "retrieve_policy_evidence",
+        "check_activity_safety",
+        "align_to_eylf_outcomes",
         "save_draft",
     ]
 
@@ -81,26 +83,77 @@ def test_get_class_profile_tool_reads_synthetic_data(tmp_path) -> None:
     assert result.trace.tool_name == "get_class_profile"
 
 
-def test_search_policy_index_tool_uses_knowledge_retriever(tmp_path) -> None:
+def test_retrieve_policy_evidence_tool_returns_citable_chunks(tmp_path) -> None:
     retriever = StubPolicyRetriever()
     registry = build_default_tool_registry(
         make_store(tmp_path),
         policy_retriever=retriever,
     )
 
-    result = registry.execute("search_policy_index", {"query": "play", "top_k": 2})
+    result = registry.execute(
+        "retrieve_policy_evidence",
+        {"query": "play based learning", "top_k": 4, "source_type": "official"},
+    )
 
     assert result.success is True
-    assert result.risk_level is RiskLevel.L0_READ_ONLY
-    assert result.data["mode"] == RetrievalMode.BM25.value
-    assert result.data["reranker"] == RerankerMode.LEXICAL.value
-    assert result.data["results"][0]["policy_id"] == "chunk-001"
-    assert result.data["results"][0]["source"] == "eylf-v2"
-    assert result.data["results"][0]["citation"]["page"] == 21
-    assert retriever.requests[0].query == "play"
-    assert retriever.requests[0].top_k == 2
-    assert retriever.requests[0].mode is RetrievalMode.BM25
-    assert retriever.requests[0].reranker is RerankerMode.LEXICAL
+    assert result.data["returned_count"] == 1
+    assert result.data["evidence"][0]["evidence_id"] == "E1"
+    assert result.data["evidence"][0]["citation"]["source_id"] == "eylf-v2"
+    assert retriever.requests[0].query == "play based learning"
+    assert retriever.requests[0].top_k == 4
+    assert retriever.requests[0].filters.source_types == [KnowledgeSourceType.OFFICIAL]
+
+
+def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
+    registry = build_default_tool_registry(make_store(tmp_path))
+
+    result = registry.execute(
+        "check_activity_safety",
+        {
+            "activity_text": "Outdoor water play with food dye and scissors.",
+            "age_group": "3-5",
+            "class_size": 22,
+        },
+    )
+
+    assert result.success is True
+    assert result.data["status"] == "needs_revision"
+    assert {issue["code"] for issue in result.data["issues"]} >= {
+        "activity_contains_water",
+        "activity_contains_food",
+        "activity_contains_scissors",
+        "activity_contains_outdoor",
+        "large_group_supervision",
+    }
+
+
+def test_align_to_eylf_outcomes_tool_uses_retrieved_evidence(tmp_path) -> None:
+    retriever = StubPolicyRetriever()
+    registry = build_default_tool_registry(
+        make_store(tmp_path),
+        policy_retriever=retriever,
+    )
+
+    result = registry.execute(
+        "align_to_eylf_outcomes",
+        {
+            "activity_text": (
+                "Children explore outdoor natural materials through play, "
+                "describe textures, and solve problems together."
+            ),
+            "top_k": 3,
+        },
+    )
+
+    assert result.success is True
+    assert result.data["evidence"][0]["evidence_id"] == "E1"
+    assert [item["outcome"] for item in result.data["alignments"]] == [
+        "Outcome 2",
+        "Outcome 4",
+        "Outcome 5",
+    ]
+    assert result.data["alignments"][0]["evidence_ids"] == ["E1"]
+    assert "EYLF outcomes" in retriever.requests[0].query
 
 
 def test_save_draft_tool_requires_approval(tmp_path) -> None:

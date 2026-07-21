@@ -14,8 +14,10 @@ class ToolPermission(str, Enum):
 
 class ToolCategory(str, Enum):
     CLASS_PROFILE = "class_profile"
+    CURRICULUM = "curriculum"
     DRAFT = "draft"
     POLICY = "policy"
+    SAFETY = "safety"
     SYSTEM = "system"
 
 

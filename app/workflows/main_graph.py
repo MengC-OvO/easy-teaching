@@ -121,7 +121,7 @@ def build_planning_react_node(planning_workflow: WorkflowProtocol):
         result = planning_workflow.invoke(
             ReActState(
                 user_message=current_state.user_message,
-                max_steps=4,
+                max_steps=7,
             )
         )
         react_state = ReActState.model_validate(result)
@@ -264,7 +264,9 @@ def build_main_graph(
     resolved_planning_workflow = planning_workflow or build_react_graph(
         allowed_tool_names={
             "get_class_profile",
-            "search_policy_index",
+            "retrieve_policy_evidence",
+            "check_activity_safety",
+            "align_to_eylf_outcomes",
             "save_draft",
         }
     )
