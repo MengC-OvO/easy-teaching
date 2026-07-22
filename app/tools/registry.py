@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from app.schemas import RiskLevel
 from app.tools.definition import (
     ToolDefinition,
+    ToolExecutionContext,
     ToolErrorCode,
     ToolPermission,
     ToolResult,
@@ -45,6 +46,7 @@ class ToolRegistry:
         *,
         approved: bool = False,
         allowed_tool_names: Optional[Iterable[str]] = None,
+        execution_context: Optional[ToolExecutionContext] = None,
     ) -> ToolResult:
         if not self._is_allowed(name, allowed_tool_names):
             return ToolResult.fail(
@@ -105,7 +107,14 @@ class ToolRegistry:
             )
 
         try:
-            result = tool.handler(validated_args)
+            if tool.runtime_handler is not None:
+                result = tool.runtime_handler(
+                    validated_args,
+                    execution_context or ToolExecutionContext(),
+                )
+            else:
+                assert tool.handler is not None
+                result = tool.handler(validated_args)
         except Exception as error:
             return ToolResult.fail(
                 code=ToolErrorCode.EXECUTION_ERROR,

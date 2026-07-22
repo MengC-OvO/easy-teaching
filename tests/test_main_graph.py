@@ -1,15 +1,25 @@
+import sqlite3
+
 from app.schemas import (
     ApprovalStatus,
     GraphState,
     Intent,
     IntentRouteResult,
+    LongTermMemoryAction,
+    LongTermMemoryCandidate,
+    LongTermMemoryOperation,
+    LongTermMemoryScope,
+    LongTermMemoryType,
+    MemoryRetrievalMode,
     Observation,
     ReActState,
     StopReason,
+    ConversationMemory,
+    ThreadContext,
     WorkflowStatus,
 )
-from app.services import ModelTimeoutError
-from app.workflows import build_main_graph
+from app.services import EduFlowStore, ModelTimeoutError
+from app.workflows import build_main_graph, build_sqlite_checkpointer, checkpoint_config
 
 
 class StubRouter:
@@ -17,13 +27,31 @@ class StubRouter:
         self.result = result
         self.user_message = None
 
-    def route(self, user_message: str) -> IntentRouteResult:
+    def route(self, user_message: str, *, conversation_context: str = "") -> IntentRouteResult:
         self.user_message = user_message
         return self.result
 
 
+class RecordingRouter(StubRouter):
+    def __init__(self, result: IntentRouteResult) -> None:
+        super().__init__(result)
+        self.contexts = []
+
+    def route(self, user_message: str, *, conversation_context: str = "") -> IntentRouteResult:
+        self.contexts.append(conversation_context)
+        return super().route(user_message, conversation_context=conversation_context)
+
+
+class SequencedMemoryExtractor:
+    def __init__(self, decisions) -> None:
+        self.decisions = iter(decisions)
+
+    def decide(self, *, turns, existing_memories, teacher_id=None, class_id=None):
+        return next(self.decisions)
+
+
 class FailingRouter:
-    def route(self, user_message: str) -> IntentRouteResult:
+    def route(self, user_message: str, *, conversation_context: str = "") -> IntentRouteResult:
         raise ModelTimeoutError("router timed out")
 
 
@@ -83,7 +111,142 @@ def test_main_graph_runs_intent_router_node() -> None:
         "initialize",
         "intent_router",
         "planning_react",
+        "context_update",
+        "long_memory_update",
     ]
+    assert final_state.thread_id == "session-001"
+    assert final_state.context.thread_id == "session-001"
+
+
+def test_main_graph_passes_compact_context_to_react_workflow() -> None:
+    planning_workflow = StubPlanningWorkflow(
+        ReActState(
+            user_message="Make it shorter.",
+            current_step=1,
+            final_answer="Shortened draft.",
+            stop_reason=StopReason.COMPLETED,
+        )
+    )
+    graph = build_main_graph(
+        StubRouter(
+            IntentRouteResult(
+                intent=Intent.ACTIVITY_PLANNING,
+                confidence=0.9,
+                reason="Follow-up to an activity plan.",
+            )
+        ),
+        planning_workflow=planning_workflow,
+    )
+
+    graph.invoke(
+        GraphState(
+            request_id="req-context-injection",
+            session_id="session-context-injection",
+            user_message="Make it shorter.",
+            context=ThreadContext(
+                memory=ConversationMemory(
+                    compact_summary="Teacher is revising an outdoor activity plan."
+                )
+            ),
+        )
+    )
+
+    assert "outdoor activity plan" in planning_workflow.input_state.conversation_context
+
+
+def test_main_graph_recalls_a_memory_written_by_the_previous_turn(tmp_path) -> None:
+    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
+    store.initialize()
+    preference = LongTermMemoryCandidate(
+        scope=LongTermMemoryScope.TEACHER,
+        scope_id="teacher-001",
+        memory_type=LongTermMemoryType.TEACHER_PREFERENCE,
+        content="Prefers concise activity-plan steps.",
+        reason="The teacher explicitly requested short steps.",
+        retrieval_mode=MemoryRetrievalMode.PROFILE,
+        importance=4,
+    )
+    extractor = SequencedMemoryExtractor(
+        [
+            [
+                LongTermMemoryOperation(
+                    action=LongTermMemoryAction.INSERT,
+                    candidate=preference,
+                    reason="A durable preference was explicitly stated.",
+                )
+            ],
+            [],
+        ]
+    )
+    router = RecordingRouter(
+        IntentRouteResult(
+            intent=Intent.LEARNING_RECORD,
+            confidence=0.9,
+            reason="The request asks for a learning record.",
+        )
+    )
+    graph = build_main_graph(
+        router,
+        long_memory_extractor=extractor,
+        long_memory_store=store,
+    )
+
+    first_state = GraphState.model_validate(
+        graph.invoke(
+            GraphState(
+                request_id="req-memory-first",
+                session_id="session-memory",
+                teacher_id="teacher-001",
+                user_message="For future plans, keep the steps concise.",
+            )
+        )
+    )
+    graph.invoke(
+        GraphState(
+            request_id="req-memory-second",
+            session_id="session-memory",
+            teacher_id="teacher-001",
+            user_message="Write a learning story.",
+            context=first_state.context,
+        )
+    )
+
+    assert "Prefers concise activity-plan steps." not in router.contexts[0]
+    assert "Prefers concise activity-plan steps." in router.contexts[1]
+
+
+def test_main_graph_can_checkpoint_state_to_sqlite(tmp_path) -> None:
+    checkpoint_path = tmp_path / "checkpoints.sqlite3"
+    graph = build_main_graph(
+        StubRouter(
+            IntentRouteResult(
+                intent=Intent.LEARNING_RECORD,
+                confidence=0.9,
+                reason="The request asks for documentation.",
+            )
+        ),
+        checkpointer=build_sqlite_checkpointer(checkpoint_path),
+    )
+
+    result = graph.invoke(
+        GraphState(
+            request_id="req-checkpoint",
+            session_id="session-checkpoint",
+            thread_id="thread-checkpoint",
+            user_message="Write a learning story draft.",
+        ),
+        config=checkpoint_config("thread-checkpoint"),
+    )
+    final_state = GraphState.model_validate(result)
+
+    assert final_state.thread_id == "thread-checkpoint"
+    assert final_state.context.thread_id == "thread-checkpoint"
+    assert checkpoint_path.exists()
+
+    with sqlite3.connect(checkpoint_path) as connection:
+        checkpoint_count = connection.execute("select count(*) from checkpoints").fetchone()[0]
+
+    assert checkpoint_count > 0
 
 
 def test_main_graph_preserves_core_request_fields() -> None:
@@ -125,7 +288,9 @@ def test_main_graph_records_router_errors() -> None:
 
     assert final_state.workflow_status is WorkflowStatus.FAILED
     assert final_state.errors[0].code == "timeout"
-    assert final_state.trace[-1].step == "intent_router"
+    assert final_state.trace[-3].step == "intent_router"
+    assert final_state.trace[-2].step == "context_update"
+    assert final_state.trace[-1].step == "long_memory_update"
 
 
 def test_main_graph_routes_learning_record_to_documentation_placeholder() -> None:
@@ -149,7 +314,9 @@ def test_main_graph_routes_learning_record_to_documentation_placeholder() -> Non
         )
     )
 
-    assert final_state.trace[-1].step == "documentation_placeholder"
+    assert final_state.trace[-3].step == "documentation_placeholder"
+    assert final_state.trace[-2].step == "context_update"
+    assert final_state.trace[-1].step == "long_memory_update"
 
 
 def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
@@ -189,9 +356,10 @@ def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
 
     assert final_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
     assert final_state.approval.status is ApprovalStatus.REQUIRED
-    assert final_state.trace[-1].step == "planning_react"
-    assert final_state.trace[-1].metadata["stop_reason"] == "approval_required"
-    assert final_state.trace[-1].metadata["observations"] == [
+    planning_trace = final_state.trace[-3]
+    assert planning_trace.step == "planning_react"
+    assert planning_trace.metadata["stop_reason"] == "approval_required"
+    assert planning_trace.metadata["observations"] == [
         {
             "tool_name": "save_draft",
             "success": False,
@@ -254,7 +422,9 @@ def test_main_graph_routes_family_communication_to_family_placeholder() -> None:
         )
     )
 
-    assert final_state.trace[-1].step == "family_placeholder"
+    assert final_state.trace[-3].step == "family_placeholder"
+    assert final_state.trace[-2].step == "context_update"
+    assert final_state.trace[-1].step == "long_memory_update"
 
 
 def test_main_graph_routes_clarification_to_clarification_placeholder() -> None:
@@ -282,4 +452,6 @@ def test_main_graph_routes_clarification_to_clarification_placeholder() -> None:
 
     assert final_state.needs_clarification is True
     assert final_state.clarification_question == "Do you want an activity plan or a family message?"
-    assert final_state.trace[-1].step == "clarification_placeholder"
+    assert final_state.trace[-3].step == "clarification_placeholder"
+    assert final_state.trace[-2].step == "context_update"
+    assert final_state.trace[-1].step == "long_memory_update"

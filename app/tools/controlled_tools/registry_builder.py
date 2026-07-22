@@ -13,6 +13,9 @@ from app.tools.controlled_tools.retrieve_risk_guidance import (
 from app.tools.controlled_tools.check_activity_safety import build_check_activity_safety_tool
 from app.tools.controlled_tools.get_class_profile import build_get_class_profile_tool
 from app.tools.controlled_tools.save_draft import build_save_draft_tool
+from app.tools.controlled_tools.recall_long_term_memory import (
+    build_recall_long_term_memory_tool,
+)
 from app.tools.definition import ToolDefinition
 from app.tools.registry import ToolRegistry
 
@@ -36,6 +39,7 @@ def build_default_tool_definitions(
             model_provider=eylf_alignment_model_provider,
         ),
         build_save_draft_tool(store),
+        build_recall_long_term_memory_tool(store),
     ]
 
 

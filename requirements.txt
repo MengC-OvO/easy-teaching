@@ -3,6 +3,7 @@ uvicorn[standard]==0.35.0
 pydantic==2.11.7
 pydantic-settings==2.10.1
 langgraph==0.2.76
+langgraph-checkpoint-sqlite==2.0.11
 SQLAlchemy==2.0.45
 pypdf==6.4.1
 chromadb==1.5.9

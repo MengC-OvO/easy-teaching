@@ -32,6 +32,12 @@ from app.tools.controlled_tools.check_activity_safety import (
     SafetyCheckItem,
     build_check_activity_safety_tool,
 )
+from app.tools.controlled_tools.recall_long_term_memory import (
+    RecallLongTermMemoryInput,
+    RecallLongTermMemoryOutput,
+    RecalledLongTermMemory,
+    build_recall_long_term_memory_tool,
+)
 
 
 __all__ = [
@@ -45,6 +51,9 @@ __all__ = [
     "KnowledgeEvidenceItem",
     "KnowledgeRetrieverProtocol",
     "RiskGuidanceModelProvider",
+    "RecallLongTermMemoryInput",
+    "RecallLongTermMemoryOutput",
+    "RecalledLongTermMemory",
     "RetrieveRiskGuidanceInput",
     "RetrieveRiskGuidanceOutput",
     "SaveDraftInput",
@@ -56,5 +65,6 @@ __all__ = [
     "build_default_tool_registry",
     "build_get_class_profile_tool",
     "build_retrieve_risk_guidance_tool",
+    "build_recall_long_term_memory_tool",
     "build_save_draft_tool",
 ]

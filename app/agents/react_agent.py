@@ -76,6 +76,10 @@ class ReActAgent:
         return "\n\n".join(
             [
                 f"Teacher request:\n{state.user_message}",
+                (
+                    "Relevant conversation context:\n"
+                    f"{state.conversation_context or '[No prior conversation context.]'}"
+                ),
                 f"Step budget:\ncurrent_step={state.current_step}, max_steps={state.max_steps}",
                 "Available tools:\n" + self._format_tools(available_tools),
                 "Previous observations:\n" + self._format_observations(state.observations),

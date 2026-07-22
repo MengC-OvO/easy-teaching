@@ -1,32 +1,47 @@
-from typing import Any, Dict, Mapping, Optional, Protocol, Union
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Union
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from app.agents import IntentRouter
 from app.schemas import (
     Approval,
     ApprovalStatus,
+    ConversationTurn,
     Draft,
     GraphError,
     GraphState,
     Intent,
     IntentRouteResult,
+    LongTermMemoryOperation,
     ReActState,
     RiskLevel,
     StopReason,
+    ThreadContext,
     TraceEvent,
     WorkflowStatus,
 )
-from app.services import ModelProviderError
+from app.services import (
+    ContextManager,
+    EduFlowStore,
+    LLMLongTermMemoryExtractor,
+    ModelProviderError,
+)
 from app.workflows.policy_rag_graph import build_policy_rag_graph
 from app.workflows.react_graph import build_react_graph
+from app.tools import build_default_tool_registry
 
 
 GraphStateInput = Union[GraphState, Mapping[str, Any]]
 
 
 class RouterProtocol(Protocol):
-    def route(self, user_message: str) -> IntentRouteResult:
+    def route(
+        self,
+        user_message: str,
+        *,
+        conversation_context: str = "",
+    ) -> IntentRouteResult:
         ...
 
 
@@ -40,6 +55,51 @@ class GraphWorkflowProtocol(Protocol):
         ...
 
 
+class ContextManagerProtocol(Protocol):
+    def update_after_run(self, state: GraphState) -> Any:
+        ...
+
+    def build_model_context(
+        self,
+        context: ThreadContext,
+        *,
+        teacher_id: Optional[str] = None,
+    ) -> str:
+        ...
+
+
+class LongTermMemoryExtractorProtocol(Protocol):
+    def decide(
+        self,
+        *,
+        turns: List[ConversationTurn],
+        existing_memories: List[Dict[str, str]],
+        teacher_id: Optional[str] = None,
+        class_id: Optional[str] = None,
+    ) -> List[LongTermMemoryOperation]:
+        ...
+
+
+class LongTermMemoryStoreProtocol(Protocol):
+    def list_memories_for_owners(
+        self,
+        *,
+        teacher_id: Optional[str],
+        class_id: Optional[str],
+        limit: int = 12,
+    ) -> List[Dict[str, str]]:
+        ...
+
+    def apply_long_term_memory_operation(
+        self,
+        operation: LongTermMemoryOperation,
+        *,
+        teacher_id: Optional[str],
+        class_id: Optional[str],
+    ) -> Dict[str, str]:
+        ...
+
+
 def _state_from_input(state: GraphStateInput) -> GraphState:
     if isinstance(state, GraphState):
         return state
@@ -47,21 +107,40 @@ def _state_from_input(state: GraphStateInput) -> GraphState:
 
 
 def initialize(state: GraphStateInput) -> Dict[str, Any]:
+    current_state = _state_from_input(state)
+    thread_id = (
+        current_state.thread_id
+        or current_state.context.thread_id
+        or current_state.session_id
+    )
+    context = current_state.context.model_copy(update={"thread_id": thread_id})
     return {
+        "thread_id": thread_id,
+        "context": context,
         "trace": [
             TraceEvent(
                 step="initialize",
                 message="Initialized EduFlow graph state.",
+                metadata={"thread_id": thread_id},
             )
         ]
     }
 
 
-def build_intent_router_node(router: RouterProtocol):
+def build_intent_router_node(
+    router: RouterProtocol,
+    context_manager: ContextManagerProtocol,
+):
     def intent_router_node(state: GraphStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
         try:
-            route_result = router.route(current_state.user_message)
+            route_result = router.route(
+                current_state.user_message,
+                conversation_context=context_manager.build_model_context(
+                    current_state.context,
+                    teacher_id=current_state.teacher_id,
+                ),
+            )
         except ModelProviderError as error:
             return {
                 "workflow_status": WorkflowStatus.FAILED,
@@ -115,12 +194,21 @@ def route_by_intent(state: GraphStateInput) -> str:
     return "clarification"
 
 
-def build_planning_react_node(planning_workflow: WorkflowProtocol):
+def build_planning_react_node(
+    planning_workflow: WorkflowProtocol,
+    context_manager: ContextManagerProtocol,
+):
     def planning_react_node(state: GraphStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
         result = planning_workflow.invoke(
             ReActState(
                 user_message=current_state.user_message,
+                teacher_id=current_state.teacher_id,
+                class_id=current_state.class_id,
+                conversation_context=context_manager.build_model_context(
+                    current_state.context,
+                    teacher_id=current_state.teacher_id,
+                ),
                 max_steps=7,
             )
         )
@@ -255,33 +343,155 @@ def clarification_placeholder(state: GraphStateInput) -> Dict[str, Any]:
     }
 
 
+def build_context_update_node(context_manager: ContextManagerProtocol):
+    def context_update_node(state: GraphStateInput) -> Dict[str, Any]:
+        current_state = _state_from_input(state)
+        context = context_manager.update_after_run(current_state)
+        return {
+            "context": context,
+            "trace": [
+                TraceEvent(
+                    step="context_update",
+                    message="Updated compressed thread context.",
+                    metadata={
+                        "thread_id": context.thread_id,
+                        "recent_turns": len(context.recent_turns),
+                        "open_tasks": len(context.memory.open_tasks),
+                        "summary_chars": len(context.memory.compact_summary),
+                    },
+                )
+            ],
+        }
+
+    return context_update_node
+
+
+def build_long_memory_update_node(
+    extractor: LongTermMemoryExtractorProtocol,
+    store: LongTermMemoryStoreProtocol,
+):
+    """Ask the LLM to consolidate memory after every completed graph turn."""
+
+    def long_memory_update_node(state: GraphStateInput) -> Dict[str, Any]:
+        current_state = _state_from_input(state)
+        if current_state.teacher_id is None and current_state.class_id is None:
+            return {
+                "trace": [
+                    TraceEvent(
+                        step="long_memory_update",
+                        message="Skipped long-term memory update without an owner.",
+                        metadata={"applied_operations": 0},
+                    )
+                ]
+            }
+
+        try:
+            existing_memories = store.list_memories_for_owners(
+                teacher_id=current_state.teacher_id,
+                class_id=current_state.class_id,
+            )
+            operations = extractor.decide(
+                turns=current_state.context.recent_turns[-2:],
+                existing_memories=existing_memories,
+                teacher_id=current_state.teacher_id,
+                class_id=current_state.class_id,
+            )
+            applied = [
+                store.apply_long_term_memory_operation(
+                    operation,
+                    teacher_id=current_state.teacher_id,
+                    class_id=current_state.class_id,
+                )
+                for operation in operations
+            ]
+        except (ModelProviderError, TypeError, ValueError) as error:
+            return {
+                "trace": [
+                    TraceEvent(
+                        step="long_memory_update",
+                        message="Long-term memory update was skipped after an error.",
+                        metadata={"applied_operations": 0, "error": str(error)},
+                    )
+                ]
+            }
+
+        return {
+            "trace": [
+                TraceEvent(
+                    step="long_memory_update",
+                    message="Applied long-term memory operations.",
+                    metadata={
+                        "applied_operations": len(applied),
+                        "actions": [item["action"] for item in applied],
+                        "memory_ids": [
+                            item["memory_id"] for item in applied if "memory_id" in item
+                        ],
+                    },
+                )
+            ]
+        }
+
+    return long_memory_update_node
+
+
 def build_main_graph(
     router: Optional[RouterProtocol] = None,
     planning_workflow: Optional[WorkflowProtocol] = None,
     policy_workflow: Optional[GraphWorkflowProtocol] = None,
+    context_manager: Optional[ContextManagerProtocol] = None,
+    checkpointer: Optional[BaseCheckpointSaver] = None,
+    long_memory_extractor: Optional[LongTermMemoryExtractorProtocol] = None,
+    long_memory_store: Optional[LongTermMemoryStoreProtocol] = None,
 ):
+    resolved_long_memory_store = long_memory_store or _default_long_memory_store()
+    resolved_long_memory_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
     resolved_router = router or IntentRouter()
     resolved_planning_workflow = planning_workflow or build_react_graph(
+        registry=(
+            build_default_tool_registry(resolved_long_memory_store)
+            if isinstance(resolved_long_memory_store, EduFlowStore)
+            else None
+        ),
         allowed_tool_names={
             "get_class_profile",
             "retrieve_risk_guidance",
             "check_activity_safety",
             "align_to_eylf_outcomes",
             "save_draft",
-        }
+            "recall_long_term_memory",
+        },
     )
-    resolved_policy_workflow = policy_workflow or build_policy_rag_graph()
+    resolved_context_manager = context_manager or ContextManager(
+        long_term_memory_reader=resolved_long_memory_store
+    )
+    resolved_policy_workflow = policy_workflow or build_policy_rag_graph(
+        context_manager=resolved_context_manager
+    )
     graph = StateGraph(GraphState)
     graph.add_node("initialize", initialize)
-    graph.add_node("intent_router", build_intent_router_node(resolved_router))
+    graph.add_node(
+        "intent_router",
+        build_intent_router_node(resolved_router, resolved_context_manager),
+    )
     graph.add_node(
         "planning_react",
-        build_planning_react_node(resolved_planning_workflow),
+        build_planning_react_node(resolved_planning_workflow, resolved_context_manager),
     )
     graph.add_node("documentation_placeholder", documentation_placeholder)
-    graph.add_node("policy_rag", build_policy_rag_workflow_node(resolved_policy_workflow))
+    graph.add_node(
+        "policy_rag",
+        build_policy_rag_workflow_node(resolved_policy_workflow),
+    )
     graph.add_node("family_placeholder", family_placeholder)
     graph.add_node("clarification_placeholder", clarification_placeholder)
+    graph.add_node("context_update", build_context_update_node(resolved_context_manager))
+    graph.add_node(
+        "long_memory_update",
+        build_long_memory_update_node(
+            resolved_long_memory_extractor,
+            resolved_long_memory_store,
+        ),
+    )
     graph.set_entry_point("initialize")
     graph.add_edge("initialize", "intent_router")
     graph.add_conditional_edges(
@@ -293,15 +503,23 @@ def build_main_graph(
             "policy": "policy_rag",
             "family": "family_placeholder",
             "clarification": "clarification_placeholder",
-            "end": END,
+            "end": "context_update",
         },
     )
-    graph.add_edge("planning_react", END)
-    graph.add_edge("documentation_placeholder", END)
-    graph.add_edge("policy_rag", END)
-    graph.add_edge("family_placeholder", END)
-    graph.add_edge("clarification_placeholder", END)
-    return graph.compile()
+    graph.add_edge("planning_react", "context_update")
+    graph.add_edge("documentation_placeholder", "context_update")
+    graph.add_edge("policy_rag", "context_update")
+    graph.add_edge("family_placeholder", "context_update")
+    graph.add_edge("clarification_placeholder", "context_update")
+    graph.add_edge("context_update", "long_memory_update")
+    graph.add_edge("long_memory_update", END)
+    return graph.compile(checkpointer=checkpointer)
+
+
+def _default_long_memory_store() -> EduFlowStore:
+    store = EduFlowStore()
+    store.initialize()
+    return store
 
 
 main_graph = build_main_graph()

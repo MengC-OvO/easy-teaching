@@ -129,6 +129,7 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
         "check_activity_safety",
         "align_to_eylf_outcomes",
         "save_draft",
+        "recall_long_term_memory",
     ]
 
 

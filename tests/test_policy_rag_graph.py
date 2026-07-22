@@ -16,7 +16,12 @@ class StubPolicyRAGService:
         self.result = result
         self.question = None
 
-    def answer(self, question: str) -> PolicyRAGResult:
+    def answer(
+        self,
+        question: str,
+        *,
+        conversation_context: str = "",
+    ) -> PolicyRAGResult:
         self.question = question
         return self.result
 

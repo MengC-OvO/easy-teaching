@@ -55,6 +55,9 @@ class ReActDecision(BaseModel):
 
 class ReActState(BaseModel):
     user_message: str
+    teacher_id: Optional[str] = None
+    class_id: Optional[str] = None
+    conversation_context: str = ""
     max_steps: int = Field(default=4, ge=1)
     current_step: int = Field(default=0, ge=0)
     decision: Optional[ReActDecision] = None

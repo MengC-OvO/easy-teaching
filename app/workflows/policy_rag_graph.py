@@ -12,14 +12,24 @@ from app.schemas import (
     TraceEvent,
     WorkflowStatus,
 )
-from app.services import ChatCompletionsModelProvider, ModelProviderError, PolicyRAGService
+from app.services import (
+    ChatCompletionsModelProvider,
+    ContextManager,
+    ModelProviderError,
+    PolicyRAGService,
+)
 
 
 GraphStateInput = Union[GraphState, Mapping[str, Any]]
 
 
 class PolicyRAGServiceProtocol(Protocol):
-    def answer(self, question: str) -> PolicyRAGResult:
+    def answer(
+        self,
+        question: str,
+        *,
+        conversation_context: str = "",
+    ) -> PolicyRAGResult:
         ...
 
 
@@ -29,11 +39,20 @@ def _state_from_input(state: GraphStateInput) -> GraphState:
     return GraphState.model_validate(state)
 
 
-def build_policy_rag_node(service: PolicyRAGServiceProtocol):
+def build_policy_rag_node(
+    service: PolicyRAGServiceProtocol,
+    context_manager: ContextManager,
+):
     def policy_rag_node(state: GraphStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
         try:
-            result = service.answer(current_state.user_message)
+            result = service.answer(
+                current_state.user_message,
+                conversation_context=context_manager.build_model_context(
+                    current_state.context,
+                    teacher_id=current_state.teacher_id,
+                ),
+            )
         except ModelProviderError as error:
             return {
                 "workflow_status": WorkflowStatus.FAILED,
@@ -112,12 +131,22 @@ def _to_graph_citation(citation) -> Citation:
     )
 
 
-def build_policy_rag_graph(service: Optional[PolicyRAGServiceProtocol] = None):
+def build_policy_rag_graph(
+    service: Optional[PolicyRAGServiceProtocol] = None,
+    *,
+    context_manager: Optional[ContextManager] = None,
+):
     resolved_service = service or PolicyRAGService(
         model_provider=ChatCompletionsModelProvider(),
     )
     graph = StateGraph(GraphState)
-    graph.add_node("policy_rag", build_policy_rag_node(resolved_service))
+    graph.add_node(
+        "policy_rag",
+        build_policy_rag_node(
+            resolved_service,
+            context_manager or ContextManager(),
+        ),
+    )
     graph.set_entry_point("policy_rag")
     graph.add_edge("policy_rag", END)
     return graph.compile()

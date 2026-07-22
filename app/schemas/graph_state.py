@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from typing_extensions import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Intent(str, Enum):
@@ -75,10 +75,96 @@ class SafetyFlag(BaseModel):
     risk_level: RiskLevel
 
 
+class ConversationRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class ConversationTurn(BaseModel):
+    role: ConversationRole
+    content: str = Field(min_length=1)
+    intent: Optional[Intent] = None
+    workflow_status: Optional[WorkflowStatus] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ContextBudget(BaseModel):
+    max_recent_turns: int = Field(default=4, ge=0)
+    max_recent_tokens: int = Field(default=1200, ge=0)
+    max_trace_events: int = Field(default=8, ge=0)
+    max_memory_summary_chars: int = Field(default=1500, ge=200)
+    max_memory_items: int = Field(default=8, ge=0)
+
+
+class ConversationMemory(BaseModel):
+    """LLM-maintained semantic memory for one conversation thread.
+
+    This deliberately excludes operational state such as the current draft,
+    approval, citations, and trace. Those remain canonical on GraphState.
+    """
+
+    conversation_goal: Optional[str] = None
+    important_requirements: List[str] = Field(default_factory=list)
+    confirmed_preferences: List[str] = Field(default_factory=list)
+    completed_work: List[str] = Field(default_factory=list)
+    open_tasks: List[str] = Field(default_factory=list)
+    compact_summary: str = ""
+
+
+class ThreadContext(BaseModel):
+    thread_id: Optional[str] = None
+    recent_turns: Annotated[List[ConversationTurn], operator.add] = Field(
+        default_factory=list
+    )
+    memory: ConversationMemory = Field(default_factory=ConversationMemory)
+    tool_trace_summary: Annotated[List[TraceEvent], operator.add] = Field(
+        default_factory=list
+    )
+    budget: ContextBudget = Field(default_factory=ContextBudget)
+
+    @model_validator(mode="after")
+    def apply_budget(self) -> "ThreadContext":
+        if self.budget.max_recent_turns:
+            self.recent_turns = self.recent_turns[-self.budget.max_recent_turns :]
+        else:
+            self.recent_turns = []
+
+        if self.budget.max_trace_events:
+            self.tool_trace_summary = self.tool_trace_summary[
+                -self.budget.max_trace_events :
+            ]
+        else:
+            self.tool_trace_summary = []
+
+        self.memory.compact_summary = self.memory.compact_summary[
+            : self.budget.max_memory_summary_chars
+        ]
+        for field_name in (
+            "important_requirements",
+            "confirmed_preferences",
+            "completed_work",
+            "open_tasks",
+        ):
+            values = getattr(self.memory, field_name)
+            deduped_values = list(dict.fromkeys(values))
+            if self.budget.max_memory_items:
+                deduped_values = deduped_values[-self.budget.max_memory_items :]
+            else:
+                deduped_values = []
+            setattr(self.memory, field_name, deduped_values)
+
+        return self
+
+
 class GraphState(BaseModel):
     request_id: str
     session_id: str
     user_message: str
+    thread_id: Optional[str] = None
+    teacher_id: Optional[str] = None
+    class_id: Optional[str] = None
+    context: ThreadContext = Field(default_factory=ThreadContext)
     intent: Intent = Intent.UNKNOWN
     needs_clarification: bool = False
     clarification_question: Optional[str] = None

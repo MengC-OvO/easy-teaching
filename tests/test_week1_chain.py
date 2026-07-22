@@ -25,7 +25,7 @@ from app.workflows import build_main_graph, build_react_graph
 
 
 class StubRouter:
-    def route(self, user_message: str) -> IntentRouteResult:
+    def route(self, user_message: str, *, conversation_context: str = "") -> IntentRouteResult:
         return IntentRouteResult(
             intent=Intent.ACTIVITY_PLANNING,
             confidence=0.95,
@@ -153,13 +153,16 @@ def test_week1_chain_routes_to_react_tools_and_waits_for_approval(tmp_path) -> N
 
     assert final_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
     assert final_state.approval.status is ApprovalStatus.REQUIRED
-    assert final_state.trace[-1].step == "planning_react"
-    assert final_state.trace[-1].metadata["stop_reason"] == "approval_required"
-    assert [item["tool_name"] for item in final_state.trace[-1].metadata["observations"]] == [
+    planning_trace = final_state.trace[-3]
+    assert planning_trace.step == "planning_react"
+    assert planning_trace.metadata["stop_reason"] == "approval_required"
+    assert [item["tool_name"] for item in planning_trace.metadata["observations"]] == [
         "get_class_profile",
         "retrieve_risk_guidance",
         "save_draft",
     ]
+    assert final_state.trace[-2].step == "context_update"
+    assert final_state.trace[-1].step == "long_memory_update"
     assert agent.calls == 3
 
 
@@ -180,10 +183,13 @@ def test_week1_chain_routes_to_react_tools_and_saves_draft_when_approved(tmp_pat
     assert final_state.workflow_status is WorkflowStatus.COMPLETED
     assert final_state.draft is not None
     assert final_state.draft.content == "Synthetic activity plan draft."
-    assert final_state.trace[-1].metadata["stop_reason"] == StopReason.COMPLETED.value
-    assert final_state.trace[-1].metadata["observations"][-1] == {
+    planning_trace = final_state.trace[-3]
+    assert planning_trace.metadata["stop_reason"] == StopReason.COMPLETED.value
+    assert planning_trace.metadata["observations"][-1] == {
         "tool_name": "save_draft",
         "success": True,
         "error_code": None,
     }
+    assert final_state.trace[-2].step == "context_update"
+    assert final_state.trace[-1].step == "long_memory_update"
     assert agent.calls == 4
