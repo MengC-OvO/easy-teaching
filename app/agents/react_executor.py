@@ -1,7 +1,7 @@
 from typing import Dict, Iterable, Optional
 
 from app.schemas import Observation, ReActAction, ReActState, StopReason
-from app.tools import ToolErrorCode, ToolRegistry, ToolResult
+from app.tools import ToolErrorCode, ToolExecutionContext, ToolRegistry, ToolResult
 
 
 class ReActToolExecutor:
@@ -42,6 +42,10 @@ class ReActToolExecutor:
             tool_call.tool_args,
             approved=approved,
             allowed_tool_names=self.allowed_tool_names,
+            execution_context=ToolExecutionContext(
+                teacher_id=state.teacher_id,
+                class_id=state.class_id,
+            ),
         )
         observation = self._result_to_observation(tool_call.tool_name, result)
         next_state = {

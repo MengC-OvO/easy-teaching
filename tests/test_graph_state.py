@@ -3,11 +3,16 @@ from pydantic import ValidationError
 from app.schemas import (
     ApprovalStatus,
     Citation,
+    ContextBudget,
+    ConversationMemory,
+    ConversationRole,
+    ConversationTurn,
     Draft,
     GraphState,
     Intent,
     RiskLevel,
     SafetyFlag,
+    ThreadContext,
     TraceEvent,
     WorkflowStatus,
 )
@@ -31,6 +36,10 @@ def test_graph_state_has_safe_defaults() -> None:
     assert state.trace == []
     assert state.errors == []
     assert state.safety_flags == []
+    assert state.thread_id is None
+    assert state.context.recent_turns == []
+    assert state.context.memory.conversation_goal is None
+    assert state.context.memory.open_tasks == []
 
 
 def test_graph_state_can_hold_workflow_outputs() -> None:
@@ -69,3 +78,36 @@ def test_graph_state_requires_request_session_and_message() -> None:
         raise AssertionError("GraphState should require core identifiers")
 
     assert missing_fields == {"request_id", "session_id", "user_message"}
+
+
+def test_thread_context_applies_context_budget() -> None:
+    context = ThreadContext(
+        thread_id="thread-001",
+        recent_turns=[
+            ConversationTurn(role=ConversationRole.USER, content=f"user {index}")
+            for index in range(5)
+        ],
+        memory=ConversationMemory(
+            compact_summary="x" * 240,
+            important_requirements=["a", "b", "a", "c"],
+        ),
+        tool_trace_summary=[
+            TraceEvent(step=f"tool_{index}", message="Called tool.")
+            for index in range(5)
+        ],
+        budget=ContextBudget(
+            max_recent_turns=2,
+            max_trace_events=3,
+            max_memory_summary_chars=200,
+            max_memory_items=2,
+        ),
+    )
+
+    assert [turn.content for turn in context.recent_turns] == ["user 3", "user 4"]
+    assert context.memory.compact_summary == "x" * 200
+    assert context.memory.important_requirements == ["b", "c"]
+    assert [event.step for event in context.tool_trace_summary] == [
+        "tool_2",
+        "tool_3",
+        "tool_4",
+    ]

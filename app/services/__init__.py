@@ -17,6 +17,9 @@ from app.services.model_types import (
     ModelRole,
     ModelUsage,
 )
+from app.services.context_manager import ContextManager
+from app.services.context_summarizer import ConversationMemoryUpdate, LLMContextSummarizer
+from app.services.long_memory_extractor import LLMLongTermMemoryExtractor
 from app.services.policy_rag import PolicyRAGService
 from app.services.store import EduFlowStore
 from app.services.knowledge_ingestion import (
@@ -36,6 +39,8 @@ from app.services.vector_store import ChromaVectorStore, VectorIndexConfiguratio
 __all__ = [
     "ChatCompletionsModelProvider",
     "ChromaVectorStore",
+    "ContextManager",
+    "ConversationMemoryUpdate",
     "CrossEncoderReranker",
     "EduFlowStore",
     "EmbeddingResponse",
@@ -44,6 +49,8 @@ __all__ = [
     "KnowledgeIngestionService",
     "KnowledgeRetriever",
     "LexicalReranker",
+    "LLMContextSummarizer",
+    "LLMLongTermMemoryExtractor",
     "KnowledgeSourceSpec",
     "ModelConfigurationError",
     "ModelErrorCode",

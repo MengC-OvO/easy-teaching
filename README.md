@@ -27,7 +27,11 @@ forbidden.
 flowchart TD
     User[Teacher request] --> API[FastAPI app]
     API --> MainGraph[LangGraph main graph]
+    Checkpoint[(SQLite checkpointer)] -. thread state .-> MainGraph
     MainGraph --> GraphState[GraphState]
+    ProfileMemory[Teacher profile memory] --> ContextManager[ContextManager]
+    GraphState --> ContextManager
+    ContextManager --> Router[IntentRouter]
     GraphState --> Router[IntentRouter]
 
     Router -->|activity_planning| PlanningReAct[Planning ReAct workflow]
@@ -45,8 +49,10 @@ flowchart TD
     ToolRegistry --> SafetyTool[check_activity_safety]
     ToolRegistry --> EylfTool[align_to_eylf_outcomes]
     ToolRegistry --> DraftTool[save_draft]
+    ToolRegistry --> RecallTool[recall_long_term_memory]
     ClassTool --> Store[EduFlowStore SQLite]
     DraftTool --> Store
+    RecallTool --> Store
     EvidenceTool --> PlanningRetrieval[KnowledgeRetriever Hybrid]
     EylfTool --> PlanningRetrieval
     SafetyTool --> SafetyRules[Deterministic safety rules]
@@ -59,6 +65,13 @@ flowchart TD
     Retrieval --> VectorStore[ChromaVectorStore]
     VectorStore --> Chroma[(Chroma collection)]
     PolicyService --> AnswerModel[ChatCompletionsModelProvider]
+    PlanningReAct --> ContextUpdate[context_update]
+    PolicyRAG --> ContextUpdate
+    LearningPlaceholder --> ContextUpdate
+    FamilyPlaceholder --> ContextUpdate
+    Clarification --> ContextUpdate
+    ContextUpdate --> MemoryUpdate[long_memory_update]
+    MemoryUpdate --> Store
 ```
 
 ## LangGraph Flow
@@ -74,7 +87,7 @@ flowchart TD
     Route -->|learning_record| Documentation[documentation_placeholder]
     Route -->|family_communication| Family[family_placeholder]
     Route -->|unknown / needs clarification| Clarification[clarification_placeholder]
-    Route -->|router failed| End([END])
+    Route -->|router failed| ContextUpdate[context_update]
 
     subgraph PlanningSubgraph[Activity Planning ReAct Subgraph]
         PAgent[agent]
@@ -100,11 +113,13 @@ flowchart TD
         Conflict --> PolicyEnd
     end
 
-    PlanningSubgraph --> End
-    PolicySubgraph --> End
-    Documentation --> End
-    Family --> End
-    Clarification --> End
+    PlanningSubgraph --> ContextUpdate
+    PolicySubgraph --> ContextUpdate
+    Documentation --> ContextUpdate
+    Family --> ContextUpdate
+    Clarification --> ContextUpdate
+    ContextUpdate --> MemoryUpdate[long_memory_update]
+    MemoryUpdate --> End([END])
 ```
 
 ## Knowledge Pipeline
@@ -166,6 +181,8 @@ app/tools/
   controlled_tools/check_activity_safety.py checks activity safety risks.
   controlled_tools/align_to_eylf_outcomes.py aligns activities to EYLF outcomes.
   controlled_tools/save_draft.py saves approved drafts.
+  controlled_tools/recall_long_term_memory.py reads task-specific durable memory
+  within the active teacher/class scope.
 
 app/services/
   Model provider, embedding provider, SQLAlchemy store, knowledge ingestion,
@@ -181,6 +198,46 @@ scripts/
 tests/
   Unit and integration tests for the agent backbone.
 ```
+
+## Week 2 State and Memory Delivery
+
+### Day 5: Checkpoint, short-term context, and compaction
+
+- `build_sqlite_checkpointer()` creates a LangGraph SQLite checkpointer, and
+  `checkpoint_config(thread_id)` supplies the stable thread key at invocation.
+- `ThreadContext` retains bounded recent turns, bounded tool traces, and a
+  structured conversation summary. When the recent-turn or token budget is
+  exceeded, `LLMContextSummarizer` compresses the older context rather than
+  passing an unbounded transcript to the next model call.
+- The checkpointer persists graph execution state; the compact context is the
+  smaller prompt projection of that state. They solve different problems.
+
+### Day 6: Long-term memory and recall
+
+- A completed graph request calls the structured memory writer, which returns
+  `noop`, `insert`, `update`, or `delete` operations.
+- Stable teacher preferences can become profile memory and are automatically
+  loaded by the main graph. Task-specific history remains recall-only and is
+  available through the ReAct tool.
+- Long-term records are scoped to a teacher or class and rechecked by the
+  SQLite store before mutation or recall.
+
+## Memory Design
+
+EduFlow uses one SQLite long-term-memory store with two retrieval modes:
+
+- **Profile memory** is limited to active, teacher-scoped preferences such as
+  language and stable output format. The main graph loads up to four records,
+  ordered by importance and recency, before routing and drafting.
+- **Recall-only memory** holds task-specific durable history. The Planning ReAct
+  workflow can call the L0 `recall_long_term_memory` tool when a query needs
+  historical detail. The tool receives teacher/class ownership from graph state,
+  never from model-generated arguments.
+
+After each completed main-graph request, a structured LLM memory decision may
+return `noop`, `insert`, `update`, or `delete`. The SQLite store rechecks the
+active teacher/class scope before applying a mutation. Short-term thread context
+and its compact summary remain separate from cross-session long-term memory.
 
 ## Safety Boundaries
 
@@ -233,6 +290,7 @@ Current controlled tools:
 | `check_activity_safety` | L0 read-only | Auto execute | Check activity drafts for common safety risks |
 | `align_to_eylf_outcomes` | L0 read-only | Auto execute | Map activity drafts to likely EYLF outcomes with evidence |
 | `save_draft` | L2 controlled write | Requires approval | Save a draft record with an idempotency key |
+| `recall_long_term_memory` | L0 read-only | Auto execute | Search task-specific memory for the current teacher/class only |
 
 ## Local Setup
 

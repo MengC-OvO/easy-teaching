@@ -39,7 +39,12 @@ class PolicyRAGService:
         self.retrieval_mode = retrieval_mode
         self.reranker = reranker
 
-    def answer(self, question: str) -> PolicyRAGResult:
+    def answer(
+        self,
+        question: str,
+        *,
+        conversation_context: str = "",
+    ) -> PolicyRAGResult:
         retrieval = self.retriever.retrieve(
             RetrievalRequest(
                 query=question,
@@ -75,7 +80,11 @@ class PolicyRAGService:
         return PolicyRAGResult(
             status=PolicyRAGStatus.ANSWERED,
             question=question,
-            answer=self._generate_grounded_answer(question, evidence),
+            answer=self._generate_grounded_answer(
+                question,
+                evidence,
+                conversation_context=conversation_context,
+            ),
             evidence=evidence,
             citations=[item.citation for item in evidence],
             retrieval=retrieval,
@@ -101,6 +110,8 @@ class PolicyRAGService:
         self,
         question: str,
         evidence: List[PolicyEvidence],
+        *,
+        conversation_context: str = "",
     ) -> str:
         if self.model_provider is None:
             return self._build_evidence_answer(question, evidence)
@@ -114,7 +125,11 @@ class PolicyRAGService:
                     ),
                     ModelMessage(
                         role=ModelRole.USER,
-                        content=self._user_prompt(question, evidence),
+                        content=self._user_prompt(
+                            question,
+                            evidence,
+                            conversation_context=conversation_context,
+                        ),
                     ),
                 ],
                 temperature=0.0,
@@ -136,6 +151,8 @@ class PolicyRAGService:
         self,
         question: str,
         evidence: List[PolicyEvidence],
+        *,
+        conversation_context: str = "",
     ) -> str:
         evidence_blocks = []
         for item in evidence:
@@ -149,8 +166,14 @@ class PolicyRAGService:
                 )
             )
         joined_evidence = "\n\n".join(evidence_blocks)
+        context_block = (
+            f"Conversation context (background only, not evidence):\n{conversation_context}\n\n"
+            if conversation_context
+            else ""
+        )
         return (
             f"Question: {question}\n\n"
+            f"{context_block}"
             "Evidence:\n"
             f"{joined_evidence}\n\n"
             "Write a concise policy answer for a teacher. Use citations like "

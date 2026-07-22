@@ -10,6 +10,10 @@ class Settings(BaseSettings):
         default="data/local/eduflow.sqlite3",
         validation_alias="DATABASE_PATH",
     )
+    checkpoint_database_path: str = Field(
+        default="data/local/checkpoints.sqlite3",
+        validation_alias="CHECKPOINT_DATABASE_PATH",
+    )
     model_base_url: str = Field(default="", validation_alias="MODEL_BASE_URL")
     model_chat_completions_path: str = Field(
         default="/chat/completions",

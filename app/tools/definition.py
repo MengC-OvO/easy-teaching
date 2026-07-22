@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas import RiskLevel
 
@@ -18,6 +18,7 @@ class ToolCategory(str, Enum):
     DRAFT = "draft"
     POLICY = "policy"
     SAFETY = "safety"
+    MEMORY = "memory"
     SYSTEM = "system"
 
 
@@ -91,6 +92,16 @@ class ToolResult(BaseModel):
 ToolHandler = Callable[[BaseModel], ToolResult]
 
 
+class ToolExecutionContext(BaseModel):
+    """Trusted request scope supplied by the graph, never by the model."""
+
+    teacher_id: Optional[str] = None
+    class_id: Optional[str] = None
+
+
+RuntimeToolHandler = Callable[[BaseModel, ToolExecutionContext], ToolResult]
+
+
 class ToolDefinition(BaseModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -99,9 +110,16 @@ class ToolDefinition(BaseModel):
     output_model: Type[BaseModel]
     risk_level: RiskLevel
     permission: ToolPermission
-    handler: ToolHandler
+    handler: Optional[ToolHandler] = None
+    runtime_handler: Optional[RuntimeToolHandler] = None
 
     model_config = {"arbitrary_types_allowed": True}
+
+    @model_validator(mode="after")
+    def validate_handler(self) -> "ToolDefinition":
+        if self.handler is None and self.runtime_handler is None:
+            raise ValueError("ToolDefinition needs a handler or runtime_handler")
+        return self
 
     @property
     def requires_approval(self) -> bool:
