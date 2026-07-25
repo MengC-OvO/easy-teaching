@@ -2,9 +2,9 @@
 
 EduFlow AU Agent is a learning project for building a teacher workflow agent
 for Australian early childhood education scenarios. The current codebase
-focuses on a runnable, testable agent backbone: intent routing, controlled
-tools, ReAct execution, document ingestion, embeddings, and a local vector
-index for RAG.
+focuses on a runnable, testable agent backbone: intent routing, isolated
+specialist workflows, controlled tools, file-based Skills, ReAct execution,
+document ingestion, embeddings, and a local vector index for RAG.
 
 All project data should be synthetic, public, or thoroughly de-identified.
 
@@ -20,6 +20,16 @@ The agent supports teacher-assistant workflows for:
 The agent may draft, search, and reason, but code-level validation controls
 which tools can run, which writes require approval, and which actions are
 forbidden.
+
+## Current Project Status
+
+| Milestone | Status | Delivered |
+| --- | --- | --- |
+| Week 1 | Complete | API/config foundation, model provider, intent routing, LangGraph main flow, knowledge ingestion, embeddings, and vector retrieval |
+| Week 2 | Complete | Controlled tools, Planning ReAct loop, Policy RAG with citations and evidence gates, checkpoints, compact thread context, and scoped long-term memory |
+| Week 3 Day 1 | Complete | Shared specialist input/output contract plus Planning, Policy, Documentation, and Family workflow wrappers |
+| Week 3 Day 2 | Complete | Per-specialist tool allowlists, step budgets, forbidden actions, and code-level isolation checks |
+| Week 3 Day 3 | Complete | Validated `ActivityPlan` output plus a file-based `activity_planning` Skill that is loaded and enforced by the Planning ReAct workflow |
 
 ## Architecture
 
@@ -44,6 +54,10 @@ flowchart TD
     ReActAgent --> ModelProvider[ChatCompletionsModelProvider]
     ReActAgent --> ReActExecutor[ReActToolExecutor]
     ReActExecutor --> ToolRegistry[ToolRegistry]
+    ToolRegistry --> LoadSkillTool[load_skill]
+    LoadSkillTool --> SkillLoader[SkillLoader]
+    SkillLoader --> SkillRegistry[Trusted SkillRegistry]
+    SkillRegistry --> PlanningSkill[activity_planning SKILL.md + manifest.json]
     ToolRegistry --> ClassTool[get_class_profile]
     ToolRegistry --> EvidenceTool[retrieve_risk_guidance]
     ToolRegistry --> SafetyTool[check_activity_safety]
@@ -92,12 +106,24 @@ flowchart TD
     subgraph PlanningSubgraph[Activity Planning ReAct Subgraph]
         PAgent[agent]
         PExecutor[tool_executor]
+        SkillGate{activity_planning loaded?}
+        RequiredTools{required Skill tools complete?}
         PMax[max_steps_stop]
         PAgent -->|call tool| PExecutor
         PExecutor -->|continue| PAgent
+        PAgent -->|final answer| SkillGate
+        SkillGate -->|no| SkillFailure[skill_required failure]
+        SkillFailure --> PEnd([subgraph END])
+        PAgent -. before Skill load .-> LoadOnly[only load_skill is available]
+        LoadOnly --> PAgent
+        SkillGate -->|yes| RequiredTools
+        RequiredTools -->|missing| RequirementFailure[skill_requirements_missing failure]
+        RequirementFailure --> PEnd
+        RequiredTools -->|yes| ValidatePlan[validate ActivityPlan JSON]
         PExecutor -->|max steps| PMax
-        PAgent -->|final / stop| PEnd([subgraph END])
-        PExecutor -->|approval / error / complete| PEnd
+        ValidatePlan -->|valid| PEnd
+        ValidatePlan -->|invalid| PEnd
+        PExecutor -->|approval / error| PEnd
         PMax --> PEnd
     end
 
@@ -164,18 +190,28 @@ app/config.py
   Runtime settings loaded from .env.
 
 app/schemas/
-  Pydantic models for graph state, intent routing, ReAct decisions, and
-  knowledge chunks/citations.
+  Pydantic models for graph state, specialist contracts and permissions,
+  Skill manifests, ActivityPlan output, ReAct decisions, and knowledge
+  chunks/citations.
 
 app/workflows/
-  LangGraph workflows. The main graph routes requests by intent and connects
-  activity planning to the ReAct workflow.
+  LangGraph workflows. The main graph routes requests by intent through a
+  shared specialist contract to Planning, Policy, Documentation, or Family.
 
 app/agents/
   IntentRouter, ReActAgent, and ReActToolExecutor orchestration logic.
 
+app/skills/
+  Trusted file-based specialist Skills. SkillRegistry maps safe names to local
+  directories; SkillLoader reads and validates SKILL.md and manifest.json
+  without executing code. activity_planning/ contains the current Planning
+  Skill.
+
 app/tools/
   ToolDefinition, ToolResult, ToolRegistry, and controlled tool modules.
+  controlled_tools/load_skill.py exposes SkillLoader to the ReAct agent as an
+  L0 read-only tool and converts loader failures into structured ToolResult
+  errors.
   controlled_tools/get_class_profile.py reads class context.
   controlled_tools/retrieve_risk_guidance.py retrieves risk, safety, and regulatory guidance.
   controlled_tools/check_activity_safety.py checks activity safety risks.
@@ -221,6 +257,55 @@ tests/
   available through the ReAct tool.
 - Long-term records are scoped to a teacher or class and rechecked by the
   SQLite store before mutation or recall.
+
+## Week 3 Specialist and Skill Delivery
+
+### Day 1: Specialist workflow contract
+
+- `SpecialistInput` is the common input passed from the main graph to a
+  specialist. `SpecialistResult` is the common result mapped back to the main
+  graph.
+- Planning and Policy keep their own internal graph state. Their workflow
+  wrapper converts the shared specialist input into internal state, invokes the
+  internal graph, and converts its result back to `SpecialistResult`.
+- Documentation and Family currently use one-node specialist workflows behind
+  the same contract, so the main graph does not depend on each implementation's
+  private state shape.
+
+### Day 2: Specialist permissions
+
+- Each specialist receives an immutable `SpecialistPermissionPolicy` containing
+  its identity, allowed tool names, maximum steps, and forbidden actions.
+- Planning is limited to its controlled tool allowlist and seven ReAct steps.
+  Policy, Documentation, and Family currently receive no function-calling
+  tools.
+- Permission checks exist both while assembling workflows and at actual tool
+  execution. A Skill may request fewer capabilities, but it cannot grant itself
+  capabilities outside the specialist policy.
+
+### Day 3: File-based Planning Skill
+
+- `activity_planning/SKILL.md` contains the model-readable workflow.
+  `manifest.json` declares the specialist, required and optional tools, version,
+  and expected `ActivityPlan` output model.
+- `SkillRegistry` accepts a safe registered name instead of an arbitrary user
+  path. `SkillLoader` reads fixed files, rejects symlinks and path escapes,
+  enforces file-size and UTF-8 checks, validates the manifest, and verifies all
+  requested tools against both the specialist permission and actual tool
+  registry.
+- `load_skill.py` is the agent-facing tool adapter. It calls `SkillLoader` and
+  returns either a validated `LoadedSkill` or a structured tool error.
+- The Planning ReAct graph starts with only `load_skill` visible. After
+  `activity_planning` is loaded, the available and executable tools are reduced
+  to the intersection of the Skill manifest, the Planning permission policy,
+  and the registered tools.
+- The graph refuses a final answer until every required Skill tool has completed
+  successfully. The Planning workflow then validates the final JSON against
+  `ActivityPlan`, maps its title and content into the shared draft contract, and
+  promotes its EYLF citations into `GraphState`.
+- Skills currently contain Markdown and JSON only, so loading a Skill executes
+  no Skill-supplied code. User-created registration, script execution, and a
+  separate sandbox runner are future work.
 
 ## Memory Design
 
@@ -285,6 +370,7 @@ Current controlled tools:
 
 | Tool | Risk | Permission | Purpose |
 | --- | --- | --- | --- |
+| `load_skill` | L0 read-only | Auto execute | Load and validate a trusted registered specialist Skill |
 | `get_class_profile` | L0 read-only | Auto execute | Read synthetic class profile data |
 | `retrieve_risk_guidance` | L0 read-only | Auto execute | Retrieve local risk, safety, and regulatory guidance |
 | `check_activity_safety` | L0 read-only | Auto execute | Check activity drafts for common safety risks |

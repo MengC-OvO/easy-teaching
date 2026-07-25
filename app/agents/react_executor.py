@@ -1,6 +1,6 @@
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Set
 
-from app.schemas import Observation, ReActAction, ReActState, StopReason
+from app.schemas import LoadedSkill, Observation, ReActAction, ReActState, RiskLevel, StopReason
 from app.tools import ToolErrorCode, ToolExecutionContext, ToolRegistry, ToolResult
 
 
@@ -10,11 +10,13 @@ class ReActToolExecutor:
         registry: ToolRegistry,
         *,
         allowed_tool_names: Optional[Iterable[str]] = None,
+        required_skill_name: Optional[str] = None,
     ) -> None:
         self.registry = registry
         self.allowed_tool_names = (
             set(allowed_tool_names) if allowed_tool_names is not None else None
         )
+        self.required_skill_name = required_skill_name
 
     def execute(self, state: ReActState, *, approved: bool = False) -> Dict[str, object]:
         if state.decision is None:
@@ -24,6 +26,12 @@ class ReActToolExecutor:
             }
 
         if state.decision.action is ReActAction.FINAL_ANSWER:
+            skill_stop_reason = self._validate_final_skill_state(state)
+            if skill_stop_reason is not None:
+                return {
+                    "stop_reason": skill_stop_reason,
+                    "current_step": state.current_step + 1,
+                }
             return {
                 "final_answer": state.decision.final_answer,
                 "stop_reason": StopReason.COMPLETED,
@@ -37,17 +45,91 @@ class ReActToolExecutor:
                 "current_step": state.current_step + 1,
             }
 
+        if (
+            self.required_skill_name is not None
+            and state.loaded_skill is None
+            and tool_call.tool_name == "load_skill"
+            and tool_call.tool_args.get("skill_name") != self.required_skill_name
+        ):
+            result = ToolResult.fail(
+                code=ToolErrorCode.PERMISSION_DENIED,
+                message=(
+                    "This workflow requires Skill: "
+                    f"{self.required_skill_name}"
+                ),
+                risk_level=RiskLevel.L3_FORBIDDEN,
+                recoverable=False,
+                details={"required_skill_name": self.required_skill_name},
+            )
+            return self._tool_result_update(state, tool_call.tool_name, result)
+
         result = self.registry.execute(
             tool_call.tool_name,
             tool_call.tool_args,
             approved=approved,
-            allowed_tool_names=self.allowed_tool_names,
+            allowed_tool_names=self.effective_allowed_tool_names(state),
             execution_context=ToolExecutionContext(
                 teacher_id=state.teacher_id,
                 class_id=state.class_id,
             ),
         )
-        observation = self._result_to_observation(tool_call.tool_name, result)
+        next_state = self._tool_result_update(state, tool_call.tool_name, result)
+        if (
+            result.success
+            and tool_call.tool_name == "load_skill"
+            and self.required_skill_name is not None
+        ):
+            next_state["loaded_skill"] = LoadedSkill.model_validate(result.data)
+        return next_state
+
+    def effective_allowed_tool_names(self, state: ReActState) -> Optional[Set[str]]:
+        if self.required_skill_name is None:
+            return (
+                set(self.allowed_tool_names)
+                if self.allowed_tool_names is not None
+                else None
+            )
+        base_allowed = (
+            set(self.allowed_tool_names)
+            if self.allowed_tool_names is not None
+            else {tool.name for tool in self.registry.list_tools()}
+        )
+        if state.loaded_skill is None:
+            return base_allowed & {"load_skill"}
+        if state.loaded_skill.manifest.name != self.required_skill_name:
+            return set()
+        return base_allowed & set(state.loaded_skill.manifest.tool_names)
+
+    def _validate_final_skill_state(
+        self,
+        state: ReActState,
+    ) -> Optional[StopReason]:
+        if self.required_skill_name is None:
+            return None
+        if (
+            state.loaded_skill is None
+            or state.loaded_skill.manifest.name != self.required_skill_name
+        ):
+            return StopReason.SKILL_REQUIRED
+        successful_tools = {
+            observation.tool_name
+            for observation in state.observations
+            if observation.success
+        }
+        missing_tools = (
+            state.loaded_skill.manifest.required_tool_names - successful_tools
+        )
+        if missing_tools:
+            return StopReason.SKILL_REQUIREMENTS_MISSING
+        return None
+
+    def _tool_result_update(
+        self,
+        state: ReActState,
+        tool_name: str,
+        result: ToolResult,
+    ) -> Dict[str, object]:
+        observation = self._result_to_observation(tool_name, result)
         next_state = {
             "observations": [observation],
             "current_step": state.current_step + 1,

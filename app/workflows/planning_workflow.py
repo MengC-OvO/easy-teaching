@@ -1,10 +1,15 @@
 """Planning specialist adapter around the internal ReAct graph."""
 
+import json
 from typing import Iterable, Mapping, Optional, Protocol, Union
 
+from pydantic import ValidationError
+
 from app.schemas import (
+    ActivityPlan,
     Approval,
     ApprovalStatus,
+    Citation,
     get_specialist_permission,
     Draft,
     GraphError,
@@ -40,6 +45,8 @@ class PlanningSpecialistWorkflow:
         *,
         permission: Optional[SpecialistPermissionPolicy] = None,
         max_steps: Optional[int] = None,
+        required_skill_name: Optional[str] = None,
+        validate_activity_plan_output: bool = False,
     ) -> None:
         resolved_permission = _resolve_planning_permission(
             permission,
@@ -48,6 +55,8 @@ class PlanningSpecialistWorkflow:
         self.react_workflow = react_workflow
         self.permission = resolved_permission
         self.max_steps = resolved_permission.max_steps
+        self.required_skill_name = required_skill_name
+        self.validate_activity_plan_output = validate_activity_plan_output
 
     def invoke(self, state: SpecialistInput) -> SpecialistResult:
         if state.specialist is not SpecialistKind.PLANNING:
@@ -59,6 +68,12 @@ class PlanningSpecialistWorkflow:
                 teacher_id=state.teacher_id,
                 class_id=state.class_id,
                 conversation_context=state.conversation_context,
+                required_skill_name=self.required_skill_name,
+                final_output_schema=(
+                    ActivityPlan.model_json_schema()
+                    if self.validate_activity_plan_output
+                    else {}
+                ),
                 max_steps=self.max_steps,
             )
         )
@@ -66,6 +81,39 @@ class PlanningSpecialistWorkflow:
         trace = [self._trace_event(react_state)]
 
         if react_state.stop_reason is StopReason.COMPLETED:
+            if self.validate_activity_plan_output:
+                try:
+                    activity_plan = self._parse_activity_plan(
+                        react_state.final_answer or ""
+                    )
+                except (ValidationError, ValueError) as error:
+                    trace[0].metadata["output_validation_error"] = str(error)
+                    return SpecialistResult(
+                        specialist=SpecialistKind.PLANNING,
+                        status=WorkflowStatus.FAILED,
+                        errors=[
+                            GraphError(
+                                code="invalid_activity_plan",
+                                message=(
+                                    "Planning finished with output that does not "
+                                    "match the ActivityPlan contract."
+                                ),
+                                recoverable=True,
+                            )
+                        ],
+                        trace=trace,
+                    )
+                return SpecialistResult(
+                    specialist=SpecialistKind.PLANNING,
+                    status=WorkflowStatus.COMPLETED,
+                    draft=Draft(
+                        title=activity_plan.title,
+                        content=activity_plan.model_dump_json(indent=2),
+                        is_draft=True,
+                    ),
+                    citations=self._activity_plan_citations(activity_plan),
+                    trace=trace,
+                )
             return SpecialistResult(
                 specialist=SpecialistKind.PLANNING,
                 status=WorkflowStatus.COMPLETED,
@@ -101,6 +149,8 @@ class PlanningSpecialistWorkflow:
                         StopReason.MAX_STEPS_REACHED,
                         StopReason.TOOL_ERROR,
                         StopReason.MODEL_ERROR,
+                        StopReason.SKILL_REQUIRED,
+                        StopReason.SKILL_REQUIREMENTS_MISSING,
                     },
                 )
             ],
@@ -114,6 +164,11 @@ class PlanningSpecialistWorkflow:
             metadata={
                 "stop_reason": state.stop_reason.value,
                 "current_step": state.current_step,
+                "loaded_skill_name": (
+                    state.loaded_skill.manifest.name
+                    if state.loaded_skill is not None
+                    else None
+                ),
                 "observations": [
                     {
                         "tool_name": observation.tool_name,
@@ -129,6 +184,32 @@ class PlanningSpecialistWorkflow:
             },
         )
 
+    def _parse_activity_plan(self, final_answer: str) -> ActivityPlan:
+        candidate = final_answer.strip()
+        if candidate.startswith("```") and candidate.endswith("```"):
+            lines = candidate.splitlines()
+            if len(lines) >= 3:
+                candidate = "\n".join(lines[1:-1]).strip()
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError as error:
+            raise ValueError("final answer is not valid JSON") from error
+        return ActivityPlan.model_validate(payload)
+
+    def _activity_plan_citations(
+        self,
+        plan: ActivityPlan,
+    ) -> list[Citation]:
+        citations = []
+        seen = set()
+        for alignment in plan.eylf_alignments:
+            for citation in alignment.citations:
+                key = citation.model_dump_json()
+                if key not in seen:
+                    citations.append(citation)
+                    seen.add(key)
+        return citations
+
 
 def build_planning_workflow(
     *,
@@ -138,21 +219,27 @@ def build_planning_workflow(
     approved: bool = False,
     max_steps: Optional[int] = None,
     permission: Optional[SpecialistPermissionPolicy] = None,
+    required_skill_name: Optional[str] = "activity_planning",
 ) -> PlanningSpecialistWorkflow:
     resolved_permission = _resolve_planning_permission(
         permission,
         allowed_tool_names=allowed_tool_names,
         max_steps=max_steps,
     )
+    if required_skill_name is not None:
+        resolved_permission.require_tool("load_skill")
     react_workflow = build_react_graph(
         agent=agent,
         registry=registry,
         allowed_tool_names=resolved_permission.allowed_tool_names,
         approved=approved,
+        required_skill_name=required_skill_name,
     )
     return PlanningSpecialistWorkflow(
         react_workflow,
         permission=resolved_permission,
+        required_skill_name=required_skill_name,
+        validate_activity_plan_output=required_skill_name is not None,
     )
 
 

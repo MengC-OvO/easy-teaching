@@ -73,6 +73,7 @@ def build_graph(database_url: str, *, approved: bool):
             "save_draft",
         },
         approved=approved,
+        required_skill_name=None,
     )
     return build_main_graph(IntentRouter(), planning_workflow=planning_workflow)
 

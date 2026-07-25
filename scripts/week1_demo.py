@@ -114,6 +114,7 @@ def build_demo_graph(database_url: str, *, approved: bool, include_final_answer:
             "save_draft",
         },
         approved=approved,
+        required_skill_name=None,
     )
     return build_main_graph(DemoRouter(), planning_workflow=planning_workflow)
 

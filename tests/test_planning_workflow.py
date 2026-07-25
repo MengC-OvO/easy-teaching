@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.schemas import (
@@ -161,3 +163,85 @@ def test_planning_builder_rejects_tool_outside_permission_policy() -> None:
 def test_planning_builder_rejects_step_budget_expansion() -> None:
     with pytest.raises(SpecialistPermissionDenied, match="7-step budget"):
         build_planning_workflow(max_steps=8)
+
+
+def valid_activity_plan_json() -> str:
+    return json.dumps(
+        {
+            "title": "Outdoor texture walk",
+            "class_profile_summary": "A synthetic preschool class aged 3–5.",
+            "learning_goals": ["Describe textures and collaborate with peers."],
+            "materials": ["Collection baskets", "Picture cards"],
+            "steps": [
+                {
+                    "sequence": 1,
+                    "instruction": "Invite children to collect safe natural items.",
+                    "duration_minutes": 15,
+                }
+            ],
+            "observation_points": [
+                {
+                    "focus": "Language and collaboration",
+                    "indicators": ["Uses descriptive words with peers."],
+                }
+            ],
+            "eylf_alignments": [
+                {
+                    "outcome": "EYLF Outcome 4",
+                    "rationale": "Children investigate natural materials.",
+                    "evidence_ids": ["eylf-v2-chunk-4"],
+                    "citations": [
+                        {
+                            "source": "EYLF V2.0",
+                            "title": "Belonging, Being and Becoming",
+                            "section": "Outcome 4",
+                            "page": 47,
+                        }
+                    ],
+                }
+            ],
+            "is_draft": True,
+        }
+    )
+
+
+def test_planning_workflow_validates_activity_plan_and_maps_citations() -> None:
+    workflow = PlanningSpecialistWorkflow(
+        StubReActWorkflow(
+            ReActState(
+                user_message="Plan an activity.",
+                stop_reason=StopReason.COMPLETED,
+                final_answer=valid_activity_plan_json(),
+            )
+        ),
+        required_skill_name="activity_planning",
+        validate_activity_plan_output=True,
+    )
+
+    result = workflow.invoke(planning_input())
+
+    assert result.status is WorkflowStatus.COMPLETED
+    assert result.draft is not None
+    assert result.draft.title == "Outdoor texture walk"
+    assert json.loads(result.draft.content)["is_draft"] is True
+    assert result.citations[0].section == "Outcome 4"
+
+
+def test_planning_workflow_rejects_invalid_activity_plan_output() -> None:
+    workflow = PlanningSpecialistWorkflow(
+        StubReActWorkflow(
+            ReActState(
+                user_message="Plan an activity.",
+                stop_reason=StopReason.COMPLETED,
+                final_answer='{"title": "Incomplete"}',
+            )
+        ),
+        required_skill_name="activity_planning",
+        validate_activity_plan_output=True,
+    )
+
+    result = workflow.invoke(planning_input())
+
+    assert result.status is WorkflowStatus.FAILED
+    assert result.errors[0].code == "invalid_activity_plan"
+    assert "output_validation_error" in result.trace[0].metadata

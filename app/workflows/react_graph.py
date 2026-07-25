@@ -24,7 +24,8 @@ def _state_from_input(state: ReActStateInput) -> ReActState:
 
 def build_react_agent_node(
     agent: ReActAgentProtocol,
-    available_tools: List[ToolDefinition],
+    registry: ToolRegistry,
+    executor: ReActToolExecutor,
 ):
     def react_agent_node(state: ReActStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
@@ -37,6 +38,11 @@ def build_react_agent_node(
             }
 
         try:
+            available_tools = registry.list_tools(
+                allowed_tool_names=executor.effective_allowed_tool_names(
+                    current_state
+                )
+            )
             decision = agent.decide(current_state, available_tools)
         except ModelProviderError:
             return {
@@ -97,22 +103,21 @@ def build_react_graph(
     registry: Optional[ToolRegistry] = None,
     allowed_tool_names: Optional[Iterable[str]] = None,
     approved: bool = False,
+    required_skill_name: Optional[str] = None,
 ):
     resolved_registry = registry or _default_registry()
     resolved_agent = agent or ReActAgent()
     allowed_tool_name_set = _normalize_allowed_tool_names(allowed_tool_names)
-    available_tools = resolved_registry.list_tools(
-        allowed_tool_names=allowed_tool_name_set,
-    )
     executor = ReActToolExecutor(
         resolved_registry,
         allowed_tool_names=allowed_tool_name_set,
+        required_skill_name=required_skill_name,
     )
 
     graph = StateGraph(ReActState)
     graph.add_node(
         "agent",
-        build_react_agent_node(resolved_agent, available_tools),
+        build_react_agent_node(resolved_agent, resolved_registry, executor),
     )
     graph.add_node(
         "tool_executor",
