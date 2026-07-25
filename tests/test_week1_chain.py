@@ -113,6 +113,7 @@ def build_planning_chain(tmp_path, *, approved: bool, agent: SequencedPlanningAg
             "save_draft",
         },
         approved=approved,
+        required_skill_name=None,
     )
     return build_main_graph(StubRouter(), planning_workflow=planning_workflow)
 

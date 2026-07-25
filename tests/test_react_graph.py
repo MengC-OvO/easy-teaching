@@ -10,7 +10,14 @@ from app.schemas import (
     StopReason,
     ToolCall,
 )
-from app.tools import ToolCategory, ToolDefinition, ToolPermission, ToolRegistry, ToolResult
+from app.tools import (
+    ToolCategory,
+    ToolDefinition,
+    ToolPermission,
+    ToolRegistry,
+    ToolResult,
+    build_load_skill_tool,
+)
 from app.workflows import build_react_graph
 
 
@@ -53,10 +60,12 @@ class SequencedAgent:
         self.decisions = decisions
         self.calls = 0
         self.seen_tool_names: List[str] = []
+        self.seen_tool_name_history: List[List[str]] = []
 
     def decide(self, state: ReActState, available_tools: List[ToolDefinition]) -> ReActDecision:
         self.calls += 1
         self.seen_tool_names = [tool.name for tool in available_tools]
+        self.seen_tool_name_history.append(self.seen_tool_names)
         return self.decisions.pop(0)
 
 
@@ -187,3 +196,131 @@ def test_react_graph_stops_on_model_provider_error() -> None:
 
     assert result["stop_reason"] is StopReason.MODEL_ERROR
     assert result["current_step"] == 0
+
+
+def make_skill_registry() -> ToolRegistry:
+    skill_tool_names = {
+        "get_class_profile",
+        "align_to_eylf_outcomes",
+        "retrieve_risk_guidance",
+        "check_activity_safety",
+        "recall_long_term_memory",
+    }
+    registry = ToolRegistry()
+    registry.register(
+        build_load_skill_tool(
+            registered_tool_names={"load_skill", *skill_tool_names},
+        )
+    )
+    for tool_name in sorted(skill_tool_names):
+        registry.register(
+            ToolDefinition(
+                name=tool_name,
+                description=f"Test implementation for {tool_name}.",
+                category=ToolCategory.SYSTEM,
+                input_model=EchoInput,
+                output_model=EchoOutput,
+                risk_level=RiskLevel.L0_READ_ONLY,
+                permission=ToolPermission.AUTO_EXECUTE,
+                handler=echo_handler,
+            )
+        )
+    return registry
+
+
+def call_named_tool(tool_name: str) -> ReActDecision:
+    return ReActDecision(
+        action=ReActAction.CALL_TOOL,
+        reason=f"Call {tool_name}.",
+        tool_call=ToolCall(tool_name=tool_name, tool_args={"text": "ok"}),
+    )
+
+
+def test_skill_aware_react_graph_loads_then_limits_tools_to_manifest() -> None:
+    agent = SequencedAgent(
+        [
+            ReActDecision(
+                action=ReActAction.CALL_TOOL,
+                reason="Load the required Skill.",
+                tool_call=ToolCall(
+                    tool_name="load_skill",
+                    tool_args={"skill_name": "activity_planning"},
+                ),
+            ),
+            call_named_tool("get_class_profile"),
+            call_named_tool("align_to_eylf_outcomes"),
+            final_answer_decision('{"title": "Ready"}'),
+        ]
+    )
+    graph = build_react_graph(
+        agent=agent,
+        registry=make_skill_registry(),
+        required_skill_name="activity_planning",
+    )
+
+    result = graph.invoke(
+        ReActState(
+            user_message="Plan an activity.",
+            required_skill_name="activity_planning",
+            max_steps=5,
+        )
+    )
+
+    assert result["stop_reason"] is StopReason.COMPLETED
+    assert result["loaded_skill"].manifest.name == "activity_planning"
+    assert agent.seen_tool_name_history[0] == ["load_skill"]
+    assert "load_skill" not in agent.seen_tool_name_history[1]
+    assert set(agent.seen_tool_name_history[1]) == {
+        "get_class_profile",
+        "align_to_eylf_outcomes",
+        "retrieve_risk_guidance",
+        "check_activity_safety",
+        "recall_long_term_memory",
+    }
+
+
+def test_skill_aware_react_graph_rejects_final_answer_before_loading() -> None:
+    graph = build_react_graph(
+        agent=SequencedAgent([final_answer_decision()]),
+        registry=make_skill_registry(),
+        required_skill_name="activity_planning",
+    )
+
+    result = graph.invoke(
+        ReActState(
+            user_message="Plan an activity.",
+            required_skill_name="activity_planning",
+        )
+    )
+
+    assert result["stop_reason"] is StopReason.SKILL_REQUIRED
+
+
+def test_skill_aware_react_graph_requires_manifest_required_tools() -> None:
+    agent = SequencedAgent(
+        [
+            ReActDecision(
+                action=ReActAction.CALL_TOOL,
+                reason="Load the required Skill.",
+                tool_call=ToolCall(
+                    tool_name="load_skill",
+                    tool_args={"skill_name": "activity_planning"},
+                ),
+            ),
+            final_answer_decision(),
+        ]
+    )
+    graph = build_react_graph(
+        agent=agent,
+        registry=make_skill_registry(),
+        required_skill_name="activity_planning",
+    )
+
+    result = graph.invoke(
+        ReActState(
+            user_message="Plan an activity.",
+            required_skill_name="activity_planning",
+        )
+    )
+
+    assert result["stop_reason"] is StopReason.SKILL_REQUIREMENTS_MISSING

@@ -81,8 +81,31 @@ class ReActAgent:
                     f"{state.conversation_context or '[No prior conversation context.]'}"
                 ),
                 f"Step budget:\ncurrent_step={state.current_step}, max_steps={state.max_steps}",
+                self._format_skill(state),
                 "Available tools:\n" + self._format_tools(available_tools),
                 "Previous observations:\n" + self._format_observations(state.observations),
+            ]
+        )
+
+    def _format_skill(self, state: ReActState) -> str:
+        if state.required_skill_name is None:
+            return "Required Skill:\n[No required Skill.]"
+        if state.loaded_skill is None:
+            return (
+                "Required Skill:\n"
+                f"Load {state.required_skill_name!r} with load_skill before doing "
+                "anything else. Do not provide a final answer before it is loaded."
+            )
+        return "\n".join(
+            [
+                "Loaded Skill:",
+                state.loaded_skill.instructions,
+                "Final output contract:",
+                (
+                    "Set final_answer to a JSON string matching this JSON Schema. "
+                    "Do not wrap the JSON in Markdown fences."
+                ),
+                json.dumps(state.final_output_schema, ensure_ascii=False),
             ]
         )
 

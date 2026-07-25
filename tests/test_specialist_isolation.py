@@ -124,6 +124,7 @@ def test_planning_runtime_stops_at_reduced_step_budget() -> None:
         registry=registry_with_planning_tool(),
         allowed_tool_names={"get_class_profile"},
         max_steps=1,
+        required_skill_name=None,
     )
 
     result = workflow.invoke(planning_input())

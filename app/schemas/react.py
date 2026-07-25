@@ -5,6 +5,8 @@ from typing_extensions import Annotated
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.skill import LoadedSkill
+
 
 class ReActAction(str, Enum):
     CALL_TOOL = "call_tool"
@@ -18,6 +20,8 @@ class StopReason(str, Enum):
     TOOL_ERROR = "tool_error"
     APPROVAL_REQUIRED = "approval_required"
     MODEL_ERROR = "model_error"
+    SKILL_REQUIRED = "skill_required"
+    SKILL_REQUIREMENTS_MISSING = "skill_requirements_missing"
 
 
 class ToolCall(BaseModel):
@@ -58,6 +62,9 @@ class ReActState(BaseModel):
     teacher_id: Optional[str] = None
     class_id: Optional[str] = None
     conversation_context: str = ""
+    required_skill_name: Optional[str] = None
+    loaded_skill: Optional[LoadedSkill] = None
+    final_output_schema: Dict[str, Any] = Field(default_factory=dict)
     max_steps: int = Field(default=4, ge=1)
     current_step: int = Field(default=0, ge=0)
     decision: Optional[ReActDecision] = None
