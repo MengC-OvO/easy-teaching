@@ -1,0 +1,16 @@
+{
+  "name": "activity_planning",
+  "version": "1.0",
+  "specialist": "planning",
+  "description": "Create a safe, teacher-reviewable early childhood activity plan grounded in synthetic class context and retrieved EYLF evidence.",
+  "required_tool_names": [
+    "get_class_profile",
+    "align_to_eylf_outcomes"
+  ],
+  "optional_tool_names": [
+    "retrieve_risk_guidance",
+    "check_activity_safety",
+    "recall_long_term_memory"
+  ],
+  "output_model": "ActivityPlan"
+}

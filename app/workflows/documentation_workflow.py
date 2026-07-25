@@ -7,8 +7,10 @@ from pydantic import BaseModel
 
 from app.schemas import (
     Draft,
+    get_specialist_permission,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     SpecialistResult,
     TraceEvent,
     WorkflowStatus,
@@ -74,8 +76,21 @@ def documentation_skeleton_node(
 class DocumentationSpecialistWorkflow:
     """Expose the documentation subgraph through the specialist contract."""
 
-    def __init__(self, graph) -> None:
+    def __init__(
+        self,
+        graph,
+        *,
+        permission: Optional[SpecialistPermissionPolicy] = None,
+    ) -> None:
+        resolved_permission = permission or get_specialist_permission(
+            SpecialistKind.DOCUMENTATION
+        )
+        if resolved_permission.specialist is not SpecialistKind.DOCUMENTATION:
+            raise ValueError(
+                "Documentation workflow requires a documentation permission policy"
+            )
         self.graph = graph
+        self.permission = resolved_permission
 
     def invoke(self, state: SpecialistInput) -> SpecialistResult:
         if state.specialist is not SpecialistKind.DOCUMENTATION:
@@ -88,9 +103,12 @@ class DocumentationSpecialistWorkflow:
         return output.result
 
 
-def build_documentation_workflow() -> DocumentationSpecialistWorkflow:
+def build_documentation_workflow(
+    *,
+    permission: Optional[SpecialistPermissionPolicy] = None,
+) -> DocumentationSpecialistWorkflow:
     graph = StateGraph(DocumentationWorkflowState)
     graph.add_node("documentation", documentation_skeleton_node)
     graph.set_entry_point("documentation")
     graph.add_edge("documentation", END)
-    return DocumentationSpecialistWorkflow(graph.compile())
+    return DocumentationSpecialistWorkflow(graph.compile(), permission=permission)

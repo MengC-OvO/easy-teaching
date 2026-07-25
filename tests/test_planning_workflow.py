@@ -6,10 +6,12 @@ from app.schemas import (
     ReActState,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionDenied,
+    SpecialistPermissionPolicy,
     StopReason,
     WorkflowStatus,
 )
-from app.workflows import PlanningSpecialistWorkflow
+from app.workflows import PlanningSpecialistWorkflow, build_planning_workflow
 
 
 class StubReActWorkflow:
@@ -123,3 +125,39 @@ def test_planning_workflow_rejects_wrong_specialist_kind() -> None:
                 user_message="Draft a learning story.",
             )
         )
+
+
+def test_planning_workflow_receives_permission_and_uses_its_step_budget() -> None:
+    react_workflow = StubReActWorkflow(
+        ReActState(
+            user_message="Plan an activity.",
+            stop_reason=StopReason.COMPLETED,
+            final_answer="Draft.",
+        )
+    )
+    permission = SpecialistPermissionPolicy(
+        specialist=SpecialistKind.PLANNING,
+        allowed_tool_names=frozenset({"get_class_profile"}),
+        max_steps=3,
+    )
+    workflow = PlanningSpecialistWorkflow(
+        react_workflow,
+        permission=permission,
+    )
+
+    workflow.invoke(planning_input())
+
+    assert workflow.permission == permission
+    assert react_workflow.input_state.max_steps == 3
+
+
+def test_planning_builder_rejects_tool_outside_permission_policy() -> None:
+    with pytest.raises(SpecialistPermissionDenied, match="send_family_message"):
+        build_planning_workflow(
+            allowed_tool_names={"send_family_message"},
+        )
+
+
+def test_planning_builder_rejects_step_budget_expansion() -> None:
+    with pytest.raises(SpecialistPermissionDenied, match="7-step budget"):
+        build_planning_workflow(max_steps=8)

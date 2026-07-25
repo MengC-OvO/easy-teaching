@@ -6,11 +6,13 @@ from pydantic import BaseModel
 from app.schemas import (
     Citation,
     Draft,
+    get_specialist_permission,
     GraphError,
     PolicyRAGResult,
     PolicyRAGStatus,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     SpecialistResult,
     TraceEvent,
     WorkflowStatus,
@@ -145,8 +147,19 @@ def _to_graph_citation(citation) -> Citation:
 class PolicySpecialistWorkflow:
     """Expose the internal policy RAG graph through the specialist contract."""
 
-    def __init__(self, graph) -> None:
+    def __init__(
+        self,
+        graph,
+        *,
+        permission: Optional[SpecialistPermissionPolicy] = None,
+    ) -> None:
+        resolved_permission = permission or get_specialist_permission(
+            SpecialistKind.POLICY
+        )
+        if resolved_permission.specialist is not SpecialistKind.POLICY:
+            raise ValueError("Policy workflow requires a policy permission policy")
         self.graph = graph
+        self.permission = resolved_permission
 
     def invoke(self, state: SpecialistInput) -> SpecialistResult:
         if state.specialist is not SpecialistKind.POLICY:
@@ -161,6 +174,8 @@ class PolicySpecialistWorkflow:
 
 def build_policy_rag_graph(
     service: Optional[PolicyRAGServiceProtocol] = None,
+    *,
+    permission: Optional[SpecialistPermissionPolicy] = None,
 ) -> PolicySpecialistWorkflow:
     resolved_service = service or PolicyRAGService(
         model_provider=ChatCompletionsModelProvider(),
@@ -169,4 +184,4 @@ def build_policy_rag_graph(
     graph.add_node("policy_rag", build_policy_rag_node(resolved_service))
     graph.set_entry_point("policy_rag")
     graph.add_edge("policy_rag", END)
-    return PolicySpecialistWorkflow(graph.compile())
+    return PolicySpecialistWorkflow(graph.compile(), permission=permission)
