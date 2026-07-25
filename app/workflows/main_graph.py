@@ -5,18 +5,15 @@ from langgraph.graph import END, StateGraph
 
 from app.agents import IntentRouter
 from app.schemas import (
-    Approval,
-    ApprovalStatus,
     ConversationTurn,
-    Draft,
     GraphError,
     GraphState,
     Intent,
     IntentRouteResult,
     LongTermMemoryOperation,
-    ReActState,
-    RiskLevel,
-    StopReason,
+    SpecialistInput,
+    SpecialistKind,
+    SpecialistResult,
     ThreadContext,
     TraceEvent,
     WorkflowStatus,
@@ -27,8 +24,11 @@ from app.services import (
     LLMLongTermMemoryExtractor,
     ModelProviderError,
 )
+from app.workflows.documentation_workflow import build_documentation_workflow
+from app.workflows.family_workflow import build_family_workflow
+from app.workflows.planning_workflow import build_planning_workflow
 from app.workflows.policy_rag_graph import build_policy_rag_graph
-from app.workflows.react_graph import build_react_graph
+from app.workflows.specialist import SpecialistWorkflowProtocol
 from app.tools import build_default_tool_registry
 
 
@@ -42,16 +42,6 @@ class RouterProtocol(Protocol):
         *,
         conversation_context: str = "",
     ) -> IntentRouteResult:
-        ...
-
-
-class WorkflowProtocol(Protocol):
-    def invoke(self, state: ReActState):
-        ...
-
-
-class GraphWorkflowProtocol(Protocol):
-    def invoke(self, state: GraphState):
         ...
 
 
@@ -194,120 +184,32 @@ def route_by_intent(state: GraphStateInput) -> str:
     return "clarification"
 
 
-def build_planning_react_node(
-    planning_workflow: WorkflowProtocol,
+def build_specialist_workflow_node(
+    workflow: SpecialistWorkflowProtocol,
+    specialist: SpecialistKind,
     context_manager: ContextManagerProtocol,
 ):
-    def planning_react_node(state: GraphStateInput) -> Dict[str, Any]:
+    def specialist_workflow_node(state: GraphStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
-        result = planning_workflow.invoke(
-            ReActState(
-                user_message=current_state.user_message,
+        specialist_input = SpecialistInput.from_graph_state(
+            current_state,
+            specialist=specialist,
+            conversation_context=context_manager.build_model_context(
+                current_state.context,
                 teacher_id=current_state.teacher_id,
-                class_id=current_state.class_id,
-                conversation_context=context_manager.build_model_context(
-                    current_state.context,
-                    teacher_id=current_state.teacher_id,
-                ),
-                max_steps=7,
-            )
+            ),
         )
-        react_state = ReActState.model_validate(result)
-
-        trace = [
-            TraceEvent(
-                step="planning_react",
-                message="Activity planning ReAct workflow completed.",
-                metadata={
-                    "stop_reason": react_state.stop_reason.value,
-                    "current_step": react_state.current_step,
-                    "observations": [
-                        {
-                            "tool_name": observation.tool_name,
-                            "success": observation.success,
-                            "error_code": (
-                                observation.error.get("code")
-                                if observation.error
-                                else None
-                            ),
-                        }
-                        for observation in react_state.observations
-                    ],
-                },
+        result = SpecialistResult.model_validate(
+            workflow.invoke(specialist_input)
+        )
+        if result.specialist is not specialist:
+            raise ValueError(
+                f"{specialist.value} workflow returned a "
+                f"{result.specialist.value} result"
             )
-        ]
+        return result.to_graph_update()
 
-        if react_state.stop_reason is StopReason.COMPLETED:
-            return {
-                "workflow_status": WorkflowStatus.COMPLETED,
-                "draft": Draft(
-                    title="Activity planning draft",
-                    content=react_state.final_answer or "",
-                    is_draft=True,
-                ),
-                "trace": trace,
-            }
-
-        if react_state.stop_reason is StopReason.APPROVAL_REQUIRED:
-            return {
-                "workflow_status": WorkflowStatus.WAITING_FOR_APPROVAL,
-                "approval": Approval(
-                    status=ApprovalStatus.REQUIRED,
-                    risk_level=RiskLevel.L2_CONTROLLED_WRITE,
-                    reason="A controlled write tool requires teacher approval.",
-                ),
-                "trace": trace,
-            }
-
-        return {
-            "workflow_status": WorkflowStatus.FAILED,
-            "errors": [
-                GraphError(
-                    code=react_state.stop_reason.value,
-                    message="Activity planning ReAct workflow stopped before completion.",
-                    recoverable=react_state.stop_reason
-                    in {
-                        StopReason.MAX_STEPS_REACHED,
-                        StopReason.TOOL_ERROR,
-                        StopReason.MODEL_ERROR,
-                    },
-                )
-            ],
-            "trace": trace,
-        }
-
-    return planning_react_node
-
-
-def build_policy_rag_workflow_node(policy_workflow: GraphWorkflowProtocol):
-    def policy_rag_workflow_node(state: GraphStateInput) -> Dict[str, Any]:
-        current_state = _state_from_input(state)
-        result = policy_workflow.invoke(current_state)
-        result_state = _state_from_input(result)
-        return {
-            "needs_clarification": result_state.needs_clarification,
-            "clarification_question": result_state.clarification_question,
-            "workflow_status": result_state.workflow_status,
-            "draft": result_state.draft,
-            "citations": result_state.citations[len(current_state.citations) :],
-            "approval": result_state.approval,
-            "trace": result_state.trace[len(current_state.trace) :],
-            "errors": result_state.errors[len(current_state.errors) :],
-            "safety_flags": result_state.safety_flags[len(current_state.safety_flags) :],
-        }
-
-    return policy_rag_workflow_node
-
-
-def documentation_placeholder(state: GraphStateInput) -> Dict[str, Any]:
-    return {
-        "trace": [
-            TraceEvent(
-                step="documentation_placeholder",
-                message="Routed to learning record workflow placeholder.",
-            )
-        ]
-    }
+    return specialist_workflow_node
 
 
 def policy_placeholder(state: GraphStateInput) -> Dict[str, Any]:
@@ -316,17 +218,6 @@ def policy_placeholder(state: GraphStateInput) -> Dict[str, Any]:
             TraceEvent(
                 step="policy_placeholder",
                 message="Routed to policy QA workflow placeholder.",
-            )
-        ]
-    }
-
-
-def family_placeholder(state: GraphStateInput) -> Dict[str, Any]:
-    return {
-        "trace": [
-            TraceEvent(
-                step="family_placeholder",
-                message="Routed to family communication workflow placeholder.",
             )
         ]
     }
@@ -436,8 +327,10 @@ def build_long_memory_update_node(
 
 def build_main_graph(
     router: Optional[RouterProtocol] = None,
-    planning_workflow: Optional[WorkflowProtocol] = None,
-    policy_workflow: Optional[GraphWorkflowProtocol] = None,
+    planning_workflow: Optional[SpecialistWorkflowProtocol] = None,
+    policy_workflow: Optional[SpecialistWorkflowProtocol] = None,
+    documentation_workflow: Optional[SpecialistWorkflowProtocol] = None,
+    family_workflow: Optional[SpecialistWorkflowProtocol] = None,
     context_manager: Optional[ContextManagerProtocol] = None,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     long_memory_extractor: Optional[LongTermMemoryExtractorProtocol] = None,
@@ -446,7 +339,7 @@ def build_main_graph(
     resolved_long_memory_store = long_memory_store or _default_long_memory_store()
     resolved_long_memory_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
     resolved_router = router or IntentRouter()
-    resolved_planning_workflow = planning_workflow or build_react_graph(
+    resolved_planning_workflow = planning_workflow or build_planning_workflow(
         registry=(
             build_default_tool_registry(resolved_long_memory_store)
             if isinstance(resolved_long_memory_store, EduFlowStore)
@@ -464,9 +357,11 @@ def build_main_graph(
     resolved_context_manager = context_manager or ContextManager(
         long_term_memory_reader=resolved_long_memory_store
     )
-    resolved_policy_workflow = policy_workflow or build_policy_rag_graph(
-        context_manager=resolved_context_manager
+    resolved_policy_workflow = policy_workflow or build_policy_rag_graph()
+    resolved_documentation_workflow = (
+        documentation_workflow or build_documentation_workflow()
     )
+    resolved_family_workflow = family_workflow or build_family_workflow()
     graph = StateGraph(GraphState)
     graph.add_node("initialize", initialize)
     graph.add_node(
@@ -475,14 +370,36 @@ def build_main_graph(
     )
     graph.add_node(
         "planning_react",
-        build_planning_react_node(resolved_planning_workflow, resolved_context_manager),
+        build_specialist_workflow_node(
+            resolved_planning_workflow,
+            SpecialistKind.PLANNING,
+            resolved_context_manager,
+        ),
     )
-    graph.add_node("documentation_placeholder", documentation_placeholder)
+    graph.add_node(
+        "documentation",
+        build_specialist_workflow_node(
+            resolved_documentation_workflow,
+            SpecialistKind.DOCUMENTATION,
+            resolved_context_manager,
+        ),
+    )
     graph.add_node(
         "policy_rag",
-        build_policy_rag_workflow_node(resolved_policy_workflow),
+        build_specialist_workflow_node(
+            resolved_policy_workflow,
+            SpecialistKind.POLICY,
+            resolved_context_manager,
+        ),
     )
-    graph.add_node("family_placeholder", family_placeholder)
+    graph.add_node(
+        "family",
+        build_specialist_workflow_node(
+            resolved_family_workflow,
+            SpecialistKind.FAMILY,
+            resolved_context_manager,
+        ),
+    )
     graph.add_node("clarification_placeholder", clarification_placeholder)
     graph.add_node("context_update", build_context_update_node(resolved_context_manager))
     graph.add_node(
@@ -499,17 +416,17 @@ def build_main_graph(
         route_by_intent,
         {
             "planning": "planning_react",
-            "documentation": "documentation_placeholder",
+            "documentation": "documentation",
             "policy": "policy_rag",
-            "family": "family_placeholder",
+            "family": "family",
             "clarification": "clarification_placeholder",
             "end": "context_update",
         },
     )
     graph.add_edge("planning_react", "context_update")
-    graph.add_edge("documentation_placeholder", "context_update")
+    graph.add_edge("documentation", "context_update")
     graph.add_edge("policy_rag", "context_update")
-    graph.add_edge("family_placeholder", "context_update")
+    graph.add_edge("family", "context_update")
     graph.add_edge("clarification_placeholder", "context_update")
     graph.add_edge("context_update", "long_memory_update")
     graph.add_edge("long_memory_update", END)

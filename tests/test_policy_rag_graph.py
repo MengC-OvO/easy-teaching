@@ -1,11 +1,14 @@
+import pytest
+
 from app.schemas import (
     CitationMetadata,
-    GraphState,
     KnowledgeSourceType,
     PolicyRAGResult,
     PolicyRAGStatus,
     RetrievalResult,
     RetrievalStats,
+    SpecialistInput,
+    SpecialistKind,
     WorkflowStatus,
 )
 from app.workflows.policy_rag_graph import build_policy_rag_graph
@@ -15,6 +18,7 @@ class StubPolicyRAGService:
     def __init__(self, result: PolicyRAGResult) -> None:
         self.result = result
         self.question = None
+        self.conversation_context = None
 
     def answer(
         self,
@@ -23,6 +27,7 @@ class StubPolicyRAGService:
         conversation_context: str = "",
     ) -> PolicyRAGResult:
         self.question = question
+        self.conversation_context = conversation_context
         return self.result
 
 
@@ -59,24 +64,25 @@ def test_policy_rag_graph_maps_answer_to_draft_and_citations() -> None:
     )
     graph = build_policy_rag_graph(service)
 
-    final_state = GraphState.model_validate(
-        graph.invoke(
-            GraphState(
-                request_id="req-policy",
-                session_id="session-policy",
-                user_message="What does policy say?",
-            )
+    result = graph.invoke(
+        SpecialistInput(
+            specialist=SpecialistKind.POLICY,
+            request_id="req-policy",
+            session_id="session-policy",
+            user_message="What does policy say?",
+            conversation_context="Teacher prefers concise answers.",
         )
     )
 
-    assert final_state.workflow_status is WorkflowStatus.COMPLETED
-    assert final_state.draft is not None
-    assert final_state.draft.title == "Policy answer draft"
-    assert final_state.draft.content == "Use evidence cautiously [E1]."
-    assert final_state.citations[0].source == "eylf-v2"
-    assert final_state.citations[0].page == 21
-    assert final_state.trace[-1].step == "policy_rag"
+    assert result.status is WorkflowStatus.COMPLETED
+    assert result.draft is not None
+    assert result.draft.title == "Policy answer draft"
+    assert result.draft.content == "Use evidence cautiously [E1]."
+    assert result.citations[0].source == "eylf-v2"
+    assert result.citations[0].page == 21
+    assert result.trace[-1].step == "policy_rag"
     assert service.question == "What does policy say?"
+    assert service.conversation_context == "Teacher prefers concise answers."
 
 
 def test_policy_rag_graph_maps_empty_retrieval_to_clarification() -> None:
@@ -90,19 +96,18 @@ def test_policy_rag_graph_maps_empty_retrieval_to_clarification() -> None:
     )
     graph = build_policy_rag_graph(service)
 
-    final_state = GraphState.model_validate(
-        graph.invoke(
-            GraphState(
-                request_id="req-policy",
-                session_id="session-policy",
-                user_message="What policy?",
-            )
+    result = graph.invoke(
+        SpecialistInput(
+            specialist=SpecialistKind.POLICY,
+            request_id="req-policy",
+            session_id="session-policy",
+            user_message="What policy?",
         )
     )
 
-    assert final_state.needs_clarification is True
-    assert final_state.clarification_question == "Which policy area should I search?"
-    assert final_state.trace[-1].metadata["status"] == "needs_clarification"
+    assert result.needs_clarification is True
+    assert result.clarification_question == "Which policy area should I search?"
+    assert result.trace[-1].metadata["status"] == "needs_clarification"
 
 
 def test_policy_rag_graph_maps_conflict_to_error() -> None:
@@ -116,16 +121,38 @@ def test_policy_rag_graph_maps_conflict_to_error() -> None:
     )
     graph = build_policy_rag_graph(service)
 
-    final_state = GraphState.model_validate(
-        graph.invoke(
-            GraphState(
-                request_id="req-policy",
-                session_id="session-policy",
-                user_message="What policy?",
+    result = graph.invoke(
+        SpecialistInput(
+            specialist=SpecialistKind.POLICY,
+            request_id="req-policy",
+            session_id="session-policy",
+            user_message="What policy?",
+        )
+    )
+
+    assert result.status is WorkflowStatus.FAILED
+    assert result.errors[0].code == "evidence_conflict"
+    assert result.errors[0].recoverable is True
+
+
+def test_policy_rag_graph_rejects_wrong_specialist_kind() -> None:
+    graph = build_policy_rag_graph(
+        StubPolicyRAGService(
+            PolicyRAGResult(
+                status=PolicyRAGStatus.NEEDS_CLARIFICATION,
+                question="What policy?",
+                clarification_question="Which policy area?",
+                retrieval=empty_retrieval(),
             )
         )
     )
 
-    assert final_state.workflow_status is WorkflowStatus.FAILED
-    assert final_state.errors[0].code == "evidence_conflict"
-    assert final_state.errors[0].recoverable is True
+    with pytest.raises(ValueError, match="specialist=policy"):
+        graph.invoke(
+            SpecialistInput(
+                specialist=SpecialistKind.PLANNING,
+                request_id="req-wrong-policy",
+                session_id="session-wrong-policy",
+                user_message="Plan an activity.",
+            )
+        )

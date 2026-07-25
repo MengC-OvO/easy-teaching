@@ -18,11 +18,16 @@ from app.schemas import (
 )
 from app.services import EduFlowStore
 from app.tools import ToolDefinition, build_default_tool_registry
-from app.workflows import build_main_graph, build_react_graph
+from app.workflows import build_main_graph, build_planning_workflow
 
 
 class DemoRouter:
-    def route(self, user_message: str) -> IntentRouteResult:
+    def route(
+        self,
+        user_message: str,
+        *,
+        conversation_context: str = "",
+    ) -> IntentRouteResult:
         return IntentRouteResult(
             intent=Intent.ACTIVITY_PLANNING,
             confidence=0.95,
@@ -96,7 +101,7 @@ def build_demo_graph(database_url: str, *, approved: bool, include_final_answer:
     store = EduFlowStore(database_url)
     store.initialize()
     registry = build_default_tool_registry(store)
-    planning_workflow = build_react_graph(
+    planning_workflow = build_planning_workflow(
         agent=DemoPlanningAgent(
             planning_decisions(include_final_answer=include_final_answer)
         ),
@@ -139,7 +144,9 @@ def print_state(label: str, state: GraphState) -> None:
         print(f"draft_content={state.draft.content}")
 
     print(f"trace_steps={[event.step for event in state.trace]}")
-    planning_trace = state.trace[-1]
+    planning_trace = next(
+        event for event in state.trace if event.step == "planning_react"
+    )
     print(f"react_stop_reason={planning_trace.metadata.get('stop_reason')}")
     print("tools_called=")
     for item in planning_trace.metadata.get("observations", []):
