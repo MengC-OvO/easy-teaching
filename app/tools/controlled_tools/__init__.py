@@ -38,6 +38,10 @@ from app.tools.controlled_tools.recall_long_term_memory import (
     RecalledLongTermMemory,
     build_recall_long_term_memory_tool,
 )
+from app.tools.controlled_tools.load_skill import (
+    LoadSkillInput,
+    build_load_skill_tool,
+)
 
 
 __all__ = [
@@ -50,6 +54,7 @@ __all__ = [
     "GetClassProfileOutput",
     "KnowledgeEvidenceItem",
     "KnowledgeRetrieverProtocol",
+    "LoadSkillInput",
     "RiskGuidanceModelProvider",
     "RecallLongTermMemoryInput",
     "RecallLongTermMemoryOutput",
@@ -64,6 +69,7 @@ __all__ = [
     "build_default_tool_definitions",
     "build_default_tool_registry",
     "build_get_class_profile_tool",
+    "build_load_skill_tool",
     "build_retrieve_risk_guidance_tool",
     "build_recall_long_term_memory_tool",
     "build_save_draft_tool",

@@ -7,10 +7,12 @@ from pydantic import BaseModel
 
 from app.schemas import (
     Draft,
+    get_specialist_permission,
     RiskLevel,
     SafetyFlag,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     SpecialistResult,
     TraceEvent,
     WorkflowStatus,
@@ -81,8 +83,19 @@ def family_draft_node(
 class FamilySpecialistWorkflow:
     """Expose the family communication subgraph through the specialist contract."""
 
-    def __init__(self, graph) -> None:
+    def __init__(
+        self,
+        graph,
+        *,
+        permission: Optional[SpecialistPermissionPolicy] = None,
+    ) -> None:
+        resolved_permission = permission or get_specialist_permission(
+            SpecialistKind.FAMILY
+        )
+        if resolved_permission.specialist is not SpecialistKind.FAMILY:
+            raise ValueError("Family workflow requires a family permission policy")
         self.graph = graph
+        self.permission = resolved_permission
 
     def invoke(self, state: SpecialistInput) -> SpecialistResult:
         if state.specialist is not SpecialistKind.FAMILY:
@@ -95,9 +108,12 @@ class FamilySpecialistWorkflow:
         return output.result
 
 
-def build_family_workflow() -> FamilySpecialistWorkflow:
+def build_family_workflow(
+    *,
+    permission: Optional[SpecialistPermissionPolicy] = None,
+) -> FamilySpecialistWorkflow:
     graph = StateGraph(FamilyWorkflowState)
     graph.add_node("family_draft", family_draft_node)
     graph.set_entry_point("family_draft")
     graph.add_edge("family_draft", END)
-    return FamilySpecialistWorkflow(graph.compile())
+    return FamilySpecialistWorkflow(graph.compile(), permission=permission)

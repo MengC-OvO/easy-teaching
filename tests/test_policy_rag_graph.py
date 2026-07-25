@@ -9,6 +9,7 @@ from app.schemas import (
     RetrievalStats,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     WorkflowStatus,
 )
 from app.workflows.policy_rag_graph import build_policy_rag_graph
@@ -156,3 +157,23 @@ def test_policy_rag_graph_rejects_wrong_specialist_kind() -> None:
                 user_message="Plan an activity.",
             )
         )
+
+
+def test_policy_workflow_receives_its_permission_policy() -> None:
+    permission = SpecialistPermissionPolicy(
+        specialist=SpecialistKind.POLICY,
+        max_steps=1,
+    )
+    workflow = build_policy_rag_graph(
+        StubPolicyRAGService(
+            PolicyRAGResult(
+                status=PolicyRAGStatus.NEEDS_CLARIFICATION,
+                question="What policy?",
+                clarification_question="Which policy area?",
+                retrieval=empty_retrieval(),
+            )
+        ),
+        permission=permission,
+    )
+
+    assert workflow.permission == permission

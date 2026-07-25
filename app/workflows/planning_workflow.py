@@ -5,12 +5,15 @@ from typing import Iterable, Mapping, Optional, Protocol, Union
 from app.schemas import (
     Approval,
     ApprovalStatus,
+    get_specialist_permission,
     Draft,
     GraphError,
     ReActState,
     RiskLevel,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionDenied,
+    SpecialistPermissionPolicy,
     SpecialistResult,
     StopReason,
     TraceEvent,
@@ -35,10 +38,16 @@ class PlanningSpecialistWorkflow:
         self,
         react_workflow: ReActWorkflowProtocol,
         *,
-        max_steps: int = 7,
+        permission: Optional[SpecialistPermissionPolicy] = None,
+        max_steps: Optional[int] = None,
     ) -> None:
+        resolved_permission = _resolve_planning_permission(
+            permission,
+            max_steps=max_steps,
+        )
         self.react_workflow = react_workflow
-        self.max_steps = max_steps
+        self.permission = resolved_permission
+        self.max_steps = resolved_permission.max_steps
 
     def invoke(self, state: SpecialistInput) -> SpecialistResult:
         if state.specialist is not SpecialistKind.PLANNING:
@@ -127,12 +136,50 @@ def build_planning_workflow(
     registry: Optional[ToolRegistry] = None,
     allowed_tool_names: Optional[Iterable[str]] = None,
     approved: bool = False,
-    max_steps: int = 7,
+    max_steps: Optional[int] = None,
+    permission: Optional[SpecialistPermissionPolicy] = None,
 ) -> PlanningSpecialistWorkflow:
+    resolved_permission = _resolve_planning_permission(
+        permission,
+        allowed_tool_names=allowed_tool_names,
+        max_steps=max_steps,
+    )
     react_workflow = build_react_graph(
         agent=agent,
         registry=registry,
-        allowed_tool_names=allowed_tool_names,
+        allowed_tool_names=resolved_permission.allowed_tool_names,
         approved=approved,
     )
-    return PlanningSpecialistWorkflow(react_workflow, max_steps=max_steps)
+    return PlanningSpecialistWorkflow(
+        react_workflow,
+        permission=resolved_permission,
+    )
+
+
+def _resolve_planning_permission(
+    permission: Optional[SpecialistPermissionPolicy],
+    *,
+    allowed_tool_names: Optional[Iterable[str]] = None,
+    max_steps: Optional[int] = None,
+) -> SpecialistPermissionPolicy:
+    resolved = permission or get_specialist_permission(SpecialistKind.PLANNING)
+    resolved.require_specialist(SpecialistKind.PLANNING)
+
+    data = resolved.model_dump()
+    if allowed_tool_names is not None:
+        requested_tool_names = frozenset(allowed_tool_names)
+        unauthorized_tools = requested_tool_names - resolved.allowed_tool_names
+        if unauthorized_tools:
+            tool_names = ", ".join(sorted(unauthorized_tools))
+            raise SpecialistPermissionDenied(
+                f"planning specialist cannot use tools: {tool_names}"
+            )
+        data["allowed_tool_names"] = requested_tool_names
+    if max_steps is not None:
+        if max_steps > resolved.max_steps:
+            raise SpecialistPermissionDenied(
+                f"planning specialist cannot exceed its "
+                f"{resolved.max_steps}-step budget"
+            )
+        data["max_steps"] = max_steps
+    return SpecialistPermissionPolicy.model_validate(data)

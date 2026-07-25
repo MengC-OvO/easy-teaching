@@ -124,6 +124,7 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
     assert [tool.name for tool in registry.list_tools()] == [
+        "load_skill",
         "get_class_profile",
         "retrieve_risk_guidance",
         "check_activity_safety",

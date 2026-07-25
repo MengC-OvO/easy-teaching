@@ -4,6 +4,7 @@ from app.schemas import (
     RiskLevel,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     WorkflowStatus,
 )
 from app.workflows import build_family_workflow
@@ -62,3 +63,14 @@ def test_family_subgraph_rejects_wrong_specialist_kind() -> None:
                 user_message="What does the policy say?",
             )
         )
+
+
+def test_family_workflow_receives_its_permission_policy() -> None:
+    permission = SpecialistPermissionPolicy(
+        specialist=SpecialistKind.FAMILY,
+        max_steps=1,
+    )
+
+    workflow = build_family_workflow(permission=permission)
+
+    assert workflow.permission == permission

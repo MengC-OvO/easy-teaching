@@ -12,6 +12,7 @@ from app.tools.controlled_tools.retrieve_risk_guidance import (
 )
 from app.tools.controlled_tools.check_activity_safety import build_check_activity_safety_tool
 from app.tools.controlled_tools.get_class_profile import build_get_class_profile_tool
+from app.tools.controlled_tools.load_skill import build_load_skill_tool
 from app.tools.controlled_tools.save_draft import build_save_draft_tool
 from app.tools.controlled_tools.recall_long_term_memory import (
     build_recall_long_term_memory_tool,
@@ -27,7 +28,7 @@ def build_default_tool_definitions(
     risk_guidance_model_provider: Optional[RiskGuidanceModelProvider] = None,
     eylf_alignment_model_provider: Optional[EylfAlignmentModelProvider] = None,
 ) -> List[ToolDefinition]:
-    return [
+    domain_tools = [
         build_get_class_profile_tool(store),
         build_retrieve_risk_guidance_tool(
             knowledge_retriever,
@@ -40,6 +41,16 @@ def build_default_tool_definitions(
         ),
         build_save_draft_tool(store),
         build_recall_long_term_memory_tool(store),
+    ]
+    registered_tool_names = {
+        "load_skill",
+        *(tool.name for tool in domain_tools),
+    }
+    return [
+        build_load_skill_tool(
+            registered_tool_names=registered_tool_names,
+        ),
+        *domain_tools,
     ]
 
 

@@ -6,6 +6,7 @@ from langgraph.graph import END, StateGraph
 from app.agents import IntentRouter
 from app.schemas import (
     ConversationTurn,
+    DEFAULT_SPECIALIST_PERMISSIONS,
     GraphError,
     GraphState,
     Intent,
@@ -13,6 +14,7 @@ from app.schemas import (
     LongTermMemoryOperation,
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     SpecialistResult,
     ThreadContext,
     TraceEvent,
@@ -187,8 +189,11 @@ def route_by_intent(state: GraphStateInput) -> str:
 def build_specialist_workflow_node(
     workflow: SpecialistWorkflowProtocol,
     specialist: SpecialistKind,
+    permission: SpecialistPermissionPolicy,
     context_manager: ContextManagerProtocol,
 ):
+    permission.require_specialist(specialist)
+
     def specialist_workflow_node(state: GraphStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
         specialist_input = SpecialistInput.from_graph_state(
@@ -331,11 +336,17 @@ def build_main_graph(
     policy_workflow: Optional[SpecialistWorkflowProtocol] = None,
     documentation_workflow: Optional[SpecialistWorkflowProtocol] = None,
     family_workflow: Optional[SpecialistWorkflowProtocol] = None,
+    specialist_permissions: Optional[
+        Mapping[SpecialistKind, SpecialistPermissionPolicy]
+    ] = None,
     context_manager: Optional[ContextManagerProtocol] = None,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     long_memory_extractor: Optional[LongTermMemoryExtractorProtocol] = None,
     long_memory_store: Optional[LongTermMemoryStoreProtocol] = None,
 ):
+    resolved_specialist_permissions = _resolve_specialist_permissions(
+        specialist_permissions
+    )
     resolved_long_memory_store = long_memory_store or _default_long_memory_store()
     resolved_long_memory_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
     resolved_router = router or IntentRouter()
@@ -345,23 +356,23 @@ def build_main_graph(
             if isinstance(resolved_long_memory_store, EduFlowStore)
             else None
         ),
-        allowed_tool_names={
-            "get_class_profile",
-            "retrieve_risk_guidance",
-            "check_activity_safety",
-            "align_to_eylf_outcomes",
-            "save_draft",
-            "recall_long_term_memory",
-        },
+        permission=resolved_specialist_permissions[SpecialistKind.PLANNING],
     )
     resolved_context_manager = context_manager or ContextManager(
         long_term_memory_reader=resolved_long_memory_store
     )
-    resolved_policy_workflow = policy_workflow or build_policy_rag_graph()
-    resolved_documentation_workflow = (
-        documentation_workflow or build_documentation_workflow()
+    resolved_policy_workflow = policy_workflow or build_policy_rag_graph(
+        permission=resolved_specialist_permissions[SpecialistKind.POLICY]
     )
-    resolved_family_workflow = family_workflow or build_family_workflow()
+    resolved_documentation_workflow = (
+        documentation_workflow
+        or build_documentation_workflow(
+            permission=resolved_specialist_permissions[SpecialistKind.DOCUMENTATION]
+        )
+    )
+    resolved_family_workflow = family_workflow or build_family_workflow(
+        permission=resolved_specialist_permissions[SpecialistKind.FAMILY]
+    )
     graph = StateGraph(GraphState)
     graph.add_node("initialize", initialize)
     graph.add_node(
@@ -373,6 +384,7 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_planning_workflow,
             SpecialistKind.PLANNING,
+            resolved_specialist_permissions[SpecialistKind.PLANNING],
             resolved_context_manager,
         ),
     )
@@ -381,6 +393,7 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_documentation_workflow,
             SpecialistKind.DOCUMENTATION,
+            resolved_specialist_permissions[SpecialistKind.DOCUMENTATION],
             resolved_context_manager,
         ),
     )
@@ -389,6 +402,7 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_policy_workflow,
             SpecialistKind.POLICY,
+            resolved_specialist_permissions[SpecialistKind.POLICY],
             resolved_context_manager,
         ),
     )
@@ -397,6 +411,7 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_family_workflow,
             SpecialistKind.FAMILY,
+            resolved_specialist_permissions[SpecialistKind.FAMILY],
             resolved_context_manager,
         ),
     )
@@ -437,6 +452,16 @@ def _default_long_memory_store() -> EduFlowStore:
     store = EduFlowStore()
     store.initialize()
     return store
+
+
+def _resolve_specialist_permissions(
+    overrides: Optional[Mapping[SpecialistKind, SpecialistPermissionPolicy]],
+) -> Dict[SpecialistKind, SpecialistPermissionPolicy]:
+    resolved = dict(DEFAULT_SPECIALIST_PERMISSIONS)
+    resolved.update(overrides or {})
+    for specialist, permission in resolved.items():
+        permission.require_specialist(specialist)
+    return resolved
 
 
 main_graph = build_main_graph()

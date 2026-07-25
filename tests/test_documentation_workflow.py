@@ -3,6 +3,7 @@ import pytest
 from app.schemas import (
     SpecialistInput,
     SpecialistKind,
+    SpecialistPermissionPolicy,
     WorkflowStatus,
 )
 from app.workflows import build_documentation_workflow
@@ -59,3 +60,14 @@ def test_documentation_subgraph_rejects_wrong_specialist_kind() -> None:
                 user_message="Draft a family update.",
             )
         )
+
+
+def test_documentation_workflow_receives_its_permission_policy() -> None:
+    permission = SpecialistPermissionPolicy(
+        specialist=SpecialistKind.DOCUMENTATION,
+        max_steps=1,
+    )
+
+    workflow = build_documentation_workflow(permission=permission)
+
+    assert workflow.permission == permission

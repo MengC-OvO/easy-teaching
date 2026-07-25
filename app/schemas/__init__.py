@@ -28,6 +28,12 @@ from app.schemas.long_memory import (
     LongTermMemoryType,
     MemoryRetrievalMode,
 )
+from app.schemas.planning import (
+    ActivityObservationPoint,
+    ActivityPlan,
+    ActivityPlanEylfAlignment,
+    ActivityPlanStep,
+)
 from app.schemas.knowledge import (
     CitationMetadata,
     IngestionResult,
@@ -54,15 +60,27 @@ from app.schemas.react import (
     StopReason,
     ToolCall,
 )
+from app.schemas.skill import LoadedSkill, SkillManifest
 from app.schemas.specialist import (
     SpecialistInput,
     SpecialistKind,
     SpecialistResult,
 )
+from app.schemas.specialist_permissions import (
+    DEFAULT_SPECIALIST_PERMISSIONS,
+    ForbiddenSpecialistAction,
+    SpecialistPermissionDenied,
+    SpecialistPermissionPolicy,
+    get_specialist_permission,
+)
 
 __all__ = [
     "Approval",
     "ApprovalStatus",
+    "ActivityObservationPoint",
+    "ActivityPlan",
+    "ActivityPlanEylfAlignment",
+    "ActivityPlanStep",
     "Citation",
     "CitationMetadata",
     "ContextBudget",
@@ -70,6 +88,8 @@ __all__ = [
     "ConversationRole",
     "ConversationTurn",
     "Draft",
+    "DEFAULT_SPECIALIST_PERMISSIONS",
+    "ForbiddenSpecialistAction",
     "GraphError",
     "GraphState",
     "Intent",
@@ -84,6 +104,7 @@ __all__ = [
     "LongTermMemoryOperation",
     "LongTermMemoryScope",
     "LongTermMemoryType",
+    "LoadedSkill",
     "MemoryRetrievalMode",
     "Observation",
     "PolicyEvidence",
@@ -94,8 +115,11 @@ __all__ = [
     "ReActState",
     "RiskLevel",
     "SafetyFlag",
+    "SkillManifest",
     "SpecialistInput",
     "SpecialistKind",
+    "SpecialistPermissionDenied",
+    "SpecialistPermissionPolicy",
     "SpecialistResult",
     "ThreadContext",
     "StopReason",
@@ -110,4 +134,5 @@ __all__ = [
     "ToolCall",
     "VectorIndexMetadata",
     "WorkflowStatus",
+    "get_specialist_permission",
 ]
