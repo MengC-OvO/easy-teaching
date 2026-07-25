@@ -1,7 +1,9 @@
 import sqlite3
 
 from app.schemas import (
+    Approval,
     ApprovalStatus,
+    Draft,
     GraphState,
     Intent,
     IntentRouteResult,
@@ -11,15 +13,26 @@ from app.schemas import (
     LongTermMemoryScope,
     LongTermMemoryType,
     MemoryRetrievalMode,
-    Observation,
-    ReActState,
-    StopReason,
+    PolicyRAGResult,
+    PolicyRAGStatus,
+    RiskLevel,
+    RetrievalResult,
+    RetrievalStats,
+    SpecialistInput,
+    SpecialistKind,
+    SpecialistResult,
+    TraceEvent,
     ConversationMemory,
     ThreadContext,
     WorkflowStatus,
 )
-from app.services import EduFlowStore, ModelTimeoutError
-from app.workflows import build_main_graph, build_sqlite_checkpointer, checkpoint_config
+from app.services import ContextManager, EduFlowStore, ModelTimeoutError
+from app.workflows import (
+    build_main_graph,
+    build_policy_rag_graph,
+    build_sqlite_checkpointer,
+    checkpoint_config,
+)
 
 
 class StubRouter:
@@ -56,23 +69,46 @@ class FailingRouter:
 
 
 class StubPlanningWorkflow:
-    def __init__(self, result: ReActState) -> None:
+    def __init__(self, result: SpecialistResult) -> None:
         self.result = result
         self.input_state = None
 
-    def invoke(self, state: ReActState):
+    def invoke(self, state: SpecialistInput):
         self.input_state = state
         return self.result
 
 
 class StubPolicyWorkflow:
-    def __init__(self, result: GraphState) -> None:
+    def __init__(self, result: SpecialistResult) -> None:
         self.result = result
         self.input_state = None
 
-    def invoke(self, state: GraphState):
+    def invoke(self, state: SpecialistInput):
         self.input_state = state
         return self.result
+
+
+class ContextRecordingPolicyService:
+    def __init__(self) -> None:
+        self.contexts = []
+
+    def answer(self, question: str, *, conversation_context: str = "") -> PolicyRAGResult:
+        self.contexts.append(conversation_context)
+        return PolicyRAGResult(
+            status=PolicyRAGStatus.ANSWERED,
+            question=question,
+            answer="Policy answer draft.",
+            retrieval=RetrievalResult(
+                query=question,
+                chunks=[],
+                stats=RetrievalStats(
+                    requested_top_k=5,
+                    raw_result_count=0,
+                    deduplicated_count=0,
+                    returned_count=0,
+                ),
+            ),
+        )
 
 
 def test_main_graph_runs_intent_router_node() -> None:
@@ -84,11 +120,19 @@ def test_main_graph_runs_intent_router_node() -> None:
         )
     )
     planning_workflow = StubPlanningWorkflow(
-        ReActState(
-            user_message="Plan an outdoor activity.",
-            current_step=1,
-            final_answer="Draft activity plan.",
-            stop_reason=StopReason.COMPLETED,
+        SpecialistResult(
+            specialist=SpecialistKind.PLANNING,
+            status=WorkflowStatus.COMPLETED,
+            draft=Draft(
+                title="Activity planning draft",
+                content="Draft activity plan.",
+            ),
+            trace=[
+                TraceEvent(
+                    step="planning_react",
+                    message="Activity planning ReAct workflow completed.",
+                )
+            ],
         )
     )
     graph = build_main_graph(router, planning_workflow=planning_workflow)
@@ -120,11 +164,10 @@ def test_main_graph_runs_intent_router_node() -> None:
 
 def test_main_graph_passes_compact_context_to_react_workflow() -> None:
     planning_workflow = StubPlanningWorkflow(
-        ReActState(
-            user_message="Make it shorter.",
-            current_step=1,
-            final_answer="Shortened draft.",
-            stop_reason=StopReason.COMPLETED,
+        SpecialistResult(
+            specialist=SpecialistKind.PLANNING,
+            status=WorkflowStatus.COMPLETED,
+            draft=Draft(content="Shortened draft."),
         )
     )
     graph = build_main_graph(
@@ -215,6 +258,68 @@ def test_main_graph_recalls_a_memory_written_by_the_previous_turn(tmp_path) -> N
     assert "Prefers concise activity-plan steps." in router.contexts[1]
 
 
+def test_main_graph_passes_profile_memory_to_policy_rag_in_a_new_session(tmp_path) -> None:
+    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
+    store.initialize()
+    preference = LongTermMemoryCandidate(
+        scope=LongTermMemoryScope.TEACHER,
+        scope_id="teacher-001",
+        memory_type=LongTermMemoryType.TEACHER_PREFERENCE,
+        content="Prefers concise policy-answer summaries.",
+        reason="The teacher explicitly requested concise summaries.",
+        retrieval_mode=MemoryRetrievalMode.PROFILE,
+        importance=4,
+    )
+    extractor = SequencedMemoryExtractor(
+        [
+            [
+                LongTermMemoryOperation(
+                    action=LongTermMemoryAction.INSERT,
+                    candidate=preference,
+                    reason="A durable preference was explicitly stated.",
+                )
+            ],
+            [],
+        ]
+    )
+    router = StubRouter(
+        IntentRouteResult(
+            intent=Intent.POLICY_QA,
+            confidence=0.9,
+            reason="The request is a policy question.",
+        )
+    )
+    context_manager = ContextManager(long_term_memory_reader=store)
+    policy_service = ContextRecordingPolicyService()
+    graph = build_main_graph(
+        router,
+        policy_workflow=build_policy_rag_graph(policy_service),
+        context_manager=context_manager,
+        long_memory_extractor=extractor,
+        long_memory_store=store,
+    )
+
+    graph.invoke(
+        GraphState(
+            request_id="req-policy-memory-first",
+            session_id="session-policy-memory-first",
+            teacher_id="teacher-001",
+            user_message="For future policy answers, keep summaries concise.",
+        )
+    )
+    graph.invoke(
+        GraphState(
+            request_id="req-policy-memory-second",
+            session_id="session-policy-memory-second",
+            teacher_id="teacher-001",
+            user_message="What does the EYLF say about play-based learning?",
+        )
+    )
+
+    assert "Prefers concise policy-answer summaries." not in policy_service.contexts[0]
+    assert "Prefers concise policy-answer summaries." in policy_service.contexts[1]
+
+
 def test_main_graph_can_checkpoint_state_to_sqlite(tmp_path) -> None:
     checkpoint_path = tmp_path / "checkpoints.sqlite3"
     graph = build_main_graph(
@@ -293,7 +398,7 @@ def test_main_graph_records_router_errors() -> None:
     assert final_state.trace[-1].step == "long_memory_update"
 
 
-def test_main_graph_routes_learning_record_to_documentation_placeholder() -> None:
+def test_main_graph_routes_learning_record_to_documentation_specialist() -> None:
     graph = build_main_graph(
         StubRouter(
             IntentRouteResult(
@@ -314,7 +419,11 @@ def test_main_graph_routes_learning_record_to_documentation_placeholder() -> Non
         )
     )
 
-    assert final_state.trace[-3].step == "documentation_placeholder"
+    assert final_state.workflow_status is WorkflowStatus.COMPLETED
+    assert final_state.draft is not None
+    assert final_state.draft.title == "Learning record draft"
+    assert final_state.draft.is_draft is True
+    assert final_state.trace[-3].step == "documentation_skeleton"
     assert final_state.trace[-2].step == "context_update"
     assert final_state.trace[-1].step == "long_memory_update"
 
@@ -329,15 +438,29 @@ def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
             )
         ),
         planning_workflow=StubPlanningWorkflow(
-            ReActState(
-                user_message="Save a draft.",
-                current_step=1,
-                stop_reason=StopReason.APPROVAL_REQUIRED,
-                observations=[
-                    Observation(
-                        tool_name="save_draft",
-                        success=False,
-                        error={"code": "permission_denied", "recoverable": True},
+            SpecialistResult(
+                specialist=SpecialistKind.PLANNING,
+                status=WorkflowStatus.WAITING_FOR_APPROVAL,
+                approval=Approval(
+                    status=ApprovalStatus.REQUIRED,
+                    risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+                    reason="A controlled write tool requires teacher approval.",
+                ),
+                trace=[
+                    TraceEvent(
+                        step="planning_react",
+                        message="Activity planning ReAct workflow completed.",
+                        metadata={
+                            "stop_reason": "approval_required",
+                            "current_step": 1,
+                            "observations": [
+                                {
+                                    "tool_name": "save_draft",
+                                    "success": False,
+                                    "error_code": "permission_denied",
+                                }
+                            ],
+                        },
                     )
                 ],
             )
@@ -369,13 +492,12 @@ def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
 
 
 def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:
-    policy_state = GraphState(
-        request_id="req-policy",
-        session_id="session-policy",
-        user_message="What does NQS QA1 require?",
-        workflow_status=WorkflowStatus.COMPLETED,
+    policy_result = SpecialistResult(
+        specialist=SpecialistKind.POLICY,
+        status=WorkflowStatus.COMPLETED,
+        draft=Draft(content="Policy answer draft."),
     )
-    policy_workflow = StubPolicyWorkflow(policy_state)
+    policy_workflow = StubPolicyWorkflow(policy_result)
     graph = build_main_graph(
         StubRouter(
             IntentRouteResult(
@@ -401,7 +523,7 @@ def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:
     assert policy_workflow.input_state.user_message == "What does NQS QA1 require?"
 
 
-def test_main_graph_routes_family_communication_to_family_placeholder() -> None:
+def test_main_graph_routes_family_communication_to_family_workflow() -> None:
     graph = build_main_graph(
         StubRouter(
             IntentRouteResult(
@@ -422,7 +544,12 @@ def test_main_graph_routes_family_communication_to_family_placeholder() -> None:
         )
     )
 
-    assert final_state.trace[-3].step == "family_placeholder"
+    assert final_state.workflow_status is WorkflowStatus.COMPLETED
+    assert final_state.draft is not None
+    assert final_state.draft.title == "Family communication draft"
+    assert final_state.draft.is_draft is True
+    assert final_state.safety_flags[-1].code == "draft_only"
+    assert final_state.trace[-3].step == "family_draft_skeleton"
     assert final_state.trace[-2].step == "context_update"
     assert final_state.trace[-1].step == "long_memory_update"
 

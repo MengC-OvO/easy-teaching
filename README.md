@@ -35,9 +35,9 @@ flowchart TD
     GraphState --> Router[IntentRouter]
 
     Router -->|activity_planning| PlanningReAct[Planning ReAct workflow]
-    Router -->|learning_record| LearningPlaceholder[Learning record workflow]
+    Router -->|learning_record| DocumentationSkeleton[Documentation specialist subgraph]
     Router -->|policy_qa| PolicyRAG[Policy RAG workflow]
-    Router -->|family_communication| FamilyPlaceholder[Family communication workflow]
+    Router -->|family_communication| Family[Family specialist skeleton]
     Router -->|unknown or clarification| Clarification[Clarification response]
 
     PlanningReAct --> ReActAgent[ReActAgent]
@@ -67,8 +67,8 @@ flowchart TD
     PolicyService --> AnswerModel[ChatCompletionsModelProvider]
     PlanningReAct --> ContextUpdate[context_update]
     PolicyRAG --> ContextUpdate
-    LearningPlaceholder --> ContextUpdate
-    FamilyPlaceholder --> ContextUpdate
+    DocumentationSkeleton --> ContextUpdate
+    Family --> ContextUpdate
     Clarification --> ContextUpdate
     ContextUpdate --> MemoryUpdate[long_memory_update]
     MemoryUpdate --> Store
@@ -84,8 +84,8 @@ flowchart TD
 
     Route -->|activity_planning| PlanningSubgraph
     Route -->|policy_qa| PolicySubgraph
-    Route -->|learning_record| Documentation[documentation_placeholder]
-    Route -->|family_communication| Family[family_placeholder]
+    Route -->|learning_record| Documentation[documentation specialist skeleton]
+    Route -->|family_communication| Family[family specialist skeleton]
     Route -->|unknown / needs clarification| Clarification[clarification_placeholder]
     Route -->|router failed| ContextUpdate[context_update]
 
@@ -402,6 +402,17 @@ Run the policy RAG main-graph smoke test:
 python scripts/policy_rag_smoke_test.py
 python scripts/policy_rag_smoke_test.py --real-model --reranker cross_encoder
 ```
+
+Run the deterministic Week 2 RAG and memory evaluation set (15 policy
+retrieval/citation cases and 5 memory-boundary cases):
+
+```bash
+python scripts/run_week2_evals.py
+```
+
+The evaluation uses BM25 plus the tracked knowledge chunks and a temporary
+SQLite database. It does not call an external model. A non-zero exit code
+means at least one expected retrieval, clarification, or memory boundary failed.
 
 Run real LLM policy RAG and print the final answer:
 

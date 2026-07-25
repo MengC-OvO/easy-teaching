@@ -21,7 +21,13 @@ DEFAULT_MESSAGE = "What does the EYLF say about play-based learning?"
 
 
 class PolicyRouter:
-    def route(self, user_message: str) -> IntentRouteResult:
+    def route(
+        self,
+        user_message: str,
+        *,
+        conversation_context: str = "",
+    ) -> IntentRouteResult:
+        """Force the policy route while matching the main-graph router contract."""
         return IntentRouteResult(
             intent=Intent.POLICY_QA,
             confidence=1.0,

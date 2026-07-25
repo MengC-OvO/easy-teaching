@@ -21,7 +21,7 @@ from app.schemas import (
 )
 from app.services import EduFlowStore
 from app.tools import ToolDefinition, build_default_tool_registry
-from app.workflows import build_main_graph, build_react_graph
+from app.workflows import build_main_graph, build_planning_workflow
 
 
 class StubRouter:
@@ -104,7 +104,7 @@ def build_planning_chain(tmp_path, *, approved: bool, agent: SequencedPlanningAg
         make_store(tmp_path),
         knowledge_retriever=StubPolicyRetriever(),
     )
-    planning_workflow = build_react_graph(
+    planning_workflow = build_planning_workflow(
         agent=agent,
         registry=registry,
         allowed_tool_names={

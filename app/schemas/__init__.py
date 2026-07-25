@@ -54,6 +54,11 @@ from app.schemas.react import (
     StopReason,
     ToolCall,
 )
+from app.schemas.specialist import (
+    SpecialistInput,
+    SpecialistKind,
+    SpecialistResult,
+)
 
 __all__ = [
     "Approval",
@@ -89,6 +94,9 @@ __all__ = [
     "ReActState",
     "RiskLevel",
     "SafetyFlag",
+    "SpecialistInput",
+    "SpecialistKind",
+    "SpecialistResult",
     "ThreadContext",
     "StopReason",
     "TraceEvent",
