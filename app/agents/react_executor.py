@@ -98,7 +98,7 @@ class ReActToolExecutor:
             return base_allowed & {"load_skill"}
         if state.loaded_skill.manifest.name != self.required_skill_name:
             return set()
-        return base_allowed & set(state.loaded_skill.manifest.tool_names)
+        return base_allowed - {"load_skill"}
 
     def _validate_final_skill_state(
         self,

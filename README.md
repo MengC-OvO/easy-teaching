@@ -296,9 +296,10 @@ tests/
 - `load_skill.py` is the agent-facing tool adapter. It calls `SkillLoader` and
   returns either a validated `LoadedSkill` or a structured tool error.
 - The Planning ReAct graph starts with only `load_skill` visible. After
-  `activity_planning` is loaded, the available and executable tools are reduced
-  to the intersection of the Skill manifest, the Planning permission policy,
-  and the registered tools.
+  `activity_planning` is loaded, all registered tools allowed by the Planning
+  permission policy become available. The Skill manifest describes required
+  and recommended workflow dependencies; it does not grant or reduce the
+  specialist's authority.
 - The graph refuses a final answer until every required Skill tool has completed
   successfully. The Planning workflow then validates the final JSON against
   `ActivityPlan`, maps its title and content into the shared draft contract, and
