@@ -205,6 +205,7 @@ def make_skill_registry() -> ToolRegistry:
         "retrieve_risk_guidance",
         "check_activity_safety",
         "recall_long_term_memory",
+        "save_draft",
     }
     registry = ToolRegistry()
     registry.register(
@@ -236,7 +237,7 @@ def call_named_tool(tool_name: str) -> ReActDecision:
     )
 
 
-def test_skill_aware_react_graph_loads_then_limits_tools_to_manifest() -> None:
+def test_skill_aware_react_graph_loads_then_exposes_planning_allowlist() -> None:
     agent = SequencedAgent(
         [
             ReActDecision(
@@ -249,6 +250,7 @@ def test_skill_aware_react_graph_loads_then_limits_tools_to_manifest() -> None:
             ),
             call_named_tool("get_class_profile"),
             call_named_tool("align_to_eylf_outcomes"),
+            call_named_tool("save_draft"),
             final_answer_decision('{"title": "Ready"}'),
         ]
     )
@@ -262,7 +264,7 @@ def test_skill_aware_react_graph_loads_then_limits_tools_to_manifest() -> None:
         ReActState(
             user_message="Plan an activity.",
             required_skill_name="activity_planning",
-            max_steps=5,
+            max_steps=6,
         )
     )
 
@@ -276,7 +278,11 @@ def test_skill_aware_react_graph_loads_then_limits_tools_to_manifest() -> None:
         "retrieve_risk_guidance",
         "check_activity_safety",
         "recall_long_term_memory",
+        "save_draft",
     }
+    assert "save_draft" not in result["loaded_skill"].manifest.tool_names
+    assert result["observations"][-1].tool_name == "save_draft"
+    assert result["observations"][-1].success is True
 
 
 def test_skill_aware_react_graph_rejects_final_answer_before_loading() -> None:
