@@ -270,6 +270,13 @@ def test_skill_aware_react_graph_loads_then_exposes_planning_allowlist() -> None
 
     assert result["stop_reason"] is StopReason.COMPLETED
     assert result["loaded_skill"].manifest.name == "activity_planning"
+    assert result["observations"][0].data == {
+        "skill_name": "activity_planning",
+        "version": "1.0",
+        "content_hash": result["loaded_skill"].content_hash,
+    }
+    assert "instructions" not in result["observations"][0].data
+    assert "manifest" not in result["observations"][0].data
     assert agent.seen_tool_name_history[0] == ["load_skill"]
     assert "load_skill" not in agent.seen_tool_name_history[1]
     assert set(agent.seen_tool_name_history[1]) == {

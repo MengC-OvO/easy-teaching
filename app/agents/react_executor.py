@@ -79,7 +79,19 @@ class ReActToolExecutor:
             and tool_call.tool_name == "load_skill"
             and self.required_skill_name is not None
         ):
-            next_state["loaded_skill"] = LoadedSkill.model_validate(result.data)
+            loaded_skill = LoadedSkill.model_validate(result.data)
+            next_state["loaded_skill"] = loaded_skill
+            next_state["observations"] = [
+                Observation(
+                    tool_name="load_skill",
+                    success=True,
+                    data={
+                        "skill_name": loaded_skill.manifest.name,
+                        "version": loaded_skill.manifest.version,
+                        "content_hash": loaded_skill.content_hash,
+                    },
+                )
+            ]
         return next_state
 
     def effective_allowed_tool_names(self, state: ReActState) -> Optional[Set[str]]:

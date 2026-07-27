@@ -2,10 +2,13 @@ from pydantic import BaseModel
 
 from app.agents import REACT_AGENT_SYSTEM_PROMPT, ReActAgent
 from app.schemas import (
+    LoadedSkill,
     Observation,
     ReActAction,
     ReActDecision,
     ReActState,
+    SkillManifest,
+    SpecialistKind,
     ToolCall,
 )
 from app.services import ModelResponse
@@ -110,3 +113,50 @@ def test_react_agent_includes_previous_observations_in_prompt() -> None:
 
     assert result.action is ReActAction.FINAL_ANSWER
     assert "Kangaroo Room" in provider.messages[1].content
+
+
+def test_react_agent_includes_loaded_skill_once_and_manifest_separately() -> None:
+    decision = ReActDecision(
+        action=ReActAction.FINAL_ANSWER,
+        final_answer="Draft.",
+        reason="Ready.",
+    )
+    provider = StubReActProvider(decision)
+    agent = ReActAgent(provider)
+    loaded_skill = LoadedSkill(
+        manifest=SkillManifest(
+            name="activity_planning",
+            version="1.0",
+            specialist=SpecialistKind.PLANNING,
+            description="Test planning Skill.",
+            required_tool_names=frozenset({"get_class_profile"}),
+            output_model="ActivityPlan",
+        ),
+        instructions="UNIQUE_SKILL_INSTRUCTION",
+        content_hash="a" * 64,
+    )
+
+    agent.decide(
+        ReActState(
+            user_message="Plan an activity.",
+            required_skill_name="activity_planning",
+            loaded_skill=loaded_skill,
+            observations=[
+                Observation(
+                    tool_name="load_skill",
+                    success=True,
+                    data={
+                        "skill_name": "activity_planning",
+                        "version": "1.0",
+                        "content_hash": "a" * 64,
+                    },
+                )
+            ],
+        ),
+        [make_tool()],
+    )
+
+    prompt = provider.messages[1].content
+    assert prompt.count("UNIQUE_SKILL_INSTRUCTION") == 1
+    assert "Loaded Skill manifest:" in prompt
+    assert "get_class_profile" in prompt

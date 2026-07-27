@@ -9,6 +9,8 @@ from app.services.model_errors import (
     ModelTimeoutError,
 )
 from app.services.model_provider import ChatCompletionsModelProvider
+from app.services.learning_record_drafting import LearningRecordDraftingService
+from app.services.observation_redactor import ObservationRedactor
 from app.services.model_types import (
     ModelJSONParseResult,
     ModelMessage,
@@ -52,6 +54,7 @@ __all__ = [
     "LLMContextSummarizer",
     "LLMLongTermMemoryExtractor",
     "KnowledgeSourceSpec",
+    "LearningRecordDraftingService",
     "ModelConfigurationError",
     "ModelErrorCode",
     "ModelHTTPError",
@@ -64,6 +67,7 @@ __all__ = [
     "ModelRole",
     "ModelTimeoutError",
     "ModelUsage",
+    "ObservationRedactor",
     "ParsedTextBlock",
     "PolicyRAGService",
     "VectorIndexConfigurationError",
