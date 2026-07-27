@@ -98,8 +98,10 @@ class ReActAgent:
             )
         return "\n".join(
             [
-                "Loaded Skill:",
+                "Loaded Skill instructions:",
                 state.loaded_skill.instructions,
+                "Loaded Skill manifest:",
+                state.loaded_skill.manifest.model_dump_json(),
                 "Final output contract:",
                 (
                     "Set final_answer to a JSON string matching this JSON Schema. "

@@ -268,9 +268,10 @@ tests/
 - Planning and Policy keep their own internal graph state. Their workflow
   wrapper converts the shared specialist input into internal state, invokes the
   internal graph, and converts its result back to `SpecialistResult`.
-- Documentation and Family currently use one-node specialist workflows behind
-  the same contract, so the main graph does not depend on each implementation's
-  private state shape.
+- Documentation and Family use specialist workflows behind the same contract,
+  so the main graph does not depend on each implementation's private state
+  shape. The Family workflow is still a placeholder; Documentation now has its
+  own drafting subgraph.
 
 ### Day 2: Specialist permissions
 
@@ -282,6 +283,13 @@ tests/
 - Permission checks exist both while assembling workflows and at actual tool
   execution. A Skill may request fewer capabilities, but it cannot grant itself
   capabilities outside the specialist policy.
+- `forbidden_actions` currently defines and tests the intended business-action
+  boundary, but it is not yet connected to a generic action executor or model
+  output safety validator. Today, unregistered tools, specialist tool
+  allowlists, and `ToolRegistry` execution checks prevent unauthorized side
+  effects. They do not by themselves detect forbidden content such as diagnosis,
+  medical advice, or raw PII in ordinary generated text; that requires a future
+  output-validation layer.
 
 ### Day 3: File-based Planning Skill
 
@@ -307,6 +315,54 @@ tests/
 - Skills currently contain Markdown and JSON only, so loading a Skill executes
   no Skill-supplied code. User-created registration, script execution, and a
   separate sandbox runner are future work.
+- The current Planning integration is a first version that always requires the
+  single registered `activity_planning` Skill. A future Planning Skill selector
+  should classify the planning scenario and choose among multiple registered
+  Skills (for example outdoor, indoor, excursion, weekly-program, or other
+  specialised planning workflows) instead of applying one Skill to every
+  activity request.
+
+### Day 4: Documentation drafting subgraph
+
+- The Documentation specialist now follows the same integration boundary as
+  Planning and Policy: the Main Graph passes `SpecialistInput`, the private
+  Documentation subgraph runs its bounded work, and the wrapper returns a
+  `SpecialistResult`.
+- The subgraph de-identifies the observation before it reaches the model,
+  validates the model response as `LearningRecordDraft`, and returns a draft in
+  `WAITING_FOR_APPROVAL` state. The main graph therefore receives a normal
+  specialist result rather than documentation-specific private state.
+- Approval currently stops the workflow before any persistence. A future
+  interrupt/resume plus Redis privacy session will handle multi-turn revisions,
+  temporary identity mapping, and the controlled final write.
+
+### Planned: Learning-record privacy session (Redis backlog)
+
+The future learning-record drafting flow must keep raw observations and child
+identities out of the model provider. The current local `ObservationRedactor`
+is only a first deterministic filter for high-confidence patterns; it is not a
+reliable way to recognise arbitrary names.
+
+When multi-turn learning-record drafting is implemented, use Redis only as a
+short-lived, request-scoped privacy session—not as the approved-record store:
+
+- Store a centre-approved child-name list for the active teacher/class scope,
+  then replace names in free text with tokens such as `[CHILD_1]` before any
+  model call. This is the primary name-protection mechanism; regular-expression
+  redaction remains a secondary defence for email, phone, and similar patterns.
+- Store the temporary token-to-name mapping and any safe draft revision under a
+  random `request_id`, so the teacher can request revisions and still see names
+  restored locally. The model receives only the tokenised draft and revision
+  instruction.
+- Apply a short TTL (for example, 30 minutes), validate the active
+  `teacher_id` and `class_id` before every read, and explicitly delete the
+  Redis key when the teacher approves, rejects, or cancels the draft.
+- Do not store the raw observation in Redis, SQLite, traces, request logs, or
+  long-term memory. After approval, persist only the teacher-confirmed final
+  learning record in SQLite.
+
+Redis is intentionally not a current dependency or runtime service. This is a
+documented follow-up after the minimal drafting and approval flow is complete.
 
 ## Memory Design
 

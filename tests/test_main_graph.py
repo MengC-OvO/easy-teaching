@@ -88,6 +88,10 @@ class StubPolicyWorkflow:
         return self.result
 
 
+class StubDocumentationWorkflow(StubPolicyWorkflow):
+    pass
+
+
 class ContextRecordingPolicyService:
     def __init__(self) -> None:
         self.contexts = []
@@ -399,6 +403,27 @@ def test_main_graph_records_router_errors() -> None:
 
 
 def test_main_graph_routes_learning_record_to_documentation_specialist() -> None:
+    documentation_workflow = StubDocumentationWorkflow(
+        SpecialistResult(
+            specialist=SpecialistKind.DOCUMENTATION,
+            status=WorkflowStatus.WAITING_FOR_APPROVAL,
+            draft=Draft(
+                title="Learning record draft",
+                content='{"is_draft": true}',
+            ),
+            approval=Approval(
+                status=ApprovalStatus.REQUIRED,
+                risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+                reason="Teacher review is required before saving.",
+            ),
+            trace=[
+                TraceEvent(
+                    step="documentation_draft",
+                    message="Generated a draft for teacher review.",
+                )
+            ],
+        )
+    )
     graph = build_main_graph(
         StubRouter(
             IntentRouteResult(
@@ -406,7 +431,8 @@ def test_main_graph_routes_learning_record_to_documentation_specialist() -> None
                 confidence=0.9,
                 reason="The request asks for a learning record.",
             )
-        )
+        ),
+        documentation_workflow=documentation_workflow,
     )
 
     final_state = GraphState.model_validate(
@@ -419,11 +445,12 @@ def test_main_graph_routes_learning_record_to_documentation_specialist() -> None
         )
     )
 
-    assert final_state.workflow_status is WorkflowStatus.COMPLETED
+    assert final_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
     assert final_state.draft is not None
     assert final_state.draft.title == "Learning record draft"
     assert final_state.draft.is_draft is True
-    assert final_state.trace[-3].step == "documentation_skeleton"
+    assert documentation_workflow.input_state.specialist is SpecialistKind.DOCUMENTATION
+    assert final_state.trace[-3].step == "documentation_draft"
     assert final_state.trace[-2].step == "context_update"
     assert final_state.trace[-1].step == "long_memory_update"
 

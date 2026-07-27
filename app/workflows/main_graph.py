@@ -189,11 +189,8 @@ def route_by_intent(state: GraphStateInput) -> str:
 def build_specialist_workflow_node(
     workflow: SpecialistWorkflowProtocol,
     specialist: SpecialistKind,
-    permission: SpecialistPermissionPolicy,
     context_manager: ContextManagerProtocol,
 ):
-    permission.require_specialist(specialist)
-
     def specialist_workflow_node(state: GraphStateInput) -> Dict[str, Any]:
         current_state = _state_from_input(state)
         specialist_input = SpecialistInput.from_graph_state(
@@ -384,7 +381,6 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_planning_workflow,
             SpecialistKind.PLANNING,
-            resolved_specialist_permissions[SpecialistKind.PLANNING],
             resolved_context_manager,
         ),
     )
@@ -393,7 +389,6 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_documentation_workflow,
             SpecialistKind.DOCUMENTATION,
-            resolved_specialist_permissions[SpecialistKind.DOCUMENTATION],
             resolved_context_manager,
         ),
     )
@@ -402,7 +397,6 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_policy_workflow,
             SpecialistKind.POLICY,
-            resolved_specialist_permissions[SpecialistKind.POLICY],
             resolved_context_manager,
         ),
     )
@@ -411,7 +405,6 @@ def build_main_graph(
         build_specialist_workflow_node(
             resolved_family_workflow,
             SpecialistKind.FAMILY,
-            resolved_specialist_permissions[SpecialistKind.FAMILY],
             resolved_context_manager,
         ),
     )

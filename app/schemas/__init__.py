@@ -19,6 +19,11 @@ from app.schemas.graph_state import (
     WorkflowStatus,
 )
 from app.schemas.intent_routing import IntentRouteResult
+from app.schemas.learning_records import (
+    DeidentifiedObservation,
+    LearningRecordDraft,
+    PIIType,
+)
 from app.schemas.long_memory import (
     LongTermMemoryAction,
     LongTermMemoryCandidate,
@@ -84,6 +89,7 @@ __all__ = [
     "Citation",
     "CitationMetadata",
     "ContextBudget",
+    "DeidentifiedObservation",
     "ConversationMemory",
     "ConversationRole",
     "ConversationTurn",
@@ -98,6 +104,7 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "KnowledgeSourceType",
+    "LearningRecordDraft",
     "LongTermMemoryCandidate",
     "LongTermMemoryAction",
     "LongTermMemoryDecision",
@@ -107,6 +114,7 @@ __all__ = [
     "LoadedSkill",
     "MemoryRetrievalMode",
     "Observation",
+    "PIIType",
     "PolicyEvidence",
     "PolicyRAGResult",
     "PolicyRAGStatus",
