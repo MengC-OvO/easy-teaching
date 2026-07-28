@@ -18,6 +18,7 @@ from app.schemas.graph_state import (
     TraceEvent,
     WorkflowStatus,
 )
+from app.schemas.approval_resume import ApprovalDecision, ApprovalResumeCommand
 from app.schemas.intent_routing import IntentRouteResult
 from app.schemas.learning_records import (
     DeidentifiedObservation,
@@ -81,6 +82,8 @@ from app.schemas.specialist_permissions import (
 
 __all__ = [
     "Approval",
+    "ApprovalDecision",
+    "ApprovalResumeCommand",
     "ApprovalStatus",
     "ActivityObservationPoint",
     "ActivityPlan",

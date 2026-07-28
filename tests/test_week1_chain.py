@@ -154,7 +154,7 @@ def test_week1_chain_routes_to_react_tools_and_waits_for_approval(tmp_path) -> N
 
     assert final_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
     assert final_state.approval.status is ApprovalStatus.REQUIRED
-    planning_trace = final_state.trace[-3]
+    planning_trace = final_state.trace[-4]
     assert planning_trace.step == "planning_react"
     assert planning_trace.metadata["stop_reason"] == "approval_required"
     assert [item["tool_name"] for item in planning_trace.metadata["observations"]] == [
@@ -162,6 +162,7 @@ def test_week1_chain_routes_to_react_tools_and_waits_for_approval(tmp_path) -> N
         "retrieve_risk_guidance",
         "save_draft",
     ]
+    assert final_state.trace[-3].step == "approval_gate"
     assert final_state.trace[-2].step == "context_update"
     assert final_state.trace[-1].step == "long_memory_update"
     assert agent.calls == 3

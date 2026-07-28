@@ -57,6 +57,32 @@ def test_store_save_draft_is_idempotent_with_key(tmp_path) -> None:
     assert second["title"] == "Outdoor sensory walk"
 
 
+def test_store_saves_approved_learning_record_idempotently(tmp_path) -> None:
+    store = EduFlowStore(f"sqlite:///{tmp_path / 'eduflow-test.sqlite3'}")
+    store.initialize()
+
+    first = store.save_approved_learning_record(
+        request_id="learning-record-request-001",
+        teacher_id="teacher-001",
+        class_id="kangaroo-room",
+        title="Learning record",
+        content='{"is_draft": true}',
+    )
+    second = store.save_approved_learning_record(
+        request_id="learning-record-request-001",
+        teacher_id="teacher-001",
+        class_id="kangaroo-room",
+        title="Changed title is ignored on retry",
+        content="changed content is ignored on retry",
+    )
+
+    assert first["created"] is True
+    assert second["created"] is False
+    assert second["record_id"] == first["record_id"]
+    assert second["title"] == "Learning record"
+    assert store.get_learning_record_by_request_id("learning-record-request-001") == second
+
+
 def test_store_initialization_is_idempotent(tmp_path) -> None:
     store = EduFlowStore(f"sqlite:///{tmp_path / 'eduflow-test.sqlite3'}")
 
