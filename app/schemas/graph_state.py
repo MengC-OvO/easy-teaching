@@ -19,6 +19,7 @@ class WorkflowStatus(str, Enum):
     ROUTED = "routed"
     DRAFTING = "drafting"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
+    APPROVED_PENDING_SAVE = "approved_pending_save"
     COMPLETED = "completed"
     FAILED = "failed"
 

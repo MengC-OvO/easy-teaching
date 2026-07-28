@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import Boolean, DateTime, JSON, Integer, String, create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.config import settings
@@ -51,6 +52,26 @@ class DraftRecord(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="draft")
+
+
+class LearningRecord(Base):
+    """Teacher-approved record; the original observation is never stored here."""
+
+    __tablename__ = "learning_records"
+
+    record_id: Mapped[str] = mapped_column(String, primary_key=True)
+    request_id: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    teacher_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    class_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="approved")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
 
 
 class LongTermMemoryRecord(Base):
@@ -145,6 +166,52 @@ class EduFlowStore:
             session.commit()
 
         return self._draft_to_dict(draft)
+
+    def save_approved_learning_record(
+        self,
+        *,
+        request_id: str,
+        teacher_id: Optional[str],
+        class_id: Optional[str],
+        title: str,
+        content: str,
+    ) -> Dict[str, Any]:
+        """Save one approved record, returning the original on a retry."""
+        with self.session_factory() as session:
+            existing = self._learning_record_for_request(session, request_id)
+            if existing is not None:
+                return self._learning_record_to_dict(existing, created=False)
+
+            record = LearningRecord(
+                record_id=str(uuid4()),
+                request_id=request_id,
+                teacher_id=teacher_id,
+                class_id=class_id,
+                title=title,
+                content=content,
+                status="approved",
+            )
+            session.add(record)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = self._learning_record_for_request(session, request_id)
+                if existing is None:
+                    raise
+                return self._learning_record_to_dict(existing, created=False)
+
+        return self._learning_record_to_dict(record, created=True)
+
+    def get_learning_record_by_request_id(
+        self,
+        request_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self.session_factory() as session:
+            record = self._learning_record_for_request(session, request_id)
+            if record is None:
+                return None
+            return self._learning_record_to_dict(record, created=False)
 
     def save_long_term_memory(
         self,
@@ -338,6 +405,37 @@ class EduFlowStore:
             "draft_type": draft.draft_type,
             "title": draft.title,
             "status": draft.status,
+        }
+
+    def _learning_record_for_request(
+        self,
+        session: Session,
+        request_id: str,
+    ) -> Optional[LearningRecord]:
+        return (
+            session.execute(
+                select(LearningRecord).where(LearningRecord.request_id == request_id)
+            )
+            .scalars()
+            .first()
+        )
+
+    def _learning_record_to_dict(
+        self,
+        record: LearningRecord,
+        *,
+        created: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "record_id": record.record_id,
+            "request_id": record.request_id,
+            "teacher_id": record.teacher_id,
+            "class_id": record.class_id,
+            "title": record.title,
+            "content": record.content,
+            "status": record.status,
+            "created_at": record.created_at.isoformat(),
+            "created": created,
         }
 
     def _long_term_memory_to_dict(

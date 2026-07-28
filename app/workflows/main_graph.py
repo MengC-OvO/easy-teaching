@@ -2,9 +2,14 @@ from typing import Any, Dict, List, Mapping, Optional, Protocol, Union
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
+from langgraph.types import interrupt
+from pydantic import ValidationError
 
 from app.agents import IntentRouter
 from app.schemas import (
+    ApprovalDecision,
+    ApprovalResumeCommand,
+    ApprovalStatus,
     ConversationTurn,
     DEFAULT_SPECIALIST_PERMISSIONS,
     GraphError,
@@ -89,6 +94,19 @@ class LongTermMemoryStoreProtocol(Protocol):
         teacher_id: Optional[str],
         class_id: Optional[str],
     ) -> Dict[str, str]:
+        ...
+
+
+class LearningRecordStoreProtocol(Protocol):
+    def save_approved_learning_record(
+        self,
+        *,
+        request_id: str,
+        teacher_id: Optional[str],
+        class_id: Optional[str],
+        title: str,
+        content: str,
+    ) -> Dict[str, Any]:
         ...
 
 
@@ -184,6 +202,197 @@ def route_by_intent(state: GraphStateInput) -> str:
     if current_state.intent is Intent.FAMILY_COMMUNICATION:
         return "family"
     return "clarification"
+
+
+def route_after_specialist(state: GraphStateInput) -> str:
+    """Keep approval-gated work on an explicit main-graph path.
+
+    Specialist subgraphs only declare that a controlled action needs approval.
+    The main graph owns the transition into the common approval boundary, so
+    Planning, Documentation, and future Family actions all pause consistently
+    when interrupt/resume is introduced.
+    """
+
+    current_state = _state_from_input(state)
+    if current_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL:
+        return "approval_gate"
+    return "context_update"
+
+
+def build_approval_gate_node(*, interrupts_enabled: bool):
+    """Build the shared human-approval boundary.
+
+    LangGraph interrupts need a checkpointer.  Graphs built without one retain
+    the former pass-through behaviour so existing one-shot callers can still
+    return a draft marked ``WAITING_FOR_APPROVAL``.  A checkpointed graph pauses
+    here and exposes only safe approval metadata to the caller.
+    """
+
+    def approval_gate(state: GraphStateInput) -> Dict[str, Any]:
+        current_state = _state_from_input(state)
+        payload = {
+            "kind": "approval_required",
+            "request_id": current_state.request_id,
+            "risk_level": current_state.approval.risk_level.value,
+            "reason": current_state.approval.reason,
+            "allowed_decisions": ["approve", "reject"],
+        }
+
+        if interrupts_enabled:
+            # Do not add side effects before interrupt(): this node is run again
+            # from its start when a later Command(resume=...) continues it.
+            resume_value = interrupt(payload)
+            try:
+                command = ApprovalResumeCommand.model_validate(resume_value)
+            except ValidationError:
+                return {
+                    "workflow_status": WorkflowStatus.FAILED,
+                    "errors": [
+                        GraphError(
+                            code="invalid_approval_resume",
+                            message=(
+                                "Approval response must include a valid request_id "
+                                "and an approve or reject decision."
+                            ),
+                        )
+                    ],
+                    "trace": [
+                        TraceEvent(
+                            step="approval_gate",
+                            message="Rejected an invalid approval response.",
+                            metadata={"request_id": current_state.request_id},
+                        )
+                    ],
+                }
+
+            if command.request_id != current_state.request_id:
+                return {
+                    "workflow_status": WorkflowStatus.FAILED,
+                    "errors": [
+                        GraphError(
+                            code="approval_request_mismatch",
+                            message=(
+                                "Approval response does not belong to the draft "
+                                "currently waiting for review."
+                            ),
+                        )
+                    ],
+                    "trace": [
+                        TraceEvent(
+                            step="approval_gate",
+                            message="Rejected an approval response for another request.",
+                            metadata={"request_id": current_state.request_id},
+                        )
+                    ],
+                }
+
+            approved = command.decision is ApprovalDecision.APPROVE
+            return {
+                "workflow_status": (
+                    WorkflowStatus.APPROVED_PENDING_SAVE
+                    if approved
+                    else WorkflowStatus.COMPLETED
+                ),
+                "approval": current_state.approval.model_copy(
+                    update={
+                        "status": (
+                            ApprovalStatus.APPROVED
+                            if approved
+                            else ApprovalStatus.REJECTED
+                        )
+                    }
+                ),
+                "trace": [
+                    TraceEvent(
+                        step="approval_gate",
+                        message=(
+                            "Teacher approved draft; final save is pending."
+                            if approved
+                            else "Teacher rejected draft; no record was saved."
+                        ),
+                        metadata={
+                            "request_id": current_state.request_id,
+                            "decision": command.decision.value,
+                        },
+                    )
+                ],
+            }
+
+        return {
+            "trace": [
+                TraceEvent(
+                    step="approval_gate",
+                    message="Draft is waiting for a teacher approval decision.",
+                    metadata={
+                        "request_id": current_state.request_id,
+                        "risk_level": current_state.approval.risk_level.value,
+                        "interrupt_enabled": interrupts_enabled,
+                    },
+                )
+            ]
+        }
+
+    return approval_gate
+
+
+def route_after_approval_gate(state: GraphStateInput) -> str:
+    """Only an approved, resumed request may enter the final-save node."""
+
+    current_state = _state_from_input(state)
+    if current_state.workflow_status is WorkflowStatus.APPROVED_PENDING_SAVE:
+        return "save_approved_learning_record"
+    return "context_update"
+
+
+def build_approved_learning_record_save_node(store: LearningRecordStoreProtocol):
+    """Save an approved draft once, using request_id as the idempotency key."""
+
+    def save_approved_learning_record(state: GraphStateInput) -> Dict[str, Any]:
+        current_state = _state_from_input(state)
+        if current_state.approval.status is not ApprovalStatus.APPROVED:
+            return {
+                "workflow_status": WorkflowStatus.FAILED,
+                "errors": [
+                    GraphError(
+                        code="learning_record_save_not_approved",
+                        message="An approved teacher decision is required before saving.",
+                    )
+                ],
+            }
+        if current_state.draft is None:
+            return {
+                "workflow_status": WorkflowStatus.FAILED,
+                "errors": [
+                    GraphError(
+                        code="learning_record_save_missing_draft",
+                        message="Cannot save an approved learning record without a draft.",
+                    )
+                ],
+            }
+
+        saved = store.save_approved_learning_record(
+            request_id=current_state.request_id,
+            teacher_id=current_state.teacher_id,
+            class_id=current_state.class_id,
+            title=current_state.draft.title or "Learning record",
+            content=current_state.draft.content,
+        )
+        return {
+            "workflow_status": WorkflowStatus.COMPLETED,
+            "trace": [
+                TraceEvent(
+                    step="learning_record_save",
+                    message="Saved approved learning record.",
+                    metadata={
+                        "record_id": saved["record_id"],
+                        "request_id": current_state.request_id,
+                        "created": saved["created"],
+                    },
+                )
+            ],
+        }
+
+    return save_approved_learning_record
 
 
 def build_specialist_workflow_node(
@@ -340,11 +549,13 @@ def build_main_graph(
     checkpointer: Optional[BaseCheckpointSaver] = None,
     long_memory_extractor: Optional[LongTermMemoryExtractorProtocol] = None,
     long_memory_store: Optional[LongTermMemoryStoreProtocol] = None,
+    learning_record_store: Optional[LearningRecordStoreProtocol] = None,
 ):
     resolved_specialist_permissions = _resolve_specialist_permissions(
         specialist_permissions
     )
     resolved_long_memory_store = long_memory_store or _default_long_memory_store()
+    resolved_learning_record_store = learning_record_store or resolved_long_memory_store
     resolved_long_memory_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
     resolved_router = router or IntentRouter()
     resolved_planning_workflow = planning_workflow or build_planning_workflow(
@@ -409,6 +620,14 @@ def build_main_graph(
         ),
     )
     graph.add_node("clarification_placeholder", clarification_placeholder)
+    graph.add_node(
+        "approval_gate",
+        build_approval_gate_node(interrupts_enabled=checkpointer is not None),
+    )
+    graph.add_node(
+        "save_approved_learning_record",
+        build_approved_learning_record_save_node(resolved_learning_record_store),
+    )
     graph.add_node("context_update", build_context_update_node(resolved_context_manager))
     graph.add_node(
         "long_memory_update",
@@ -431,10 +650,29 @@ def build_main_graph(
             "end": "context_update",
         },
     )
-    graph.add_edge("planning_react", "context_update")
-    graph.add_edge("documentation", "context_update")
-    graph.add_edge("policy_rag", "context_update")
-    graph.add_edge("family", "context_update")
+    for specialist_node in (
+        "planning_react",
+        "documentation",
+        "policy_rag",
+        "family",
+    ):
+        graph.add_conditional_edges(
+            specialist_node,
+            route_after_specialist,
+            {
+                "approval_gate": "approval_gate",
+                "context_update": "context_update",
+            },
+        )
+    graph.add_conditional_edges(
+        "approval_gate",
+        route_after_approval_gate,
+        {
+            "save_approved_learning_record": "save_approved_learning_record",
+            "context_update": "context_update",
+        },
+    )
+    graph.add_edge("save_approved_learning_record", "context_update")
     graph.add_edge("clarification_placeholder", "context_update")
     graph.add_edge("context_update", "long_memory_update")
     graph.add_edge("long_memory_update", END)

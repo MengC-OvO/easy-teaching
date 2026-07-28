@@ -1,5 +1,7 @@
 import sqlite3
 
+from langgraph.types import Command
+
 from app.schemas import (
     Approval,
     ApprovalStatus,
@@ -358,6 +360,143 @@ def test_main_graph_can_checkpoint_state_to_sqlite(tmp_path) -> None:
     assert checkpoint_count > 0
 
 
+def test_main_graph_interrupts_at_approval_gate_when_checkpointed(tmp_path) -> None:
+    checkpoint_path = tmp_path / "approval-checkpoints.sqlite3"
+    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
+    store.initialize()
+    graph = build_main_graph(
+        StubRouter(
+            IntentRouteResult(
+                intent=Intent.LEARNING_RECORD,
+                confidence=0.9,
+                reason="The request asks for documentation.",
+            )
+        ),
+        documentation_workflow=StubDocumentationWorkflow(
+            SpecialistResult(
+                specialist=SpecialistKind.DOCUMENTATION,
+                status=WorkflowStatus.WAITING_FOR_APPROVAL,
+                draft=Draft(title="Learning record draft", content="{}"),
+                approval=Approval(
+                    status=ApprovalStatus.REQUIRED,
+                    risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+                    reason="Teacher review is required before saving.",
+                ),
+            )
+        ),
+        checkpointer=build_sqlite_checkpointer(checkpoint_path),
+        long_memory_store=store,
+        learning_record_store=store,
+    )
+    config = checkpoint_config("thread-approval-interrupt")
+
+    events = list(
+        graph.stream(
+            GraphState(
+                request_id="req-approval-interrupt",
+                session_id="session-approval-interrupt",
+                thread_id="thread-approval-interrupt",
+                user_message="Write a learning story draft.",
+            ),
+            config=config,
+        )
+    )
+
+    interrupt_event = next(event for event in events if "__interrupt__" in event)
+    approval_interrupt = interrupt_event["__interrupt__"][0]
+    assert approval_interrupt.value == {
+        "kind": "approval_required",
+        "request_id": "req-approval-interrupt",
+        "risk_level": "L2_controlled_write",
+        "reason": "Teacher review is required before saving.",
+        "allowed_decisions": ["approve", "reject"],
+    }
+    paused_state = GraphState.model_validate(graph.get_state(config).values)
+    assert paused_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
+    assert paused_state.approval.status is ApprovalStatus.REQUIRED
+    assert paused_state.trace[-1].step != "context_update"
+
+    resumed_state = GraphState.model_validate(
+        graph.invoke(
+            Command(
+                resume={
+                    "request_id": "req-approval-interrupt",
+                    "decision": "approve",
+                }
+            ),
+            config=config,
+        )
+    )
+    assert resumed_state.workflow_status is WorkflowStatus.COMPLETED
+    assert resumed_state.approval.status is ApprovalStatus.APPROVED
+    assert resumed_state.trace[-4].metadata == {
+        "request_id": "req-approval-interrupt",
+        "decision": "approve",
+    }
+    save_trace = resumed_state.trace[-3]
+    assert save_trace.step == "learning_record_save"
+    assert save_trace.metadata["request_id"] == "req-approval-interrupt"
+    assert save_trace.metadata["created"] is True
+    assert [event.step for event in resumed_state.trace[-2:]] == [
+        "context_update",
+        "long_memory_update",
+    ]
+    saved = store.get_learning_record_by_request_id("req-approval-interrupt")
+    assert saved is not None
+    assert saved["title"] == "Learning record draft"
+
+
+def test_main_graph_rejects_resume_for_a_different_request(tmp_path) -> None:
+    graph = build_main_graph(
+        StubRouter(
+            IntentRouteResult(
+                intent=Intent.LEARNING_RECORD,
+                confidence=0.9,
+                reason="The request asks for documentation.",
+            )
+        ),
+        documentation_workflow=StubDocumentationWorkflow(
+            SpecialistResult(
+                specialist=SpecialistKind.DOCUMENTATION,
+                status=WorkflowStatus.WAITING_FOR_APPROVAL,
+                approval=Approval(
+                    status=ApprovalStatus.REQUIRED,
+                    risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+                ),
+            )
+        ),
+        checkpointer=build_sqlite_checkpointer(tmp_path / "mismatch-checkpoints.sqlite3"),
+    )
+    config = checkpoint_config("thread-approval-mismatch")
+    list(
+        graph.stream(
+            GraphState(
+                request_id="req-waiting",
+                session_id="session-waiting",
+                thread_id="thread-approval-mismatch",
+                user_message="Write a learning story draft.",
+            ),
+            config=config,
+        )
+    )
+
+    final_state = GraphState.model_validate(
+        graph.invoke(
+            Command(
+                resume={
+                    "request_id": "req-other",
+                    "decision": "approve",
+                }
+            ),
+            config=config,
+        )
+    )
+
+    assert final_state.workflow_status is WorkflowStatus.FAILED
+    assert final_state.approval.status is ApprovalStatus.REQUIRED
+    assert final_state.errors[-1].code == "approval_request_mismatch"
+
+
 def test_main_graph_preserves_core_request_fields() -> None:
     graph = build_main_graph(
         StubRouter(
@@ -450,9 +589,17 @@ def test_main_graph_routes_learning_record_to_documentation_specialist() -> None
     assert final_state.draft.title == "Learning record draft"
     assert final_state.draft.is_draft is True
     assert documentation_workflow.input_state.specialist is SpecialistKind.DOCUMENTATION
-    assert final_state.trace[-3].step == "documentation_draft"
-    assert final_state.trace[-2].step == "context_update"
-    assert final_state.trace[-1].step == "long_memory_update"
+    assert [event.step for event in final_state.trace[-4:]] == [
+        "documentation_draft",
+        "approval_gate",
+        "context_update",
+        "long_memory_update",
+    ]
+    assert final_state.trace[-3].metadata == {
+        "request_id": "req-doc",
+        "risk_level": "L2_controlled_write",
+        "interrupt_enabled": False,
+    }
 
 
 def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
@@ -506,7 +653,7 @@ def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
 
     assert final_state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL
     assert final_state.approval.status is ApprovalStatus.REQUIRED
-    planning_trace = final_state.trace[-3]
+    planning_trace = final_state.trace[-4]
     assert planning_trace.step == "planning_react"
     assert planning_trace.metadata["stop_reason"] == "approval_required"
     assert planning_trace.metadata["observations"] == [
@@ -516,6 +663,7 @@ def test_main_graph_maps_planning_approval_required_to_workflow_state() -> None:
             "error_code": "permission_denied",
         }
     ]
+    assert final_state.trace[-3].step == "approval_gate"
 
 
 def test_main_graph_routes_policy_qa_to_policy_placeholder() -> None:
