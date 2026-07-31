@@ -3,7 +3,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, JSON, Integer, String, create_engine, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Index,
+    JSON,
+    Integer,
+    String,
+    UniqueConstraint,
+    create_engine,
+    func,
+    select,
+    text,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -27,6 +39,20 @@ SYNTHETIC_CLASS_PROFILES = [
     }
 ]
 
+ACTIVE_CONVERSATION_RUN_STATUSES = (
+    "accepted",
+    "running",
+    "waiting_for_approval",
+)
+
+
+class ConversationSessionBusyError(RuntimeError):
+    """Raised when another active run wins the session-level race."""
+
+    def __init__(self, active_request_id: str) -> None:
+        super().__init__("Conversation session already has an active run")
+        self.active_request_id = active_request_id
+
 
 class Base(DeclarativeBase):
     pass
@@ -41,6 +67,116 @@ class ClassProfile(Base):
     child_count: Mapped[int] = mapped_column(Integer, nullable=False)
     interests: Mapped[List[str]] = mapped_column(JSON, nullable=False)
     safety_notes: Mapped[List[str]] = mapped_column(JSON, nullable=False)
+
+
+class ConversationSessionRecord(Base):
+    """Durable API session metadata; graph state remains in the checkpointer."""
+
+    __tablename__ = "conversation_sessions"
+
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    teacher_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    class_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+
+class ConversationRunRecord(Base):
+    """Operational status for one message; content stays in graph checkpoints."""
+
+    __tablename__ = "conversation_runs"
+    __table_args__ = (
+        Index(
+            "uq_conversation_runs_one_active_per_session",
+            "session_id",
+            unique=True,
+            sqlite_where=text(
+                "status IN ('accepted', 'running', 'waiting_for_approval')"
+            ),
+        ),
+    )
+
+    request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class ConversationRunResultRecord(Base):
+    """Public draft snapshot produced by one conversation run."""
+
+    __tablename__ = "conversation_run_results"
+
+    request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    draft: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    approval: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    citations: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+
+class ConversationApprovalDecisionRecord(Base):
+    """Idempotency record for one human approval decision."""
+
+    __tablename__ = "conversation_approval_decisions"
+
+    request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    decision: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+
+class ConversationEventRecord(Base):
+    """Ordered, replayable server-sent event for one conversation run."""
+
+    __tablename__ = "conversation_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "request_id",
+            "sequence",
+            name="uq_conversation_event_request_sequence",
+        ),
+    )
+
+    event_id: Mapped[str] = mapped_column(String, primary_key=True)
+    request_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    event: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    data: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
 
 
 class DraftRecord(Base):
@@ -118,6 +254,7 @@ class EduFlowStore:
 
     def initialize(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._ensure_active_conversation_run_index()
         self._migrate_long_term_memory_schema()
         with self.session_factory() as session:
             self._seed_class_profiles(session)
@@ -129,6 +266,229 @@ class EduFlowStore:
             if profile is None:
                 return None
             return self._class_profile_to_dict(profile)
+
+    def create_conversation_session(
+        self,
+        *,
+        session_id: str,
+        thread_id: str,
+        teacher_id: Optional[str],
+        class_id: Optional[str],
+    ) -> Dict[str, Any]:
+        record = ConversationSessionRecord(
+            session_id=session_id,
+            thread_id=thread_id,
+            teacher_id=teacher_id,
+            class_id=class_id,
+            status="active",
+        )
+        with self.session_factory() as session:
+            session.add(record)
+            session.commit()
+        return self._conversation_session_to_dict(record)
+
+    def get_conversation_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self.session_factory() as session:
+            record = session.get(ConversationSessionRecord, session_id)
+            if record is None:
+                return None
+            return self._conversation_session_to_dict(record)
+
+    def create_conversation_run(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+    ) -> Dict[str, Any]:
+        with self.session_factory() as session:
+            existing = session.get(ConversationRunRecord, request_id)
+            if existing is not None:
+                return self._conversation_run_to_dict(existing, created=False)
+
+            record = ConversationRunRecord(
+                request_id=request_id,
+                session_id=session_id,
+                status="accepted",
+            )
+            session.add(record)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = session.get(ConversationRunRecord, request_id)
+                if existing is not None:
+                    return self._conversation_run_to_dict(existing, created=False)
+                active = self._active_conversation_run(session, session_id)
+                if active is not None:
+                    raise ConversationSessionBusyError(active.request_id)
+                raise
+        return self._conversation_run_to_dict(record, created=True)
+
+    def get_conversation_run(self, request_id: str) -> Optional[Dict[str, Any]]:
+        with self.session_factory() as session:
+            record = session.get(ConversationRunRecord, request_id)
+            if record is None:
+                return None
+            return self._conversation_run_to_dict(record, created=False)
+
+    def get_active_conversation_run(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self.session_factory() as session:
+            record = self._active_conversation_run(session, session_id)
+            if record is None:
+                return None
+            return self._conversation_run_to_dict(record, created=False)
+
+    def list_conversation_runs(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        with self.session_factory() as session:
+            statement = select(ConversationRunRecord).order_by(
+                ConversationRunRecord.created_at
+            )
+            if statuses:
+                statement = statement.where(
+                    ConversationRunRecord.status.in_(statuses)
+                )
+            records = session.execute(statement).scalars().all()
+        return [
+            self._conversation_run_to_dict(record, created=False)
+            for record in records
+        ]
+
+    def update_conversation_run_status(
+        self,
+        request_id: str,
+        status: str,
+    ) -> Dict[str, Any]:
+        with self.session_factory() as session:
+            record = session.get(ConversationRunRecord, request_id)
+            if record is None:
+                raise ValueError("Conversation run does not exist")
+            record.status = status
+            record.updated_at = datetime.utcnow()
+            session.commit()
+        return self._conversation_run_to_dict(record, created=False)
+
+    def save_conversation_run_result(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        draft: Dict[str, Any],
+        approval: Dict[str, Any],
+        citations: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        with self.session_factory() as session:
+            record = session.get(ConversationRunResultRecord, request_id)
+            if record is None:
+                record = ConversationRunResultRecord(
+                    request_id=request_id,
+                    session_id=session_id,
+                    draft=draft,
+                    approval=approval,
+                    citations=citations,
+                )
+                session.add(record)
+            else:
+                if record.session_id != session_id:
+                    raise ValueError("Conversation run result belongs to another session")
+                record.draft = draft
+                record.approval = approval
+                record.citations = citations
+            session.commit()
+        return self._conversation_run_result_to_dict(record)
+
+    def get_conversation_run_result(self, request_id: str) -> Optional[Dict[str, Any]]:
+        with self.session_factory() as session:
+            record = session.get(ConversationRunResultRecord, request_id)
+            if record is None:
+                return None
+            return self._conversation_run_result_to_dict(record)
+
+    def create_approval_decision(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        decision: str,
+    ) -> Dict[str, Any]:
+        with self.session_factory() as session:
+            existing = session.get(ConversationApprovalDecisionRecord, request_id)
+            if existing is not None:
+                return self._approval_decision_to_dict(existing, created=False)
+
+            record = ConversationApprovalDecisionRecord(
+                request_id=request_id,
+                session_id=session_id,
+                decision=decision,
+            )
+            session.add(record)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = session.get(ConversationApprovalDecisionRecord, request_id)
+                if existing is None:
+                    raise
+                return self._approval_decision_to_dict(existing, created=False)
+        return self._approval_decision_to_dict(record, created=True)
+
+    def get_approval_decision(self, request_id: str) -> Optional[Dict[str, Any]]:
+        with self.session_factory() as session:
+            record = session.get(ConversationApprovalDecisionRecord, request_id)
+            if record is None:
+                return None
+            return self._approval_decision_to_dict(record, created=False)
+
+    def append_conversation_event(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        event: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        with self.session_factory() as session:
+            last_sequence = session.execute(
+                select(func.max(ConversationEventRecord.sequence)).where(
+                    ConversationEventRecord.request_id == request_id
+                )
+            ).scalar_one()
+            sequence = 0 if last_sequence is None else last_sequence + 1
+            record = ConversationEventRecord(
+                event_id=str(uuid4()),
+                request_id=request_id,
+                session_id=session_id,
+                event=event,
+                sequence=sequence,
+                data=data,
+            )
+            session.add(record)
+            session.commit()
+        return self._conversation_event_to_dict(record)
+
+    def list_conversation_events(
+        self,
+        *,
+        request_id: str,
+        after_sequence: int = -1,
+    ) -> List[Dict[str, Any]]:
+        with self.session_factory() as session:
+            records = (
+                session.execute(
+                    select(ConversationEventRecord)
+                    .where(
+                        ConversationEventRecord.request_id == request_id,
+                        ConversationEventRecord.sequence > after_sequence,
+                    )
+                    .order_by(ConversationEventRecord.sequence)
+                )
+                .scalars()
+                .all()
+            )
+        return [self._conversation_event_to_dict(record) for record in records]
 
     def save_draft(
         self,
@@ -384,6 +744,35 @@ class EduFlowStore:
                 continue
             session.add(ClassProfile(**profile))
 
+    def _active_conversation_run(
+        self,
+        session: Session,
+        session_id: str,
+    ) -> Optional[ConversationRunRecord]:
+        return (
+            session.execute(
+                select(ConversationRunRecord)
+                .where(
+                    ConversationRunRecord.session_id == session_id,
+                    ConversationRunRecord.status.in_(
+                        ACTIVE_CONVERSATION_RUN_STATUSES
+                    ),
+                )
+                .order_by(ConversationRunRecord.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+
+    def _ensure_active_conversation_run_index(self) -> None:
+        """Install the partial unique index for existing local databases too."""
+        index = next(
+            item
+            for item in ConversationRunRecord.__table__.indexes
+            if item.name == "uq_conversation_runs_one_active_per_session"
+        )
+        index.create(self.engine, checkfirst=True)
+
     def _sqlite_url(self, database_path: str) -> str:
         path = Path(database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -397,6 +786,75 @@ class EduFlowStore:
             "child_count": profile.child_count,
             "interests": profile.interests,
             "safety_notes": profile.safety_notes,
+        }
+
+    def _conversation_session_to_dict(
+        self,
+        record: ConversationSessionRecord,
+    ) -> Dict[str, Any]:
+        return {
+            "session_id": record.session_id,
+            "thread_id": record.thread_id,
+            "teacher_id": record.teacher_id,
+            "class_id": record.class_id,
+            "status": record.status,
+            "created_at": record.created_at.isoformat(),
+        }
+
+    def _conversation_run_to_dict(
+        self,
+        record: ConversationRunRecord,
+        *,
+        created: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "request_id": record.request_id,
+            "session_id": record.session_id,
+            "status": record.status,
+            "created_at": record.created_at.isoformat(),
+            "updated_at": record.updated_at.isoformat(),
+            "created": created,
+        }
+
+    def _conversation_run_result_to_dict(
+        self,
+        record: ConversationRunResultRecord,
+    ) -> Dict[str, Any]:
+        return {
+            "request_id": record.request_id,
+            "session_id": record.session_id,
+            "draft": record.draft,
+            "approval": record.approval,
+            "citations": record.citations,
+            "created_at": record.created_at.isoformat(),
+        }
+
+    def _approval_decision_to_dict(
+        self,
+        record: ConversationApprovalDecisionRecord,
+        *,
+        created: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "request_id": record.request_id,
+            "session_id": record.session_id,
+            "decision": record.decision,
+            "created_at": record.created_at.isoformat(),
+            "created": created,
+        }
+
+    def _conversation_event_to_dict(
+        self,
+        record: ConversationEventRecord,
+    ) -> Dict[str, Any]:
+        return {
+            "event_id": record.event_id,
+            "request_id": record.request_id,
+            "session_id": record.session_id,
+            "event": record.event,
+            "sequence": record.sequence,
+            "data": record.data,
+            "created_at": record.created_at.isoformat(),
         }
 
     def _draft_to_dict(self, draft: DraftRecord) -> Dict[str, str]:

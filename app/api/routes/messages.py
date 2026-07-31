@@ -1,0 +1,149 @@
+"""Accept teacher messages for execution on an EduFlow session thread."""
+
+from typing import Optional, Union
+from uuid import uuid4
+
+from fastapi import APIRouter, BackgroundTasks, Request, status
+from fastapi.responses import JSONResponse
+
+from app.api.dependencies import get_runtime
+from app.api.execution import execute_message
+from app.services import ConversationSessionBusyError
+from app.schemas import (
+    ApiErrorDetail,
+    ApiErrorResponse,
+    MessageAcceptedResponse,
+    MessageCreateRequest,
+    StreamEventType,
+)
+
+
+router = APIRouter(prefix="/sessions", tags=["messages"])
+
+
+def _error_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    details: dict,
+    request_id: Optional[str] = None,
+) -> JSONResponse:
+    error = ApiErrorResponse(
+        request_id=request_id,
+        error=ApiErrorDetail(
+            code=code,
+            message=message,
+            recoverable=False,
+            details=details,
+        ),
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=error.model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/{session_id}/messages",
+    response_model=MessageAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ApiErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ApiErrorResponse},
+    },
+)
+def create_message(
+    session_id: str,
+    payload: MessageCreateRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> Union[MessageAcceptedResponse, JSONResponse]:
+    runtime = get_runtime(request)
+    conversation = runtime.store.get_conversation_session(session_id)
+    if conversation is None:
+        return _error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="session_not_found",
+            message="The requested session does not exist.",
+            details={"session_id": session_id},
+            request_id=payload.request_id,
+        )
+
+    request_id = payload.request_id or str(uuid4())
+    existing = runtime.store.get_conversation_run(request_id)
+    if existing is not None:
+        if existing["session_id"] != session_id:
+            return _error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="request_id_conflict",
+                message="The request_id already belongs to another session.",
+                details={"session_id": session_id},
+                request_id=request_id,
+            )
+        return MessageAcceptedResponse(
+            session_id=session_id,
+            request_id=request_id,
+            status=existing["status"],
+        )
+
+    active = runtime.store.get_active_conversation_run(session_id)
+    if active is not None:
+        return _error_response(
+            status_code=status.HTTP_409_CONFLICT,
+            code="session_busy",
+            message="The session already has an active run.",
+            details={"active_request_id": active["request_id"]},
+            request_id=request_id,
+        )
+
+    try:
+        run = runtime.store.create_conversation_run(
+            request_id=request_id,
+            session_id=session_id,
+        )
+    except ConversationSessionBusyError as error:
+        return _error_response(
+            status_code=status.HTTP_409_CONFLICT,
+            code="session_busy",
+            message="The session already has an active run.",
+            details={"active_request_id": error.active_request_id},
+            request_id=request_id,
+        )
+
+    if not run["created"]:
+        if run["session_id"] != session_id:
+            return _error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                code="request_id_conflict",
+                message="The request_id already belongs to another session.",
+                details={"session_id": session_id},
+                request_id=request_id,
+            )
+        return MessageAcceptedResponse(
+            session_id=session_id,
+            request_id=request_id,
+            status=run["status"],
+        )
+
+    runtime.store.append_conversation_event(
+        request_id=request_id,
+        session_id=session_id,
+        event=StreamEventType.RUN_STARTED.value,
+        data={"status": run["status"]},
+    )
+    background_tasks.add_task(
+        execute_message,
+        runtime=runtime,
+        request_id=request_id,
+        session_id=session_id,
+        thread_id=conversation["thread_id"],
+        teacher_id=conversation["teacher_id"],
+        class_id=conversation["class_id"],
+        message=payload.message,
+    )
+    return MessageAcceptedResponse(
+        session_id=session_id,
+        request_id=request_id,
+        status=run["status"],
+    )
