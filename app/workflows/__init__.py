@@ -9,7 +9,7 @@ from app.workflows.family_workflow import (
     FamilySpecialistWorkflow,
     build_family_workflow,
 )
-from app.workflows.main_graph import build_main_graph, main_graph
+from app.workflows.main_graph import build_main_graph
 from app.workflows.planning_workflow import (
     PlanningSpecialistWorkflow,
     build_planning_workflow,
@@ -32,7 +32,6 @@ __all__ = [
     "checkpoint_config",
     "DocumentationSpecialistWorkflow",
     "FamilySpecialistWorkflow",
-    "main_graph",
     "PlanningSpecialistWorkflow",
     "SpecialistWorkflowOutput",
     "SpecialistWorkflowProtocol",

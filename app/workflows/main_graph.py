@@ -693,6 +693,3 @@ def _resolve_specialist_permissions(
     for specialist, permission in resolved.items():
         permission.require_specialist(specialist)
     return resolved
-
-
-main_graph = build_main_graph()
