@@ -522,7 +522,7 @@ def test_main_graph_preserves_core_request_fields() -> None:
     assert final_state.user_message == "Write a learning story draft."
 
 
-def test_main_graph_records_router_errors() -> None:
+def test_main_graph_falls_back_to_clarification_when_router_fails() -> None:
     graph = build_main_graph(FailingRouter())
 
     result = graph.invoke(
@@ -534,11 +534,18 @@ def test_main_graph_records_router_errors() -> None:
     )
     final_state = GraphState.model_validate(result)
 
-    assert final_state.workflow_status is WorkflowStatus.FAILED
+    assert final_state.workflow_status is WorkflowStatus.COMPLETED
+    assert final_state.intent is Intent.UNKNOWN
+    assert final_state.needs_clarification is True
+    assert "activity plan" in final_state.clarification_question
     assert final_state.errors[0].code == "timeout"
-    assert final_state.trace[-3].step == "intent_router"
-    assert final_state.trace[-2].step == "context_update"
-    assert final_state.trace[-1].step == "long_memory_update"
+    assert final_state.errors[0].recoverable is True
+    assert [event.step for event in final_state.trace[-4:]] == [
+        "intent_router",
+        "clarification_placeholder",
+        "context_update",
+        "long_memory_update",
+    ]
 
 
 def test_main_graph_routes_learning_record_to_documentation_specialist() -> None:

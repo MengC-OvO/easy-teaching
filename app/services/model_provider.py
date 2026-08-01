@@ -1,5 +1,6 @@
 import json
-from typing import Any, Dict, Optional, Type
+import time
+from typing import Any, Callable, Dict, Optional, Type
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -18,6 +19,7 @@ from app.services.model_types import (
     ModelResponse,
     ModelUsage,
 )
+from app.services.retry import RetryPolicy
 
 
 class ChatCompletionsModelProvider:
@@ -25,38 +27,35 @@ class ChatCompletionsModelProvider:
         self,
         provider_settings: Settings = settings,
         client: Optional[httpx.Client] = None,
+        retry_policy: Optional[RetryPolicy] = None,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = provider_settings
         self.client = client or httpx.Client()
+        self.retry_policy = retry_policy or RetryPolicy(
+            max_attempts=provider_settings.model_retry_max_attempts,
+            initial_delay_seconds=(
+                provider_settings.model_retry_initial_delay_seconds
+            ),
+            max_delay_seconds=provider_settings.model_retry_max_delay_seconds,
+            total_timeout_seconds=provider_settings.model_total_timeout_seconds,
+        )
+        self._sleep = sleep
+        self._clock = clock
 
     def generate(self, request: ModelRequest) -> ModelResponse:
+        return self._generate_with_deadline(request, started_at=self._clock())
+
+    def _generate_with_deadline(
+        self,
+        request: ModelRequest,
+        *,
+        started_at: float,
+    ) -> ModelResponse:
         self._validate_configuration()
         payload = self._build_payload(request)
-
-        try:
-            response = self.client.post(
-                self._chat_completions_url(),
-                headers=self._headers(),
-                json=payload,
-                timeout=request.timeout_seconds or self.settings.model_timeout_seconds,
-            )
-        except httpx.TimeoutException as error:
-            raise ModelTimeoutError(
-                "Model request timed out.",
-                details={"model": payload["model"]},
-            ) from error
-        except httpx.RequestError as error:
-            raise ModelProviderError(
-                "Model request failed before receiving a response.",
-                details={"error": str(error), "model": payload["model"]},
-            ) from error
-
-        if response.status_code >= 400:
-            raise ModelHTTPError(
-                "Model provider returned an HTTP error.",
-                status_code=response.status_code,
-                details={"body": response.text[:500], "model": payload["model"]},
-            )
+        response = self._post_with_retry(request, payload, started_at=started_at)
 
         raw_response = self._parse_response_json(response)
         content = self._extract_content(raw_response)
@@ -76,6 +75,80 @@ class ChatCompletionsModelProvider:
             structured=structured,
         )
 
+    def _post_with_retry(
+        self,
+        request: ModelRequest,
+        payload: Dict[str, Any],
+        *,
+        started_at: float,
+    ) -> httpx.Response:
+        for attempt in range(1, self.retry_policy.max_attempts + 1):
+            remaining_seconds = self._remaining_seconds(started_at)
+            attempt_timeout = min(
+                request.timeout_seconds or self.settings.model_timeout_seconds,
+                remaining_seconds,
+            )
+            try:
+                response = self.client.post(
+                    self._chat_completions_url(),
+                    headers=self._headers(),
+                    json=payload,
+                    timeout=attempt_timeout,
+                )
+                if response.status_code < 400:
+                    return response
+                error: ModelProviderError = ModelHTTPError(
+                    "Model provider returned an HTTP error.",
+                    status_code=response.status_code,
+                    details={
+                        "body": response.text[:500],
+                        "model": payload["model"],
+                    },
+                )
+            except httpx.TimeoutException as cause:
+                error = ModelTimeoutError(
+                    "Model request timed out.",
+                    details={"model": payload["model"]},
+                )
+                error.__cause__ = cause
+            except httpx.RequestError as cause:
+                error = ModelProviderError(
+                    "Model request failed before receiving a response.",
+                    details={"error": str(cause), "model": payload["model"]},
+                )
+                error.__cause__ = cause
+
+            if not self._should_retry(error, attempt, started_at):
+                error.details.update(
+                    {
+                        "attempts": attempt,
+                        "max_attempts": self.retry_policy.max_attempts,
+                        "retry_exhausted": error.recoverable,
+                    }
+                )
+                raise error
+
+            self._sleep(self.retry_policy.delay_after(attempt))
+
+        raise RuntimeError("unreachable retry loop")
+
+    def _should_retry(
+        self,
+        error: ModelProviderError,
+        attempt: int,
+        started_at: float,
+    ) -> bool:
+        if not error.recoverable or attempt >= self.retry_policy.max_attempts:
+            return False
+        delay = self.retry_policy.delay_after(attempt)
+        return delay < self._remaining_seconds(started_at)
+
+    def _remaining_seconds(self, started_at: float) -> float:
+        remaining = self.retry_policy.total_timeout_seconds - (
+            self._clock() - started_at
+        )
+        return max(remaining, 0.000_001)
+
     def generate_structured(
         self,
         *,
@@ -85,15 +158,31 @@ class ChatCompletionsModelProvider:
         temperature: float = 0.0,
         timeout_seconds: Optional[float] = None,
     ) -> ModelResponse:
-        return self.generate(
-            ModelRequest(
-                messages=messages,
-                model=model,
-                temperature=temperature,
-                timeout_seconds=timeout_seconds,
-                response_model=response_model,
-            )
-        )
+        started_at = self._clock()
+        for attempt in range(1, self.settings.model_structured_max_attempts + 1):
+            try:
+                return self._generate_with_deadline(
+                    ModelRequest(
+                        messages=messages,
+                        model=model,
+                        temperature=temperature,
+                        timeout_seconds=timeout_seconds,
+                        response_model=response_model,
+                    ),
+                    started_at=started_at,
+                )
+            except ModelInvalidResponseError as error:
+                error.details.update(
+                    {
+                        "structured_attempts": attempt,
+                        "structured_max_attempts": (
+                            self.settings.model_structured_max_attempts
+                        ),
+                    }
+                )
+                if attempt >= self.settings.model_structured_max_attempts:
+                    raise
+        raise RuntimeError("unreachable structured-output retry loop")
 
     def _validate_configuration(self) -> None:
         missing = []

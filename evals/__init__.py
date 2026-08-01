@@ -1,0 +1,71 @@
+"""Offline evaluation tooling kept outside the production application."""
+
+from evals.schemas import (
+    EvalCase,
+    EvalCategorySummary,
+    EvalCategory,
+    EvalCheck,
+    EvalInput,
+    EvalResult,
+    EvalReport,
+    EvalMode,
+    EvalRunSummary,
+    EvalTokenUsage,
+    MemoryActual,
+    MemoryExpectation,
+    MemoryEvalTarget,
+    RagExpectation,
+    RagActual,
+    RoutingActual,
+    RoutingExpectation,
+    SafetyExpectation,
+    SafetyActual,
+    SafetyOutcome,
+    ToolExpectation,
+    ToolActual,
+    ObservedToolCall,
+    TrajectoryActual,
+    TrajectoryExpectation,
+)
+from evals.cases import DEFAULT_CASES_PATH, load_eval_cases
+from evals.evaluators import evaluate_case
+from evals.errors import safe_eval_error_code
+from evals.metrics import build_eval_report
+from evals.model_meter import MeteredModelProvider
+from evals.runner import EvalRunner, run_eval_suite
+
+__all__ = [
+    "EvalCase",
+    "EvalCategorySummary",
+    "EvalCategory",
+    "EvalCheck",
+    "EvalInput",
+    "EvalResult",
+    "EvalReport",
+    "EvalMode",
+    "EvalRunSummary",
+    "EvalTokenUsage",
+    "MemoryActual",
+    "MemoryExpectation",
+    "MemoryEvalTarget",
+    "RagExpectation",
+    "RagActual",
+    "RoutingActual",
+    "RoutingExpectation",
+    "SafetyExpectation",
+    "SafetyActual",
+    "SafetyOutcome",
+    "ToolExpectation",
+    "ToolActual",
+    "ObservedToolCall",
+    "TrajectoryActual",
+    "TrajectoryExpectation",
+    "DEFAULT_CASES_PATH",
+    "load_eval_cases",
+    "evaluate_case",
+    "safe_eval_error_code",
+    "build_eval_report",
+    "MeteredModelProvider",
+    "EvalRunner",
+    "run_eval_suite",
+]

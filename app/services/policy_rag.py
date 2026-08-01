@@ -10,6 +10,7 @@ from app.schemas import (
     RerankerMode,
 )
 from app.services.knowledge_retriever import KnowledgeRetriever
+from app.services.model_errors import ModelProviderError
 from app.services.model_types import ModelMessage, ModelRequest, ModelResponse, ModelRole
 
 
@@ -77,16 +78,27 @@ class PolicyRAGService:
                 retrieval=retrieval,
             )
 
-        return PolicyRAGResult(
-            status=PolicyRAGStatus.ANSWERED,
-            question=question,
-            answer=self._generate_grounded_answer(
+        generation_fallback = False
+        generation_error_code = None
+        try:
+            answer = self._generate_grounded_answer(
                 question,
                 evidence,
                 conversation_context=conversation_context,
-            ),
+            )
+        except ModelProviderError as error:
+            answer = self._build_evidence_answer(question, evidence)
+            generation_fallback = True
+            generation_error_code = error.code.value
+
+        return PolicyRAGResult(
+            status=PolicyRAGStatus.ANSWERED,
+            question=question,
+            answer=answer,
             evidence=evidence,
             citations=[item.citation for item in evidence],
+            generation_fallback=generation_fallback,
+            generation_error_code=generation_error_code,
             retrieval=retrieval,
         )
 

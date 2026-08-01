@@ -7,6 +7,11 @@ def test_model_settings_have_safe_defaults() -> None:
     assert settings.model_chat_completions_path == "/chat/completions"
     assert settings.model_name == "gemini-2.5-flash"
     assert settings.model_timeout_seconds == 10.0
+    assert settings.model_retry_max_attempts == 3
+    assert settings.model_retry_initial_delay_seconds == 0.5
+    assert settings.model_retry_max_delay_seconds == 2.0
+    assert settings.model_total_timeout_seconds == 30.0
+    assert settings.model_structured_max_attempts == 2
     assert settings.embedding_base_url == "https://generativelanguage.googleapis.com/v1beta"
     assert settings.embedding_model_name == "gemini-embedding-001"
     assert settings.embedding_dimension == 768
