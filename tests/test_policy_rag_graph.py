@@ -59,6 +59,8 @@ def test_policy_rag_graph_maps_answer_to_draft_and_citations() -> None:
             status=PolicyRAGStatus.ANSWERED,
             question="What does policy say?",
             answer="Use evidence cautiously [E1].",
+            generation_fallback=True,
+            generation_error_code="timeout",
             citations=[citation],
             retrieval=empty_retrieval(),
         )
@@ -82,6 +84,8 @@ def test_policy_rag_graph_maps_answer_to_draft_and_citations() -> None:
     assert result.citations[0].source == "eylf-v2"
     assert result.citations[0].page == 21
     assert result.trace[-1].step == "policy_rag"
+    assert result.trace[-1].metadata["generation_fallback"] is True
+    assert result.trace[-1].metadata["generation_error_code"] == "timeout"
     assert service.question == "What does policy say?"
     assert service.conversation_context == "Teacher prefers concise answers."
 

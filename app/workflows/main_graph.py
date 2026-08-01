@@ -153,19 +153,32 @@ def build_intent_router_node(
             )
         except ModelProviderError as error:
             return {
-                "workflow_status": WorkflowStatus.FAILED,
+                "intent": Intent.UNKNOWN,
+                "needs_clarification": True,
+                "clarification_question": (
+                    "I could not reliably route that request. Could you say whether "
+                    "you want an activity plan, learning record, policy answer, or "
+                    "family message?"
+                ),
+                "workflow_status": WorkflowStatus.ROUTED,
                 "errors": [
                     GraphError(
                         code=error.code.value,
-                        message=error.message,
-                        recoverable=error.recoverable,
+                        message=(
+                            "Intent routing was unavailable, so the request was "
+                            "safely redirected to clarification."
+                        ),
+                        recoverable=True,
                     )
                 ],
                 "trace": [
                     TraceEvent(
                         step="intent_router",
-                        message="Intent routing failed.",
-                        metadata=error.to_dict(),
+                        message="Intent routing used the clarification fallback.",
+                        metadata={
+                            **error.safe_metadata(),
+                            "fallback": "clarification",
+                        },
                     )
                 ],
             }
@@ -436,6 +449,7 @@ def policy_placeholder(state: GraphStateInput) -> Dict[str, Any]:
 
 def clarification_placeholder(state: GraphStateInput) -> Dict[str, Any]:
     return {
+        "workflow_status": WorkflowStatus.COMPLETED,
         "trace": [
             TraceEvent(
                 step="clarification_placeholder",

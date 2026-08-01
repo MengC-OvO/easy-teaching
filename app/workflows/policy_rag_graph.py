@@ -75,7 +75,7 @@ def build_policy_rag_node(service: PolicyRAGServiceProtocol):
                         TraceEvent(
                             step="policy_rag",
                             message="Policy RAG workflow failed.",
-                            metadata=error.to_dict(),
+                            metadata=error.safe_metadata(),
                         )
                     ],
                 )
@@ -89,6 +89,8 @@ def build_policy_rag_node(service: PolicyRAGServiceProtocol):
                     "status": result.status.value,
                     "evidence_count": len(result.evidence),
                     "citation_count": len(result.citations),
+                    "generation_fallback": result.generation_fallback,
+                    "generation_error_code": result.generation_error_code,
                     "retrieval": result.retrieval.stats.model_dump(mode="json"),
                 },
             )
@@ -110,7 +112,7 @@ def build_policy_rag_node(service: PolicyRAGServiceProtocol):
         elif result.status is PolicyRAGStatus.NEEDS_CLARIFICATION:
             specialist_result = SpecialistResult(
                 specialist=SpecialistKind.POLICY,
-                status=WorkflowStatus.ROUTED,
+                status=WorkflowStatus.COMPLETED,
                 needs_clarification=True,
                 clarification_question=result.clarification_question,
                 trace=trace,

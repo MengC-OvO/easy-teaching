@@ -25,6 +25,33 @@ class Settings(BaseSettings):
         default=10.0,
         validation_alias="MODEL_TIMEOUT_SECONDS",
     )
+    model_retry_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        validation_alias="MODEL_RETRY_MAX_ATTEMPTS",
+    )
+    model_retry_initial_delay_seconds: float = Field(
+        default=0.5,
+        ge=0.0,
+        validation_alias="MODEL_RETRY_INITIAL_DELAY_SECONDS",
+    )
+    model_retry_max_delay_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        validation_alias="MODEL_RETRY_MAX_DELAY_SECONDS",
+    )
+    model_total_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0.0,
+        validation_alias="MODEL_TOTAL_TIMEOUT_SECONDS",
+    )
+    model_structured_max_attempts: int = Field(
+        default=2,
+        ge=1,
+        le=3,
+        validation_alias="MODEL_STRUCTURED_MAX_ATTEMPTS",
+    )
     embedding_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta",
         validation_alias="EMBEDDING_BASE_URL",

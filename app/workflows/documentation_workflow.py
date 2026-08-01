@@ -72,7 +72,9 @@ def build_documentation_draft_node(service: DocumentationDraftingProtocol):
             draft, deidentified = service.create_draft(request.user_message)
         except (ModelProviderError, ValueError) as error:
             metadata = (
-                error.to_dict() if isinstance(error, ModelProviderError) else {}
+                error.safe_metadata()
+                if isinstance(error, ModelProviderError)
+                else {}
             )
             return {
                 "result": SpecialistResult(

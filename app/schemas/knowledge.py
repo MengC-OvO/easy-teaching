@@ -215,6 +215,8 @@ class PolicyRAGResult(BaseModel):
     citations: List[CitationMetadata] = Field(default_factory=list)
     clarification_question: Optional[str] = None
     refusal_reason: Optional[str] = None
+    generation_fallback: bool = False
+    generation_error_code: Optional[str] = None
     retrieval: RetrievalResult
 
     @model_validator(mode="after")
@@ -226,6 +228,10 @@ class PolicyRAGResult(BaseModel):
         if self.status in {PolicyRAGStatus.REFUSED, PolicyRAGStatus.EVIDENCE_CONFLICT}:
             if not self.refusal_reason:
                 raise ValueError("refused or conflicting policy result must include a reason")
+        if self.generation_error_code and not self.generation_fallback:
+            raise ValueError(
+                "generation_error_code requires generation_fallback=true"
+            )
         return self
 
 

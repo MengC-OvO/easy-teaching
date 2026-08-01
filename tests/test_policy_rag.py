@@ -9,6 +9,7 @@ from app.schemas import (
     RetrievalResult,
     RetrievalStats,
 )
+from app.services import ModelTimeoutError
 from app.services import ModelResponse, PolicyRAGService
 from app.services.model_types import ModelRequest
 
@@ -109,6 +110,28 @@ def test_policy_rag_uses_model_provider_for_grounded_answer() -> None:
     assert "Answer only from the provided evidence" in messages[0].content
     assert "[E1]" in messages[1].content
     assert "Play-based learning provides opportunities" in messages[1].content
+
+
+def test_policy_rag_falls_back_to_local_evidence_when_model_fails() -> None:
+    class FailingPolicyAnswerModel:
+        def generate(self, request):
+            raise ModelTimeoutError("model timed out")
+
+    retriever = FakePolicyRetriever(
+        make_retrieval_result([make_retrieved_chunk("chunk-1")])
+    )
+    service = PolicyRAGService(
+        retriever=retriever,
+        model_provider=FailingPolicyAnswerModel(),
+    )
+
+    result = service.answer("What does EYLF say about play?")
+
+    assert result.status is PolicyRAGStatus.ANSWERED
+    assert "Draft policy answer based only on retrieved evidence" in result.answer
+    assert "[E1]" in result.answer
+    assert result.generation_fallback is True
+    assert result.generation_error_code == "timeout"
 
 
 def test_policy_rag_clarifies_when_retrieval_is_empty() -> None:

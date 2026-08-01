@@ -6,6 +6,7 @@ class ModelErrorCode(str, Enum):
     CONFIGURATION_ERROR = "configuration_error"
     TIMEOUT = "timeout"
     HTTP_ERROR = "http_error"
+    RATE_LIMITED = "rate_limited"
     INVALID_RESPONSE = "invalid_response"
     PROVIDER_ERROR = "provider_error"
 
@@ -32,6 +33,25 @@ class ModelProviderError(Exception):
             "recoverable": self.recoverable,
             "details": self.details,
         }
+
+    def safe_metadata(self) -> Dict[str, Any]:
+        """Return operational fields that are safe for traces and API events."""
+        safe = {
+            "code": self.code.value,
+            "recoverable": self.recoverable,
+        }
+        for key in (
+            "attempts",
+            "max_attempts",
+            "retry_exhausted",
+            "status_code",
+            "structured_attempts",
+            "structured_max_attempts",
+        ):
+            value = self.details.get(key)
+            if isinstance(value, (str, int, float, bool)):
+                safe[key] = value
+        return safe
 
 
 class ModelConfigurationError(ModelProviderError):
@@ -67,7 +87,11 @@ class ModelHTTPError(ModelProviderError):
             merged_details.update(details)
         super().__init__(
             message,
-            code=ModelErrorCode.HTTP_ERROR,
+            code=(
+                ModelErrorCode.RATE_LIMITED
+                if status_code == 429
+                else ModelErrorCode.HTTP_ERROR
+            ),
             recoverable=status_code >= 500 or status_code == 429,
             details=merged_details,
         )

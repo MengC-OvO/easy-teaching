@@ -9,6 +9,7 @@ from app.services.model_errors import (
     ModelTimeoutError,
 )
 from app.services.model_provider import ChatCompletionsModelProvider
+from app.services.retry import RetryPolicy
 from app.services.learning_record_drafting import LearningRecordDraftingService
 from app.services.observation_redactor import ObservationRedactor
 from app.services.model_types import (
@@ -71,5 +72,6 @@ __all__ = [
     "ObservationRedactor",
     "ParsedTextBlock",
     "PolicyRAGService",
+    "RetryPolicy",
     "VectorIndexConfigurationError",
 ]

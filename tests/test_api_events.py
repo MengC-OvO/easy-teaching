@@ -67,6 +67,12 @@ class CompleteTraceGraph:
                         metadata={
                             "intent": "activity_planning",
                             "confidence": 0.95,
+                            "code": "rate_limited",
+                            "attempts": 3,
+                            "max_attempts": 3,
+                            "retry_exhausted": True,
+                            "status_code": 429,
+                            "body": "private provider response",
                             "reason": "Contains a private child name.",
                             "clarification_question": "Is this about Child A?",
                         },
@@ -313,6 +319,11 @@ def test_sse_persists_every_graph_trace_with_safe_metadata(tmp_path) -> None:
         assert trace_events[1]["metadata"] == {
             "intent": "activity_planning",
             "confidence": 0.95,
+            "code": "rate_limited",
+            "attempts": 3,
+            "max_attempts": 3,
+            "retry_exhausted": True,
+            "status_code": 429,
         }
         assert trace_events[2]["metadata"]["observations"] == [
             {

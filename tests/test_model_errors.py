@@ -22,6 +22,27 @@ def test_model_provider_error_serializes_to_dict() -> None:
     }
 
 
+def test_model_provider_safe_metadata_excludes_provider_payloads() -> None:
+    error = ModelProviderError(
+        "private provider message",
+        details={
+            "attempts": 3,
+            "max_attempts": 3,
+            "retry_exhausted": True,
+            "body": "private response containing a secret",
+            "error": "private network detail",
+        },
+    )
+
+    assert error.safe_metadata() == {
+        "code": "provider_error",
+        "recoverable": True,
+        "attempts": 3,
+        "max_attempts": 3,
+        "retry_exhausted": True,
+    }
+
+
 def test_configuration_error_is_not_recoverable() -> None:
     error = ModelConfigurationError("MODEL_API_KEY is missing.")
 
@@ -42,6 +63,7 @@ def test_http_error_recoverability_depends_on_status_code() -> None:
     server_error = ModelHTTPError("Server error.", status_code=503)
 
     assert rate_limited.recoverable is True
+    assert rate_limited.code is ModelErrorCode.RATE_LIMITED
     assert bad_request.recoverable is False
     assert server_error.recoverable is True
     assert server_error.details["status_code"] == 503
