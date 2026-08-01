@@ -1,0 +1,68 @@
+[
+  {
+    "id": "transient-timeout-retry",
+    "fault": "The first model request times out.",
+    "expected": "The provider waits once, retries, and returns the second successful response.",
+    "test_node": "tests/test_model_provider.py::test_chat_completions_provider_retries_timeout_then_succeeds"
+  },
+  {
+    "id": "rate-limit-and-server-retry",
+    "fault": "The model provider returns HTTP 429 and then HTTP 503.",
+    "expected": "Both transient responses are retried with increasing delays before success.",
+    "test_node": "tests/test_model_provider.py::test_chat_completions_provider_retries_429_and_5xx"
+  },
+  {
+    "id": "total-time-budget-stop",
+    "fault": "The next retry delay cannot fit inside the total model time budget.",
+    "expected": "The provider stops immediately and marks retry exhaustion without overshooting the budget.",
+    "test_node": "tests/test_model_provider.py::test_chat_completions_provider_stops_when_total_budget_cannot_fit_delay"
+  },
+  {
+    "id": "invalid-json-regeneration",
+    "fault": "The first structured model response is not valid JSON.",
+    "expected": "Structured generation runs once more and accepts the valid second response.",
+    "test_node": "tests/test_model_provider.py::test_generate_structured_retries_one_invalid_json_response"
+  },
+  {
+    "id": "router-timeout-clarification",
+    "fault": "Intent routing remains unavailable after model retries.",
+    "expected": "The main graph safely completes on the clarification route instead of failing.",
+    "test_node": "tests/test_main_graph.py::test_main_graph_falls_back_to_clarification_when_router_fails"
+  },
+  {
+    "id": "rag-generation-evidence-fallback",
+    "fault": "Policy evidence is available but answer generation times out.",
+    "expected": "Policy RAG returns a local evidence-only answer with citations and a fallback marker.",
+    "test_node": "tests/test_policy_rag.py::test_policy_rag_falls_back_to_local_evidence_when_model_fails"
+  },
+  {
+    "id": "rag-empty-retrieval-clarification",
+    "fault": "Policy retrieval returns no evidence.",
+    "expected": "Policy RAG asks a clarification question and does not call the answer model.",
+    "test_node": "tests/test_policy_rag.py::test_policy_rag_clarifies_when_retrieval_is_empty"
+  },
+  {
+    "id": "recoverable-tool-error-continue",
+    "fault": "A tool receives invalid arguments during a ReAct run.",
+    "expected": "The error becomes an Observation and the Agent can correct the call and finish.",
+    "test_node": "tests/test_react_graph.py::test_react_graph_continues_after_recoverable_tool_error"
+  },
+  {
+    "id": "react-step-budget-stop",
+    "fault": "The ReAct workflow consumes its maximum number of steps.",
+    "expected": "The graph stops deterministically with max_steps_reached instead of looping.",
+    "test_node": "tests/test_react_graph.py::test_react_graph_stops_when_step_budget_is_used"
+  },
+  {
+    "id": "safe-error-metadata",
+    "fault": "An internal model error contains a private response body and network details.",
+    "expected": "Only the safe code, retry counters, status, and recoverability are exposed.",
+    "test_node": "tests/test_model_errors.py::test_model_provider_safe_metadata_excludes_provider_payloads"
+  },
+  {
+    "id": "sse-trace-allowlist",
+    "fault": "A graph Trace contains both approved operational fields and private metadata.",
+    "expected": "SSE persists approved fields and removes private Provider and user content.",
+    "test_node": "tests/test_api_events.py::test_sse_persists_every_graph_trace_with_safe_metadata"
+  }
+]

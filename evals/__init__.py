@@ -33,6 +33,11 @@ from evals.errors import safe_eval_error_code
 from evals.metrics import build_eval_report
 from evals.model_meter import MeteredModelProvider
 from evals.runner import EvalRunner, run_eval_suite
+from evals.reliability import (
+    DEFAULT_RELIABILITY_PATH,
+    ReliabilityScenario,
+    load_reliability_scenarios,
+)
 
 __all__ = [
     "EvalCase",
@@ -68,4 +73,7 @@ __all__ = [
     "MeteredModelProvider",
     "EvalRunner",
     "run_eval_suite",
+    "DEFAULT_RELIABILITY_PATH",
+    "ReliabilityScenario",
+    "load_reliability_scenarios",
 ]
