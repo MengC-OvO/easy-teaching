@@ -1,580 +1,241 @@
 # EduFlow AU Agent
 
-EduFlow AU Agent is a learning project for building a teacher workflow agent
-for Australian early childhood education scenarios. The current codebase
-focuses on a runnable, testable agent backbone: intent routing, isolated
-specialist workflows, controlled tools, file-based Skills, ReAct execution,
-document ingestion, embeddings, and a local vector index for RAG.
+EduFlow AU Agent is a safety-aware teacher workflow assistant for Australian
+early childhood education. It combines FastAPI, LangGraph, controlled tools,
+local memory, and retrieval-augmented generation (RAG) to turn educator
+requests into reviewable drafts and evidence-backed answers.
 
-All project data should be synthetic, public, or thoroughly de-identified.
+The repository is both a working local application and a learning project. All
+example data must be synthetic, public, or thoroughly de-identified.
 
-## Product Scope
+## What it does
 
-The agent supports teacher-assistant workflows for:
+- **Activity planning drafts** — creates structured, EYLF-aligned activity
+  plans after loading a trusted planning Skill and running safety checks.
+- **Learning record drafts** — de-identifies observations before model use and
+  pauses controlled writes for teacher approval.
+- **Policy question answering with citations** — retrieves policy evidence and
+  returns grounded answers with source metadata.
+- **Family communication drafts** — provides the specialist boundary for
+  reviewable family-facing drafts; this remains intentionally lightweight.
+- **Conversation continuity** — maintains LangGraph checkpoints, compact
+  short-term context, and scoped long-term teacher/class memory.
+- **Web workspace** — offers a ChatGPT-style local interface for sessions,
+  messages, SSE progress events, draft display, citations, and approvals.
 
-- Activity planning drafts
-- Learning record drafts
-- Policy question answering with citations
-- Family communication drafts
-
-The agent may draft, search, and reason, but code-level validation controls
-which tools can run, which writes require approval, and which actions are
-forbidden.
-
-## Current Project Status
-
-| Milestone | Status | Delivered |
-| --- | --- | --- |
-| Week 1 | Complete | API/config foundation, model provider, intent routing, LangGraph main flow, knowledge ingestion, embeddings, and vector retrieval |
-| Week 2 | Complete | Controlled tools, Planning ReAct loop, Policy RAG with citations and evidence gates, checkpoints, compact thread context, and scoped long-term memory |
-| Week 3 Day 1 | Complete | Shared specialist input/output contract plus Planning, Policy, Documentation, and Family workflow wrappers |
-| Week 3 Day 2 | Complete | Per-specialist tool allowlists, step budgets, forbidden actions, and code-level isolation checks |
-| Week 3 Day 3 | Complete | Validated `ActivityPlan` output plus a file-based `activity_planning` Skill that is loaded and enforced by the Planning ReAct workflow |
-
-## Architecture
-
-```mermaid
-flowchart TD
-    User[Teacher request] --> API[FastAPI app]
-    API --> MainGraph[LangGraph main graph]
-    Checkpoint[(SQLite checkpointer)] -. thread state .-> MainGraph
-    MainGraph --> GraphState[GraphState]
-    ProfileMemory[Teacher profile memory] --> ContextManager[ContextManager]
-    GraphState --> ContextManager
-    ContextManager --> Router[IntentRouter]
-    GraphState --> Router[IntentRouter]
-
-    Router -->|activity_planning| PlanningReAct[Planning ReAct workflow]
-    Router -->|learning_record| DocumentationSkeleton[Documentation specialist subgraph]
-    Router -->|policy_qa| PolicyRAG[Policy RAG workflow]
-    Router -->|family_communication| Family[Family specialist skeleton]
-    Router -->|unknown or clarification| Clarification[Clarification response]
-
-    PlanningReAct --> ReActAgent[ReActAgent]
-    ReActAgent --> ModelProvider[ChatCompletionsModelProvider]
-    ReActAgent --> ReActExecutor[ReActToolExecutor]
-    ReActExecutor --> ToolRegistry[ToolRegistry]
-    ToolRegistry --> LoadSkillTool[load_skill]
-    LoadSkillTool --> SkillLoader[SkillLoader]
-    SkillLoader --> SkillRegistry[Trusted SkillRegistry]
-    SkillRegistry --> PlanningSkill[activity_planning SKILL.md + manifest.json]
-    ToolRegistry --> ClassTool[get_class_profile]
-    ToolRegistry --> EvidenceTool[retrieve_risk_guidance]
-    ToolRegistry --> SafetyTool[check_activity_safety]
-    ToolRegistry --> EylfTool[align_to_eylf_outcomes]
-    ToolRegistry --> DraftTool[save_draft]
-    ToolRegistry --> RecallTool[recall_long_term_memory]
-    ClassTool --> Store[EduFlowStore SQLite]
-    DraftTool --> Store
-    RecallTool --> Store
-    EvidenceTool --> PlanningRetrieval[KnowledgeRetriever Hybrid]
-    EylfTool --> PlanningRetrieval
-    SafetyTool --> SafetyRules[Deterministic safety rules]
-
-    PolicyRAG --> PolicyService[PolicyRAGService]
-    PolicyService --> Retrieval[KnowledgeRetriever]
-    Retrieval --> Embeddings[GeminiEmbeddingProvider]
-    Retrieval --> BM25[BM25KnowledgeIndex]
-    Retrieval --> Reranker[Lexical or CrossEncoderReranker]
-    Retrieval --> VectorStore[ChromaVectorStore]
-    VectorStore --> Chroma[(Chroma collection)]
-    PolicyService --> AnswerModel[ChatCompletionsModelProvider]
-    PlanningReAct --> ContextUpdate[context_update]
-    PolicyRAG --> ContextUpdate
-    DocumentationSkeleton --> ContextUpdate
-    Family --> ContextUpdate
-    Clarification --> ContextUpdate
-    ContextUpdate --> MemoryUpdate[long_memory_update]
-    MemoryUpdate --> Store
-```
-
-## LangGraph Flow
-
-```mermaid
-flowchart TD
-    Start([START]) --> Initialize[initialize]
-    Initialize --> IntentNode[intent_router]
-    IntentNode --> Route{route_by_intent}
-
-    Route -->|activity_planning| PlanningSubgraph
-    Route -->|policy_qa| PolicySubgraph
-    Route -->|learning_record| Documentation[documentation specialist skeleton]
-    Route -->|family_communication| Family[family specialist skeleton]
-    Route -->|unknown / needs clarification| Clarification[clarification_placeholder]
-    Route -->|router failed| ContextUpdate[context_update]
-
-    subgraph PlanningSubgraph[Activity Planning ReAct Subgraph]
-        PAgent[agent]
-        PExecutor[tool_executor]
-        SkillGate{activity_planning loaded?}
-        RequiredTools{required Skill tools complete?}
-        PMax[max_steps_stop]
-        PAgent -->|call tool| PExecutor
-        PExecutor -->|continue| PAgent
-        PAgent -->|final answer| SkillGate
-        SkillGate -->|no| SkillFailure[skill_required failure]
-        SkillFailure --> PEnd([subgraph END])
-        PAgent -. before Skill load .-> LoadOnly[only load_skill is available]
-        LoadOnly --> PAgent
-        SkillGate -->|yes| RequiredTools
-        RequiredTools -->|missing| RequirementFailure[skill_requirements_missing failure]
-        RequirementFailure --> PEnd
-        RequiredTools -->|yes| ValidatePlan[validate ActivityPlan JSON]
-        PExecutor -->|max steps| PMax
-        ValidatePlan -->|valid| PEnd
-        ValidatePlan -->|invalid| PEnd
-        PExecutor -->|approval / error| PEnd
-        PMax --> PEnd
-    end
-
-    subgraph PolicySubgraph[Policy RAG Subgraph]
-        PolicyNode[policy_rag]
-        PolicyNode --> Retrieve[retrieve evidence]
-        Retrieve --> Gate{evidence gate}
-        Gate -->|empty retrieval| AskClarify[needs clarification]
-        Gate -->|version conflict| Conflict[evidence conflict]
-        Gate -->|grounded evidence| Generate[generate answer]
-        Generate --> PolicyEnd([subgraph END])
-        AskClarify --> PolicyEnd
-        Conflict --> PolicyEnd
-    end
-
-    PlanningSubgraph --> ContextUpdate
-    PolicySubgraph --> ContextUpdate
-    Documentation --> ContextUpdate
-    Family --> ContextUpdate
-    Clarification --> ContextUpdate
-    ContextUpdate --> MemoryUpdate[long_memory_update]
-    MemoryUpdate --> End([END])
-```
-
-## Knowledge Pipeline
+## System overview
 
 ```mermaid
 flowchart LR
-    Sources[Official PDFs + synthetic markdown]
-    Sources --> Ingestion[KnowledgeIngestionService]
-    Ingestion --> ParsedBlocks[ParsedTextBlock]
-    ParsedBlocks --> Chunks[KnowledgeChunk JSONL]
-    Chunks --> Embedding[Gemini embedding]
-    Embedding --> Vectors[768-d vectors]
-    Chunks --> VectorStore[ChromaVectorStore]
-    Vectors --> VectorStore
-    VectorStore --> Collection[(eduflow_knowledge)]
-
-    Query[Teacher question] --> QueryEmbedding[Query embedding]
-    QueryEmbedding --> Collection
-    Collection --> Retrieved[RetrievedKnowledgeChunk + citation]
+    Browser["Teacher web workspace"] --> API["FastAPI API"]
+    API --> Runtime["Application runtime"]
+    Runtime --> Graph["LangGraph main graph"]
+    Graph --> Router["Intent router"]
+    Router --> Planning["Planning ReAct + Skill"]
+    Router --> Policy["Policy RAG"]
+    Router --> Docs["Documentation workflow"]
+    Router --> Family["Family workflow"]
+    Planning --> Tools["Controlled tool registry"]
+    Policy --> Knowledge["Hybrid retrieval + citations"]
+    Graph --> Store[("SQLite data + checkpoints")]
+    API --> Events["Persisted SSE events"]
+    Events --> Browser
 ```
 
-Current vector index settings:
+One application-scoped runtime owns the SQLAlchemy store, SQLite checkpointer,
+and compiled graph. HTTP routes accept work and return quickly; background
+execution runs the graph, persists its public outcome, and publishes ordered
+events that the browser can replay over Server-Sent Events (SSE).
+
+For a deeper walkthrough, see [Architecture](docs/architecture.md) and
+[API and local operation](docs/api-and-operations.md). Important corrected
+behaviors are recorded in [Engineering decisions](docs/engineering-decisions.md).
+
+## Repository structure
 
 ```text
-index_method=hnsw
-distance_metric=cosine
-embedding_model_name=gemini-embedding-001
-embedding_dimension=768
-collection_name=eduflow_knowledge
+app/
+  agents/       model-facing router and ReAct orchestration
+  api/          HTTP routes, runtime composition, execution and recovery
+  schemas/      validated contracts shared across boundaries
+  services/     persistence, models, retrieval, retries and domain services
+  skills/       trusted file-based specialist instructions
+  tools/        controlled tool definitions, permissions and handlers
+  web/          local browser interface (HTML, CSS and JavaScript)
+  workflows/    main and specialist LangGraph workflows
+
+data/
+  knowledge/    tracked source manifest and processed public knowledge
+  evals/        deterministic evaluation and reliability manifests
+  local/        ignored runtime SQLite files
+  chroma/       ignored local vector index
+
+docs/           stable architecture and operating documentation
+evals/          offline evaluation models, evaluators and runner
+scripts/        local demos, ingestion, evaluation and maintenance entry points
+tests/          unit and integration coverage
 ```
 
-Gemini creates embeddings. Chroma stores those vectors and uses HNSW with
-cosine distance to retrieve semantically similar chunks.
+This structure keeps delivery code under `app/`, offline quality measurement
+under `evals/`, local operator commands under `scripts/`, and explanatory
+material under `docs/`. The core modules were not moved merely for appearance;
+their current imports already express useful boundaries.
 
-## Key Modules
+## Quick start
 
-```text
-app/main.py
-  FastAPI entry point and /health endpoint.
-
-app/config.py
-  Runtime settings loaded from .env.
-
-app/schemas/
-  Pydantic models for graph state, specialist contracts and permissions,
-  Skill manifests, ActivityPlan output, ReAct decisions, and knowledge
-  chunks/citations.
-
-app/workflows/
-  LangGraph workflows. The main graph routes requests by intent through a
-  shared specialist contract to Planning, Policy, Documentation, or Family.
-
-app/agents/
-  IntentRouter, ReActAgent, and ReActToolExecutor orchestration logic.
-
-app/skills/
-  Trusted file-based specialist Skills. SkillRegistry maps safe names to local
-  directories; SkillLoader reads and validates SKILL.md and manifest.json
-  without executing code. activity_planning/ contains the current Planning
-  Skill.
-
-app/tools/
-  ToolDefinition, ToolResult, ToolRegistry, and controlled tool modules.
-  controlled_tools/load_skill.py exposes SkillLoader to the ReAct agent as an
-  L0 read-only tool and converts loader failures into structured ToolResult
-  errors.
-  controlled_tools/get_class_profile.py reads class context.
-  controlled_tools/retrieve_risk_guidance.py retrieves risk, safety, and regulatory guidance.
-  controlled_tools/check_activity_safety.py checks activity safety risks.
-  controlled_tools/align_to_eylf_outcomes.py aligns activities to EYLF outcomes.
-  controlled_tools/save_draft.py saves approved drafts.
-  controlled_tools/recall_long_term_memory.py reads task-specific durable memory
-  within the active teacher/class scope.
-
-app/services/
-  Model provider, embedding provider, SQLAlchemy store, knowledge ingestion,
-  and Chroma vector store.
-
-data/knowledge/
-  Source manifest, raw knowledge documents, and processed chunks JSONL.
-
-scripts/
-  Local smoke tests and utility scripts for ingestion, model calls, and vector
-  index building.
-
-tests/
-  Unit and integration tests for the agent backbone.
-```
-
-## Week 2 State and Memory Delivery
-
-### Day 5: Checkpoint, short-term context, and compaction
-
-- `build_sqlite_checkpointer()` creates a LangGraph SQLite checkpointer, and
-  `checkpoint_config(thread_id)` supplies the stable thread key at invocation.
-- `ThreadContext` retains bounded recent turns, bounded tool traces, and a
-  structured conversation summary. When the recent-turn or token budget is
-  exceeded, `LLMContextSummarizer` compresses the older context rather than
-  passing an unbounded transcript to the next model call.
-- The checkpointer persists graph execution state; the compact context is the
-  smaller prompt projection of that state. They solve different problems.
-
-### Day 6: Long-term memory and recall
-
-- A completed graph request calls the structured memory writer, which returns
-  `noop`, `insert`, `update`, or `delete` operations.
-- Stable teacher preferences can become profile memory and are automatically
-  loaded by the main graph. Task-specific history remains recall-only and is
-  available through the ReAct tool.
-- Long-term records are scoped to a teacher or class and rechecked by the
-  SQLite store before mutation or recall.
-
-## Week 3 Specialist and Skill Delivery
-
-### Day 1: Specialist workflow contract
-
-- `SpecialistInput` is the common input passed from the main graph to a
-  specialist. `SpecialistResult` is the common result mapped back to the main
-  graph.
-- Planning and Policy keep their own internal graph state. Their workflow
-  wrapper converts the shared specialist input into internal state, invokes the
-  internal graph, and converts its result back to `SpecialistResult`.
-- Documentation and Family use specialist workflows behind the same contract,
-  so the main graph does not depend on each implementation's private state
-  shape. The Family workflow is still a placeholder; Documentation now has its
-  own drafting subgraph.
-
-### Day 2: Specialist permissions
-
-- Each specialist receives an immutable `SpecialistPermissionPolicy` containing
-  its identity, allowed tool names, maximum steps, and forbidden actions.
-- Planning is limited to its controlled tool allowlist and seven ReAct steps.
-  Policy, Documentation, and Family currently receive no function-calling
-  tools.
-- Permission checks exist both while assembling workflows and at actual tool
-  execution. A Skill may request fewer capabilities, but it cannot grant itself
-  capabilities outside the specialist policy.
-- `forbidden_actions` currently defines and tests the intended business-action
-  boundary, but it is not yet connected to a generic action executor or model
-  output safety validator. Today, unregistered tools, specialist tool
-  allowlists, and `ToolRegistry` execution checks prevent unauthorized side
-  effects. They do not by themselves detect forbidden content such as diagnosis,
-  medical advice, or raw PII in ordinary generated text; that requires a future
-  output-validation layer.
-
-### Day 3: File-based Planning Skill
-
-- `activity_planning/SKILL.md` contains the model-readable workflow.
-  `manifest.json` declares the specialist, required and optional tools, version,
-  and expected `ActivityPlan` output model.
-- `SkillRegistry` accepts a safe registered name instead of an arbitrary user
-  path. `SkillLoader` reads fixed files, rejects symlinks and path escapes,
-  enforces file-size and UTF-8 checks, validates the manifest, and verifies all
-  requested tools against both the specialist permission and actual tool
-  registry.
-- `load_skill.py` is the agent-facing tool adapter. It calls `SkillLoader` and
-  returns either a validated `LoadedSkill` or a structured tool error.
-- The Planning ReAct graph starts with only `load_skill` visible. After
-  `activity_planning` is loaded, all registered tools allowed by the Planning
-  permission policy become available. The Skill manifest describes required
-  and recommended workflow dependencies; it does not grant or reduce the
-  specialist's authority.
-- The graph refuses a final answer until every required Skill tool has completed
-  successfully. The Planning workflow then validates the final JSON against
-  `ActivityPlan`, maps its title and content into the shared draft contract, and
-  promotes its EYLF citations into `GraphState`.
-- Skills currently contain Markdown and JSON only, so loading a Skill executes
-  no Skill-supplied code. User-created registration, script execution, and a
-  separate sandbox runner are future work.
-- The current Planning integration is a first version that always requires the
-  single registered `activity_planning` Skill. A future Planning Skill selector
-  should classify the planning scenario and choose among multiple registered
-  Skills (for example outdoor, indoor, excursion, weekly-program, or other
-  specialised planning workflows) instead of applying one Skill to every
-  activity request.
-
-### Day 4: Documentation drafting subgraph
-
-- The Documentation specialist now follows the same integration boundary as
-  Planning and Policy: the Main Graph passes `SpecialistInput`, the private
-  Documentation subgraph runs its bounded work, and the wrapper returns a
-  `SpecialistResult`.
-- The subgraph de-identifies the observation before it reaches the model,
-  validates the model response as `LearningRecordDraft`, and returns a draft in
-  `WAITING_FOR_APPROVAL` state. The main graph therefore receives a normal
-  specialist result rather than documentation-specific private state.
-- Approval currently stops the workflow before any persistence. A future
-  interrupt/resume plus Redis privacy session will handle multi-turn revisions,
-  temporary identity mapping, and the controlled final write.
-
-### Planned: Learning-record privacy session (Redis backlog)
-
-The future learning-record drafting flow must keep raw observations and child
-identities out of the model provider. The current local `ObservationRedactor`
-is only a first deterministic filter for high-confidence patterns; it is not a
-reliable way to recognise arbitrary names.
-
-When multi-turn learning-record drafting is implemented, use Redis only as a
-short-lived, request-scoped privacy session—not as the approved-record store:
-
-- Store a centre-approved child-name list for the active teacher/class scope,
-  then replace names in free text with tokens such as `[CHILD_1]` before any
-  model call. This is the primary name-protection mechanism; regular-expression
-  redaction remains a secondary defence for email, phone, and similar patterns.
-- Store the temporary token-to-name mapping and any safe draft revision under a
-  random `request_id`, so the teacher can request revisions and still see names
-  restored locally. The model receives only the tokenised draft and revision
-  instruction.
-- Apply a short TTL (for example, 30 minutes), validate the active
-  `teacher_id` and `class_id` before every read, and explicitly delete the
-  Redis key when the teacher approves, rejects, or cancels the draft.
-- Do not store the raw observation in Redis, SQLite, traces, request logs, or
-  long-term memory. After approval, persist only the teacher-confirmed final
-  learning record in SQLite.
-
-Redis is intentionally not a current dependency or runtime service. This is a
-documented follow-up after the minimal drafting and approval flow is complete.
-
-## Memory Design
-
-EduFlow uses one SQLite long-term-memory store with two retrieval modes:
-
-- **Profile memory** is limited to active, teacher-scoped preferences such as
-  language and stable output format. The main graph loads up to four records,
-  ordered by importance and recency, before routing and drafting.
-- **Recall-only memory** holds task-specific durable history. The Planning ReAct
-  workflow can call the L0 `recall_long_term_memory` tool when a query needs
-  historical detail. The tool receives teacher/class ownership from graph state,
-  never from model-generated arguments.
-
-After each completed main-graph request, a structured LLM memory decision may
-return `noop`, `insert`, `update`, or `delete`. The SQLite store rechecks the
-active teacher/class scope before applying a mutation. Short-term thread context
-and its compact summary remain separate from cross-session long-term memory.
-
-## Safety Boundaries
-
-EduFlow AU is a teacher assistant. It must not:
-
-- Diagnose children
-- Provide medical advice
-- Provide legal compliance conclusions
-- Send real messages to families
-- Use raw real child or family private information
-
-### Risk Levels
-
-| Level | Typical action | System behavior |
-| --- | --- | --- |
-| L0 read-only | Search policy text, read synthetic class configuration | Execute automatically and record sources |
-| L1 draft | Generate activity plans, learning records, or family message drafts | Execute automatically, clearly marked as Draft |
-| L2 controlled write | Save, overwrite, or export records | Show the change and require teacher confirmation |
-| L3 forbidden or handoff | Real sending, diagnosis, medical/legal judgment, raw PII | Refuse or hand off with a clear boundary explanation |
-
-Human approval is required before any controlled write or real-world side
-effect. Approval is treated as a scoped authorization boundary, not as a casual
-review step after unrestricted model behavior.
-
-## Tool System
-
-Tools are not plain functions exposed directly to the model. Each tool is
-described by a `ToolDefinition` with:
-
-- `name`
-- `description`
-- `category`
-- Pydantic `input_model`
-- Pydantic `output_model`
-- `risk_level`
-- `permission`
-- `handler`
-
-The `ToolRegistry` is the code-level boundary between model intent and tool
-execution. It handles duplicate tool names, tool lookup, Pydantic validation,
-approval checks, forbidden-tool blocking, handler exception wrapping, and
-structured `ToolResult` output.
-
-Current controlled tools:
-
-| Tool | Risk | Permission | Purpose |
-| --- | --- | --- | --- |
-| `load_skill` | L0 read-only | Auto execute | Load and validate a trusted registered specialist Skill |
-| `get_class_profile` | L0 read-only | Auto execute | Read synthetic class profile data |
-| `retrieve_risk_guidance` | L0 read-only | Auto execute | Retrieve local risk, safety, and regulatory guidance |
-| `check_activity_safety` | L0 read-only | Auto execute | Check activity drafts for common safety risks |
-| `align_to_eylf_outcomes` | L0 read-only | Auto execute | Map activity drafts to likely EYLF outcomes with evidence |
-| `save_draft` | L2 controlled write | Requires approval | Save a draft record with an idempotency key |
-| `recall_long_term_memory` | L0 read-only | Auto execute | Search task-specific memory for the current teacher/class only |
-
-## Local Setup
-
-Create and activate a virtual environment:
+Requires Python 3.9 or newer.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
 pip install -r requirements.txt
-```
-
-Copy local environment variables:
-
-```bash
 cp .env.example .env
 ```
 
-The real API key belongs only in `.env`, which is ignored by Git.
+Add your local model and embedding credentials to `.env`. Never commit that
+file.
 
-Required model and embedding settings:
-
-```text
-MODEL_BASE_URL
-MODEL_CHAT_COMPLETIONS_PATH
-MODEL_API_KEY
-MODEL_NAME
-MODEL_TIMEOUT_SECONDS
-
-EMBEDDING_BASE_URL
-EMBEDDING_API_KEY
-EMBEDDING_MODEL_NAME
-EMBEDDING_DIMENSION
-EMBEDDING_TIMEOUT_SECONDS
-
-CHROMA_PATH
-CHROMA_COLLECTION_NAME
-```
-
-## Run Commands
-
-Run tests:
-
-```bash
-python -m pytest
-```
-
-Run the API locally:
+Start the application:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Check the health endpoint:
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). API documentation is
+available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs), and the
+health endpoint is `GET /health`.
+
+The browser page uses the existing API; it does not bypass LangGraph or return
+mock answers. It creates a durable session, submits a message, follows persisted
+SSE workflow events, fetches the resulting draft, and shows approval controls
+when the graph pauses.
+
+## Knowledge setup
+
+Prepare tracked source documents as chunks:
 
 ```bash
-curl http://127.0.0.1:8000/health
+python scripts/ingest_knowledge.py \
+  --output data/knowledge/processed/chunks.jsonl
 ```
 
-Run model smoke tests:
+Build the local Chroma index:
 
 ```bash
-python scripts/model_smoke_test.py
-python scripts/intent_router_smoke_test.py
-python scripts/gemini_week1_trace.py
+python scripts/build_vector_index.py --reset --batch-size 5
 ```
 
-Ingest knowledge sources into chunks:
+Query it directly:
 
 ```bash
-python scripts/ingest_knowledge.py --output data/knowledge/processed/chunks.jsonl
+python scripts/query_vector_index.py \
+  "What does the EYLF say about play-based learning?" \
+  --mode hybrid --top-k 5
 ```
 
-Build a small vector index smoke test:
+The current retrieval stack supports dense, BM25, and hybrid search with an
+optional cross-encoder reranker. Gemini creates 768-dimensional embeddings;
+Chroma stores and searches them using cosine distance.
+
+## API flow
+
+The public workflow is deliberately small:
+
+1. `POST /sessions` creates a conversation and LangGraph thread.
+2. `POST /sessions/{session_id}/messages` accepts one idempotent request.
+3. `GET /sessions/{session_id}/events?request_id=...` streams ordered progress
+   events using SSE.
+4. `GET /sessions/{session_id}/drafts/{request_id}` returns the public draft,
+   approval state, and citations.
+5. `POST /sessions/{session_id}/approvals` resumes a graph paused for an
+   `approve` or `reject` decision.
+
+SSE currently streams workflow lifecycle events, not individual LLM tokens.
+That distinction keeps replay and reconnect behavior deterministic: events are
+stored first, then delivered from a sequence cursor.
+
+## Safety boundaries
+
+EduFlow is a teacher assistant. It **must not**:
+
+- Diagnose children
+- Provide medical advice
+- Provide legal compliance conclusions
+- Send real messages to families
+- expose raw real child or family private information to a model
+
+| Risk | Typical capability | Behavior |
+| --- | --- | --- |
+| L0 read-only | Search policy or read synthetic class context | Execute and record evidence |
+| L1 draft | Generate an activity, record, or communication draft | Mark clearly as a draft |
+| L2 controlled write | Save or overwrite a record | Require scoped teacher approval |
+| L3 forbidden or handoff | Sending, diagnosis, medical/legal judgment, raw PII | Refuse or hand off |
+
+Human approval is required before any controlled write or real-world side
+effect. A model never receives direct access to arbitrary Python functions:
+tools are registered with validated input/output schemas, risk levels, and
+specialist-specific permissions.
+
+## Testing and evaluation
+
+Run the complete automated suite:
 
 ```bash
-python scripts/build_vector_index.py --reset --limit 5 --batch-size 5
+python -m pytest
 ```
 
-Continue building the full vector index without deleting existing chunks:
+Run the 30-case agent evaluation:
 
 ```bash
-python scripts/build_vector_index.py --batch-size 4 --max-retries 10 --retry-delay-seconds 15 --batch-delay-seconds 3
+python scripts/run_evals.py
+python scripts/run_evals.py --live-model
 ```
 
-Use `--reset` only when you intentionally want to delete and recreate the
-configured Chroma collection.
-
-Query the local vector index:
+Run deterministic reliability and failure-injection checks:
 
 ```bash
-python scripts/query_vector_index.py "What does the EYLF say about play-based learning?" --top-k 5
+python scripts/run_reliability_checks.py
 ```
 
-Query with BM25 or hybrid retrieval:
+The evaluation suite covers routing, tool use, RAG, memory, safety, and graph
+trajectory. Reliability scenarios exercise retryable model failures,
+non-retryable failures, structured-output repair, fallback responses, and
+observable API failure events. Evaluation data is development-only and is not
+part of the production API response path.
 
-```bash
-python scripts/query_vector_index.py "play based learning" --mode bm25 --top-k 5
-python scripts/query_vector_index.py "play based learning" --mode hybrid --reranker cross_encoder --top-k 5
-```
+## Current status and known gaps
 
-Run the policy RAG main-graph smoke test:
+Completed work includes the agent foundation, controlled tools, hybrid RAG,
+checkpointed memory, specialist contracts and permissions, the Planning Skill,
+documentation redaction, interrupt/resume approval, idempotent FastAPI routes,
+SSE event replay, offline evaluation, retries, fallbacks, and fault validation.
 
-```bash
-python scripts/policy_rag_smoke_test.py
-python scripts/policy_rag_smoke_test.py --real-model --reranker cross_encoder
-```
+Known follow-up work:
 
-Run the deterministic Week 2 RAG and memory evaluation set (15 policy
-retrieval/citation cases and 5 memory-boundary cases):
+- improve RAG recall and source-selection quality for the remaining evaluation
+  misses;
+- add stronger privacy-session handling for real multi-turn learning records;
+- complete the final Week 4 production-readiness tasks;
+- add true token streaming only if the model provider and product experience
+  justify the added complexity;
+- keep WebSocket support out until bidirectional real-time interaction is
+  actually needed.
 
-```bash
-python scripts/run_week2_evals.py
-```
+## Design principles
 
-The evaluation uses BM25 plus the tracked knowledge chunks and a temporary
-SQLite database. It does not call an external model. A non-zero exit code
-means at least one expected retrieval, clarification, or memory boundary failed.
+- **Validated boundaries:** Pydantic contracts guard HTTP, graph, specialist,
+  tool, and evaluation interfaces.
+- **Least privilege:** each specialist receives only its explicit tool allowlist
+  and step budget.
+- **Human control:** approval is a scoped authorization decision, not decoration
+  after an unrestricted action.
+- **Replayable execution:** checkpointed graph state and persisted SSE events
+  support safe recovery and reconnection.
+- **Inspectable quality:** evaluations report per-capability results instead of
+  hiding failures inside one aggregate score.
 
-Run real LLM policy RAG and print the final answer:
+## License and data note
 
-```bash
-python scripts/real_policy_rag_answer.py "What does the EYLF say about play-based learning?"
-```
-
-## Local Data
-
-Ignored local runtime data:
-
-```text
-.env
-data/local/
-data/chroma/
-```
-
-Tracked knowledge inputs and processed chunks live under:
-
-```text
-data/knowledge/
-```
+This repository is currently an educational portfolio project. Before any
+production deployment, add the appropriate license, privacy review, security
+controls, data-retention policy, and organisation-specific governance.

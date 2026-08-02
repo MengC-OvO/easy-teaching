@@ -12,6 +12,7 @@ from app.schemas import (
     ApprovalStatus,
     ConversationTurn,
     DEFAULT_SPECIALIST_PERMISSIONS,
+    Draft,
     GraphError,
     GraphState,
     Intent,
@@ -448,8 +449,18 @@ def policy_placeholder(state: GraphStateInput) -> Dict[str, Any]:
 
 
 def clarification_placeholder(state: GraphStateInput) -> Dict[str, Any]:
+    current_state = _state_from_input(state)
+    question = current_state.clarification_question or (
+        "What would you like help with: an activity plan, learning record, "
+        "policy question, or family message?"
+    )
     return {
         "workflow_status": WorkflowStatus.COMPLETED,
+        "draft": Draft(
+            title="How can EduFlow help?",
+            content=question,
+            is_draft=False,
+        ),
         "trace": [
             TraceEvent(
                 step="clarification_placeholder",

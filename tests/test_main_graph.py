@@ -761,6 +761,10 @@ def test_main_graph_routes_clarification_to_clarification_placeholder() -> None:
 
     assert final_state.needs_clarification is True
     assert final_state.clarification_question == "Do you want an activity plan or a family message?"
+    assert final_state.draft is not None
+    assert final_state.draft.title == "How can EduFlow help?"
+    assert final_state.draft.content == final_state.clarification_question
+    assert final_state.draft.is_draft is False
     assert final_state.trace[-3].step == "clarification_placeholder"
     assert final_state.trace[-2].step == "context_update"
     assert final_state.trace[-1].step == "long_memory_update"

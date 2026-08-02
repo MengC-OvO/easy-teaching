@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="EduFlow AU teacher workflow assistant" />
+    <title>EduFlow AU</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true">E</div>
+          <div>
+            <strong>EduFlow AU</strong>
+            <span>Teacher workspace</span>
+          </div>
+          <button class="icon-button mobile-close" id="close-sidebar" aria-label="Close sidebar">×</button>
+        </div>
+
+        <button class="new-chat" id="new-chat" type="button">
+          <span aria-hidden="true">＋</span>
+          New conversation
+        </button>
+
+        <div class="sidebar-label">Recent</div>
+        <nav class="conversation-list" id="conversation-list" aria-label="Recent conversations"></nav>
+
+        <div class="sidebar-footer">
+          <div class="privacy-dot" aria-hidden="true"></div>
+          <div>
+            <strong>Privacy-aware drafts</strong>
+            <span>Synthetic or de-identified data only</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button class="icon-button menu-button" id="open-sidebar" aria-label="Open sidebar">☰</button>
+          <div class="model-label">
+            <span>EduFlow Agent</span>
+            <small>EYLF workspace</small>
+          </div>
+          <div class="connection-state" id="connection-state">
+            <span class="status-dot"></span>
+            Ready
+          </div>
+        </header>
+
+        <section class="chat-scroll" id="chat-scroll" aria-live="polite">
+          <div class="welcome" id="welcome">
+            <div class="welcome-mark" aria-hidden="true">E</div>
+            <p class="eyebrow">AUSTRALIAN EARLY CHILDHOOD EDUCATION</p>
+            <h1>What can we work on?</h1>
+            <p class="welcome-copy">
+              Create educator-ready drafts, explore EYLF policy, and plan learning experiences with evidence and safety checks built in.
+            </p>
+            <div class="prompt-grid">
+              <button class="prompt-card" data-prompt="Create a play-based learning activity for preschool children using natural materials.">
+                <span class="prompt-icon">✦</span>
+                <strong>Plan an activity</strong>
+                <small>Build an EYLF-aligned learning experience</small>
+              </button>
+              <button class="prompt-card" data-prompt="What does the EYLF say about play-based learning?">
+                <span class="prompt-icon">⌕</span>
+                <strong>Ask about policy</strong>
+                <small>Get an evidence-backed answer with citations</small>
+              </button>
+              <button class="prompt-card" data-prompt="Draft a learning record from this de-identified observation: [CHILD_1] shared blocks with a peer and explained how they built a bridge.">
+                <span class="prompt-icon">□</span>
+                <strong>Draft a learning record</strong>
+                <small>Turn a safe observation into a reviewable draft</small>
+              </button>
+            </div>
+          </div>
+          <div class="messages" id="messages"></div>
+        </section>
+
+        <section class="composer-area">
+          <form class="composer" id="composer">
+            <textarea
+              id="message-input"
+              rows="1"
+              maxlength="20000"
+              placeholder="Message EduFlow…"
+              aria-label="Message EduFlow"
+            ></textarea>
+            <button class="send-button" id="send-button" type="submit" aria-label="Send message">↑</button>
+          </form>
+          <p class="composer-note">EduFlow creates drafts, not professional medical or legal advice. Review before use.</p>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

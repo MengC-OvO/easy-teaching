@@ -31,6 +31,10 @@ Rules:
 - Do not invent tool names.
 - Call at most one tool per step.
 - Prefer read-only context tools before drafting.
+- When a Skill is loaded, every tool in manifest.required_tool_names must have
+  a successful observation before final_answer. If one is missing, call it now.
+- If a skill_requirements_check observation rejects an early final answer, call
+  one of the missing_tool_names next; do not repeat final_answer.
 - If a tool result says approval is required, stop with a final answer explaining that approval is needed.
 - Do not use real child or family private information.
 """.strip()
