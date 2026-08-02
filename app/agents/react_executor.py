@@ -27,6 +27,8 @@ class ReActToolExecutor:
 
         if state.decision.action is ReActAction.FINAL_ANSWER:
             skill_stop_reason = self._validate_final_skill_state(state)
+            if skill_stop_reason is StopReason.SKILL_REQUIREMENTS_MISSING:
+                return self._missing_skill_requirements_update(state)
             if skill_stop_reason is not None:
                 return {
                     "stop_reason": skill_stop_reason,
@@ -134,6 +136,44 @@ class ReActToolExecutor:
         if missing_tools:
             return StopReason.SKILL_REQUIREMENTS_MISSING
         return None
+
+    def _missing_skill_requirements_update(
+        self,
+        state: ReActState,
+    ) -> Dict[str, object]:
+        """Return recoverable feedback when the model answers too early.
+
+        Required Skill tools are a code-enforced workflow contract.  A model
+        may occasionally attempt a final answer before satisfying that
+        contract; keep the ReAct loop alive so it can call the missing tools on
+        the next step instead of failing the whole teacher request.
+        """
+        successful_tools = {
+            observation.tool_name
+            for observation in state.observations
+            if observation.success
+        }
+        missing_tools = sorted(
+            state.loaded_skill.manifest.required_tool_names - successful_tools
+        )
+        return {
+            "observations": [
+                Observation(
+                    tool_name="skill_requirements_check",
+                    success=False,
+                    error={
+                        "code": StopReason.SKILL_REQUIREMENTS_MISSING.value,
+                        "message": (
+                            "Final answer rejected. Call every missing required "
+                            "tool before answering."
+                        ),
+                        "recoverable": True,
+                        "details": {"missing_tool_names": missing_tools},
+                    },
+                )
+            ],
+            "current_step": state.current_step + 1,
+        }
 
     def _tool_result_update(
         self,

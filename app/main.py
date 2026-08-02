@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Callable
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import ApiRuntime, build_api_runtime
 from app.api.recovery import recover_incomplete_runs
@@ -16,6 +19,7 @@ from app.config import settings
 
 
 RuntimeFactory = Callable[[], ApiRuntime]
+WEB_DIRECTORY = Path(__file__).resolve().parent / "web"
 
 
 def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
@@ -45,6 +49,15 @@ def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
     application.include_router(drafts_router)
     application.include_router(approvals_router)
     application.include_router(events_router)
+    application.mount(
+        "/assets",
+        StaticFiles(directory=WEB_DIRECTORY),
+        name="web-assets",
+    )
+
+    @application.get("/", include_in_schema=False)
+    def web_app() -> FileResponse:
+        return FileResponse(WEB_DIRECTORY / "index.html")
 
     @application.get("/health")
     def health_check() -> dict[str, str]:

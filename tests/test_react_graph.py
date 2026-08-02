@@ -309,7 +309,7 @@ def test_skill_aware_react_graph_rejects_final_answer_before_loading() -> None:
     assert result["stop_reason"] is StopReason.SKILL_REQUIRED
 
 
-def test_skill_aware_react_graph_requires_manifest_required_tools() -> None:
+def test_skill_aware_react_graph_recovers_when_model_answers_before_required_tools() -> None:
     agent = SequencedAgent(
         [
             ReActDecision(
@@ -321,6 +321,9 @@ def test_skill_aware_react_graph_requires_manifest_required_tools() -> None:
                 ),
             ),
             final_answer_decision(),
+            call_named_tool("get_class_profile"),
+            call_named_tool("align_to_eylf_outcomes"),
+            final_answer_decision("Completed after required tools."),
         ]
     )
     graph = build_react_graph(
@@ -333,7 +336,18 @@ def test_skill_aware_react_graph_requires_manifest_required_tools() -> None:
         ReActState(
             user_message="Plan an activity.",
             required_skill_name="activity_planning",
+            max_steps=6,
         )
     )
 
-    assert result["stop_reason"] is StopReason.SKILL_REQUIREMENTS_MISSING
+    assert result["stop_reason"] is StopReason.COMPLETED
+    assert result["final_answer"] == "Completed after required tools."
+    assert result["observations"][1].tool_name == "skill_requirements_check"
+    assert result["observations"][1].success is False
+    assert result["observations"][1].error["recoverable"] is True
+    assert result["observations"][1].error["details"]["missing_tool_names"] == [
+        "align_to_eylf_outcomes",
+        "get_class_profile",
+    ]
+    assert result["observations"][2].tool_name == "get_class_profile"
+    assert result["observations"][3].tool_name == "align_to_eylf_outcomes"

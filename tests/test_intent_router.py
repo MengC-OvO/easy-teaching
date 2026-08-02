@@ -20,6 +20,11 @@ class StubStructuredProvider:
         )
 
 
+class UnexpectedProviderCall:
+    def generate_structured(self, **kwargs):
+        raise AssertionError("Greeting-only routing should not call the model")
+
+
 def test_intent_router_prompt_lists_supported_intents() -> None:
     assert "activity_planning" in INTENT_ROUTER_SYSTEM_PROMPT
     assert "learning_record" in INTENT_ROUTER_SYSTEM_PROMPT
@@ -59,3 +64,25 @@ def test_intent_router_returns_clarification_result() -> None:
 
     assert routed.needs_clarification is True
     assert routed.intent is Intent.UNKNOWN
+
+
+def test_intent_router_handles_greeting_without_guessing_a_workflow() -> None:
+    routed = IntentRouter(UnexpectedProviderCall()).route("Hi!")
+
+    assert routed.intent is Intent.UNKNOWN
+    assert routed.needs_clarification is True
+    assert "activity plan" in routed.clarification_question
+
+
+def test_intent_router_does_not_intercept_greeting_with_a_real_request() -> None:
+    result = IntentRouteResult(
+        intent=Intent.POLICY_QA,
+        confidence=0.94,
+        reason="The message contains a policy question.",
+    )
+    provider = StubStructuredProvider(result)
+
+    routed = IntentRouter(provider).route("Hi, what does the EYLF say about play?")
+
+    assert routed.intent is Intent.POLICY_QA
+    assert provider.messages is not None
