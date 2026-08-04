@@ -1,6 +1,10 @@
 """LangGraph workflow definitions."""
 
-from app.workflows.checkpointing import build_sqlite_checkpointer, checkpoint_config
+from app.workflows.checkpointing import (
+    build_postgres_checkpointer,
+    build_sqlite_checkpointer,
+    checkpoint_config,
+)
 from app.workflows.documentation_workflow import (
     DocumentationSpecialistWorkflow,
     build_documentation_workflow,
@@ -28,6 +32,7 @@ __all__ = [
     "build_planning_workflow",
     "build_policy_rag_graph",
     "build_react_graph",
+    "build_postgres_checkpointer",
     "build_sqlite_checkpointer",
     "checkpoint_config",
     "DocumentationSpecialistWorkflow",

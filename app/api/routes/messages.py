@@ -3,10 +3,11 @@
 from typing import Optional, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
+from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.api.execution import execute_message
 from app.services import ConversationSessionBusyError
 from app.schemas import (
@@ -58,6 +59,7 @@ def create_message(
     payload: MessageCreateRequest,
     request: Request,
     background_tasks: BackgroundTasks,
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[MessageAcceptedResponse, JSONResponse]:
     runtime = get_runtime(request)
     conversation = runtime.store.get_conversation_session(session_id)
@@ -69,6 +71,7 @@ def create_message(
             details={"session_id": session_id},
             request_id=payload.request_id,
         )
+    require_session_owner(conversation, current_user)
 
     request_id = payload.request_id or str(uuid4())
     existing = runtime.store.get_conversation_run(request_id)

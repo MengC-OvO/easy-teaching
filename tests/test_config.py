@@ -2,7 +2,7 @@ from app.config import Settings
 
 
 def test_model_settings_have_safe_defaults() -> None:
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.model_chat_completions_path == "/chat/completions"
     assert settings.model_name == "gemini-2.5-flash"
@@ -18,6 +18,11 @@ def test_model_settings_have_safe_defaults() -> None:
     assert settings.embedding_timeout_seconds == 20.0
     assert settings.chroma_path == "data/chroma"
     assert settings.chroma_collection_name == "eduflow_knowledge"
+    assert settings.database_url == ""
+    assert settings.checkpoint_database_url == ""
+    assert settings.auth_enabled is False
+    assert settings.supabase_url == ""
+    assert settings.supabase_publishable_key == ""
 
 
 def test_embedding_settings_can_be_overridden() -> None:

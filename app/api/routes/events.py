@@ -2,12 +2,13 @@
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, Dict, Union
+from typing import Any, AsyncIterator, Dict, Optional, Union
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.dependencies import get_runtime
+from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.api.runtime import ApiRuntime
 from app.schemas import ApiErrorDetail, ApiErrorResponse, RunStatus, StreamEvent
 
@@ -111,6 +112,7 @@ def stream_events(
     request: Request,
     request_id: str = Query(..., min_length=1, max_length=128),
     after_sequence: int = Query(-1, ge=-1),
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[StreamingResponse, JSONResponse]:
     runtime = get_runtime(request)
     conversation = runtime.store.get_conversation_session(session_id)
@@ -122,6 +124,7 @@ def stream_events(
             session_id=session_id,
             request_id=request_id,
         )
+    require_session_owner(conversation, current_user)
 
     run = runtime.store.get_conversation_run(request_id)
     if run is None or run["session_id"] != session_id:

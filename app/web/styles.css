@@ -25,8 +25,33 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, textarea { font: inherit; }
+button, input, textarea { font: inherit; }
 button { cursor: pointer; }
+
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 15%, rgba(115,87,232,.14), transparent 35%),
+    var(--canvas);
+}
+.login-screen[hidden] { display: none; }
+.login-card { width: min(410px, 100%); border: 1px solid var(--line); border-radius: 22px; padding: 34px; background: white; box-shadow: var(--shadow); }
+.login-card .welcome-mark { margin-bottom: 18px; }
+.login-card .eyebrow { text-align: center; }
+.login-card h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 30px; font-weight: 500; text-align: center; }
+.login-copy { margin: 10px 0 25px; color: var(--muted); font-size: 12px; text-align: center; }
+.login-card label { display: grid; gap: 7px; margin-top: 14px; color: #515361; font-size: 11px; font-weight: 700; }
+.login-card input { width: 100%; border: 1px solid #dcd9d2; border-radius: 11px; padding: 11px 12px; color: var(--ink); background: white; outline: 0; }
+.login-card input:focus { border-color: #a999ed; box-shadow: 0 0 0 3px rgba(115,87,232,.08); }
+.login-error { min-height: 17px; margin: 10px 0 0; color: #b8434d; font-size: 11px; }
+.login-button { width: 100%; border: 0; border-radius: 11px; padding: 11px 14px; color: white; background: var(--purple); font-weight: 750; }
+.login-button:hover { background: var(--purple-dark); }
+.login-button:disabled { opacity: .55; cursor: default; }
 
 .app-shell { display: flex; min-height: 100%; }
 
@@ -131,6 +156,9 @@ button { cursor: pointer; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .connection-state.busy .status-dot { background: #e3a839; animation: pulse 1.25s infinite; }
 .connection-state.error .status-dot { background: #d75d64; }
+.user-menu { display: flex; align-items: center; gap: 9px; padding-left: 12px; border-left: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.user-menu[hidden] { display: none; }
+.user-menu button { border: 0; padding: 4px 0; color: var(--purple-dark); background: transparent; font-size: 10px; font-weight: 700; }
 
 .icon-button { border: 0; color: inherit; background: transparent; }
 .menu-button, .mobile-close { display: none; }

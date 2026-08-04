@@ -1,12 +1,13 @@
 """Create and retrieve durable EduFlow conversation sessions."""
 
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
+from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.schemas import (
     ApiErrorDetail,
     ApiErrorResponse,
@@ -34,11 +35,12 @@ def _public_session(record: Dict[str, Any]) -> SessionCreateResponse:
 def create_session(
     payload: SessionCreateRequest,
     request: Request,
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> SessionCreateResponse:
     record = get_runtime(request).store.create_conversation_session(
         session_id=str(uuid4()),
         thread_id=str(uuid4()),
-        teacher_id=payload.teacher_id,
+        teacher_id=current_user.teacher_id if current_user else payload.teacher_id,
         class_id=payload.class_id,
     )
     return _public_session(record)
@@ -52,9 +54,11 @@ def create_session(
 def get_session(
     session_id: str,
     request: Request,
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[SessionCreateResponse, JSONResponse]:
     record = get_runtime(request).store.get_conversation_session(session_id)
     if record is not None:
+        require_session_owner(record, current_user)
         return _public_session(record)
 
     error = ApiErrorResponse(

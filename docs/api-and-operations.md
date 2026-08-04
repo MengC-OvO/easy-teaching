@@ -4,6 +4,8 @@
 
 ```bash
 source .venv/bin/activate
+docker compose up -d postgres
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
@@ -75,9 +77,26 @@ loaded from the durable draft endpoint.
 
 ## Local storage
 
-The application creates ignored files under `data/local/` and `data/chroma/`.
-These may contain local development state. Do not commit them or use real child
-or family information.
+The API, business records, and LangGraph checkpoints use the self-hosted
+PostgreSQL container. Its port is bound only to `127.0.0.1`, and its durable
+data lives in the Docker named volume `eduflow_postgres_data`. Chroma remains
+under `data/chroma/`. Legacy SQLite files under `data/local/` are retained as
+ignored migration backups. Do not commit local state or use real child or
+family information in development.
+
+Useful database commands:
+
+```bash
+docker compose ps
+alembic current
+alembic check
+docker compose stop postgres
+```
+
+`migrate_sqlite_to_postgres` copies rows without modifying the source and skips
+target conflicts, so it is safe to retry. LangGraph checkpoint history is not
+copied across backends; new PostgreSQL-backed sessions start with fresh
+checkpoint history.
 
 ## Common checks
 
