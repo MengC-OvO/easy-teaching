@@ -4,6 +4,9 @@ const state = {
   lastSequence: -1,
   source: null,
   busy: false,
+  authConfig: null,
+  authClient: null,
+  user: null,
   conversations: JSON.parse(localStorage.getItem("eduflow-conversations") || "[]"),
 };
 
@@ -18,6 +21,15 @@ const ui = {
   conversations: document.querySelector("#conversation-list"),
   sidebar: document.querySelector("#sidebar"),
   toast: document.querySelector("#toast"),
+  loginScreen: document.querySelector("#login-screen"),
+  loginForm: document.querySelector("#login-form"),
+  loginEmail: document.querySelector("#login-email"),
+  loginPassword: document.querySelector("#login-password"),
+  loginButton: document.querySelector("#login-button"),
+  loginError: document.querySelector("#login-error"),
+  userMenu: document.querySelector("#user-menu"),
+  userEmail: document.querySelector("#user-email"),
+  logout: document.querySelector("#logout-button"),
 };
 
 function escapeHtml(value = "") {
@@ -166,9 +178,97 @@ async function api(path, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error?.message || `Request failed (${response.status})`);
+    if (response.status === 401 && state.authConfig?.enabled) showLogin();
+    throw new Error(payload.error?.message || payload.detail || `Request failed (${response.status})`);
   }
   return payload;
+}
+
+function showLogin(message = "") {
+  state.source?.close();
+  state.user = null;
+  ui.userMenu.hidden = true;
+  ui.loginError.textContent = message;
+  ui.loginScreen.hidden = false;
+  ui.loginEmail.focus();
+}
+
+function showAuthenticatedApp(user) {
+  state.user = user;
+  ui.loginScreen.hidden = true;
+  ui.userEmail.textContent = user.email || "Teacher";
+  ui.userMenu.hidden = false;
+}
+
+async function loadSupabaseSdk() {
+  if (window.supabase) return;
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Supabase login library could not be loaded."));
+    document.head.appendChild(script);
+  });
+}
+
+async function initializeAuth() {
+  try {
+    const config = await api("/auth/config");
+    state.authConfig = config;
+    if (!config.enabled) return;
+    await loadSupabaseSdk();
+    state.authClient = window.supabase.createClient(
+      config.supabase_url,
+      config.supabase_publishable_key,
+      { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
+    );
+    try {
+      const user = await api("/auth/me");
+      showAuthenticatedApp(user);
+    } catch (_error) {
+      showLogin();
+    }
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  if (!state.authClient) return;
+  ui.loginButton.disabled = true;
+  ui.loginError.textContent = "";
+  try {
+    const { data, error } = await state.authClient.auth.signInWithPassword({
+      email: ui.loginEmail.value.trim(),
+      password: ui.loginPassword.value,
+    });
+    if (error) throw error;
+    const user = await api("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ access_token: data.session.access_token }),
+    });
+    ui.loginPassword.value = "";
+    resetConversation();
+    showAuthenticatedApp(user);
+  } catch (error) {
+    showLogin(error.message || "Sign in failed.");
+  } finally {
+    ui.loginButton.disabled = false;
+  }
+}
+
+async function logout() {
+  state.source?.close();
+  try {
+    await api("/auth/session", { method: "DELETE" });
+  } catch (_error) {
+    // The local login screen still closes access if the remote session is unavailable.
+  }
+  state.conversations = [];
+  localStorage.removeItem("eduflow-conversations");
+  resetConversation();
+  showLogin();
 }
 
 async function ensureSession() {
@@ -316,6 +416,8 @@ document.querySelectorAll("[data-prompt]").forEach((button) => {
 document.querySelector("#new-chat").addEventListener("click", resetConversation);
 document.querySelector("#open-sidebar").addEventListener("click", () => ui.sidebar.classList.add("open"));
 document.querySelector("#close-sidebar").addEventListener("click", () => ui.sidebar.classList.remove("open"));
+ui.loginForm.addEventListener("submit", submitLogin);
+ui.logout.addEventListener("click", logout);
 
 ui.conversations.addEventListener("click", (event) => {
   const sessionId = event.target.dataset.sessionId;
@@ -332,3 +434,4 @@ ui.conversations.addEventListener("click", (event) => {
 
 renderConversationList();
 setBusy(false);
+initializeAuth();

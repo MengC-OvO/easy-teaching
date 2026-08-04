@@ -1,11 +1,12 @@
 """Resume approval-interrupted EduFlow conversation runs."""
 
-from typing import Union
+from typing import Optional, Union
 
-from fastapi import APIRouter, BackgroundTasks, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
+from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.api.execution import execute_approval
 from app.schemas import (
     ApiErrorDetail,
@@ -57,6 +58,7 @@ def submit_approval(
     payload: ApprovalSubmitRequest,
     request: Request,
     background_tasks: BackgroundTasks,
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[ApprovalSubmitResponse, JSONResponse]:
     runtime = get_runtime(request)
     conversation = runtime.store.get_conversation_session(session_id)
@@ -68,6 +70,7 @@ def submit_approval(
             session_id=session_id,
             request_id=payload.request_id,
         )
+    require_session_owner(conversation, current_user)
 
     run = runtime.store.get_conversation_run(payload.request_id)
     if run is None or run["session_id"] != session_id:

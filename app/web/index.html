@@ -8,6 +8,25 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
+    <section class="login-screen" id="login-screen" hidden>
+      <form class="login-card" id="login-form">
+        <div class="welcome-mark" aria-hidden="true">E</div>
+        <p class="eyebrow">EDUFLOW AU</p>
+        <h1>Teacher sign in</h1>
+        <p class="login-copy">Use the educator account created in Supabase.</p>
+        <label>
+          Email
+          <input id="login-email" type="email" autocomplete="email" required />
+        </label>
+        <label>
+          Password
+          <input id="login-password" type="password" autocomplete="current-password" required />
+        </label>
+        <p class="login-error" id="login-error" role="alert"></p>
+        <button class="login-button" id="login-button" type="submit">Sign in</button>
+      </form>
+    </section>
+
     <div class="app-shell">
       <aside class="sidebar" id="sidebar">
         <div class="brand-row">
@@ -46,6 +65,10 @@
           <div class="connection-state" id="connection-state">
             <span class="status-dot"></span>
             Ready
+          </div>
+          <div class="user-menu" id="user-menu" hidden>
+            <span id="user-email"></span>
+            <button id="logout-button" type="button">Sign out</button>
           </div>
         </header>
 

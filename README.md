@@ -37,13 +37,13 @@ flowchart LR
     Router --> Family["Family workflow"]
     Planning --> Tools["Controlled tool registry"]
     Policy --> Knowledge["Hybrid retrieval + citations"]
-    Graph --> Store[("SQLite data + checkpoints")]
+    Graph --> Store[("Self-hosted PostgreSQL")]
     API --> Events["Persisted SSE events"]
     Events --> Browser
 ```
 
-One application-scoped runtime owns the SQLAlchemy store, SQLite checkpointer,
-and compiled graph. HTTP routes accept work and return quickly; background
+One application-scoped runtime owns the SQLAlchemy store, PostgreSQL
+checkpointer, and compiled graph. HTTP routes accept work and return quickly; background
 execution runs the graph, persists its public outcome, and publishes ordered
 events that the browser can replay over Server-Sent Events (SSE).
 
@@ -67,7 +67,7 @@ app/
 data/
   knowledge/    tracked source manifest and processed public knowledge
   evals/        deterministic evaluation and reliability manifests
-  local/        ignored runtime SQLite files
+  local/        ignored legacy SQLite files and local migration sources
   chroma/       ignored local vector index
 
 docs/           stable architecture and operating documentation
@@ -93,7 +93,16 @@ cp .env.example .env
 ```
 
 Add your local model and embedding credentials to `.env`. Never commit that
-file.
+file. Replace the PostgreSQL password placeholder in `POSTGRES_PASSWORD`,
+`DATABASE_URL`, and `CHECKPOINT_DATABASE_URL` with the same long random value.
+
+Start the self-hosted local PostgreSQL service and apply schema migrations:
+
+```bash
+docker compose up -d postgres
+alembic upgrade head
+python -m scripts.migrate_sqlite_to_postgres  # one-time, if legacy data exists
+```
 
 Start the application:
 
@@ -109,6 +118,29 @@ The browser page uses the existing API; it does not bypass LangGraph or return
 mock answers. It creates a durable session, submits a message, follows persisted
 SSE workflow events, fetches the resulting draft, and shows approval controls
 when the graph pauses.
+
+PostgreSQL is bound only to `127.0.0.1` in local development. SQLAlchemy owns
+EduFlow operational and business tables; LangGraph's official `PostgresSaver`
+owns its checkpoint tables in the same database. Chroma remains the separate
+RAG vector store.
+
+### Optional Supabase login
+
+The local app remains authentication-free by default. To enable real email and
+password login, create a free Supabase project, add or invite a user under
+Authentication, and set these values in `.env`:
+
+```bash
+AUTH_ENABLED=true
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+```
+
+Restart the app and open the web workspace. Supabase validates the password;
+FastAPI exchanges the resulting access token for an HTTP-only login cookie and
+uses the trusted Supabase user ID as `teacher_id`. Authenticated users can only
+open, message, stream, read, or approve sessions that they own. Never put a
+Supabase secret or service-role key in browser configuration.
 
 ## Knowledge setup
 

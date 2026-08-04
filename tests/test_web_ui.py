@@ -1,10 +1,20 @@
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.api import build_api_runtime
+from app.main import create_app
 
 
-def test_root_serves_teacher_workspace() -> None:
-    with TestClient(app) as client:
+def _test_app(tmp_path):
+    return create_app(
+        runtime_factory=lambda: build_api_runtime(
+            database_path=tmp_path / "eduflow.sqlite3",
+            checkpoint_database_path=tmp_path / "checkpoints.sqlite3",
+        )
+    )
+
+
+def test_root_serves_teacher_workspace(tmp_path) -> None:
+    with TestClient(_test_app(tmp_path)) as client:
         response = client.get("/")
 
     assert response.status_code == 200
@@ -13,8 +23,8 @@ def test_root_serves_teacher_workspace() -> None:
     assert "Message EduFlow" in response.text
 
 
-def test_web_assets_are_served() -> None:
-    with TestClient(app) as client:
+def test_web_assets_are_served(tmp_path) -> None:
+    with TestClient(_test_app(tmp_path)) as client:
         stylesheet = client.get("/assets/styles.css")
         javascript = client.get("/assets/app.js")
 

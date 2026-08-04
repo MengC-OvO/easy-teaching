@@ -9,7 +9,7 @@ implementation history kept in Git.
 sequenceDiagram
     participant UI as Web workspace
     participant API as FastAPI
-    participant DB as SQLite store
+    participant DB as Self-hosted PostgreSQL
     participant G as LangGraph
 
     UI->>API: POST /sessions
@@ -92,10 +92,10 @@ scenarios, while small script entry points make them runnable from a terminal.
 
 | State | Location | Purpose |
 | --- | --- | --- |
-| Graph checkpoint | SQLite checkpointer | Resume the exact LangGraph thread |
-| API session/run/event | SQLAlchemy SQLite store | Idempotency, status, SSE replay |
+| Graph checkpoint | LangGraph PostgresSaver | Resume the exact LangGraph thread |
+| API session/run/event | SQLAlchemy PostgreSQL store | Idempotency, status, SSE replay |
 | Short-term context | Graph state | Bounded recent turns and compact summary |
-| Long-term memory | SQLAlchemy SQLite store | Scoped teacher/class preferences and recall |
+| Long-term memory | SQLAlchemy PostgreSQL store | Scoped teacher/class preferences and recall |
 | Vector knowledge | Chroma | Searchable policy/source chunks |
 | UI labels | Browser local storage | Convenience-only recent conversation names |
 
@@ -112,4 +112,4 @@ web -> public API -> workflow -> agent/tool/service -> schema/domain contract
 
 Evaluation code may import production modules, but production code must not
 import `evals`. Specialist-private state must not leak into route handlers, and
-browser code must not access SQLite or LangGraph directly.
+browser code must not access PostgreSQL or LangGraph directly.

@@ -24,15 +24,21 @@ def execute_message(
     runtime.store.update_conversation_run_status(request_id, RunStatus.RUNNING.value)
     state: Optional[GraphState] = None
     try:
+        initial_state_model = GraphState(
+            request_id=request_id,
+            session_id=session_id,
+            thread_id=thread_id,
+            teacher_id=teacher_id,
+            class_id=class_id,
+            user_message=message,
+        )
+        initial_state = (
+            initial_state_model.model_dump(mode="json")
+            if runtime.store.engine.dialect.name == "postgresql"
+            else initial_state_model
+        )
         result = runtime.graph.invoke(
-            GraphState(
-                request_id=request_id,
-                session_id=session_id,
-                thread_id=thread_id,
-                teacher_id=teacher_id,
-                class_id=class_id,
-                user_message=message,
-            ),
+            initial_state,
             config=checkpoint_config(thread_id),
         )
         state = GraphState.model_validate(result)

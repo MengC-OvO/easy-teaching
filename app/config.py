@@ -10,9 +10,14 @@ class Settings(BaseSettings):
         default="data/local/eduflow.sqlite3",
         validation_alias="DATABASE_PATH",
     )
+    database_url: str = Field(default="", validation_alias="DATABASE_URL")
     checkpoint_database_path: str = Field(
         default="data/local/checkpoints.sqlite3",
         validation_alias="CHECKPOINT_DATABASE_PATH",
+    )
+    checkpoint_database_url: str = Field(
+        default="",
+        validation_alias="CHECKPOINT_DATABASE_URL",
     )
     model_base_url: str = Field(default="", validation_alias="MODEL_BASE_URL")
     model_chat_completions_path: str = Field(
@@ -77,6 +82,22 @@ class Settings(BaseSettings):
     reranker_model_name: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
         validation_alias="RERANKER_MODEL_NAME",
+    )
+    auth_enabled: bool = Field(default=False, validation_alias="AUTH_ENABLED")
+    supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
+    supabase_publishable_key: str = Field(
+        default="",
+        validation_alias="SUPABASE_PUBLISHABLE_KEY",
+    )
+    auth_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0.0,
+        validation_alias="AUTH_TIMEOUT_SECONDS",
+    )
+    auth_cookie_max_age_seconds: int = Field(
+        default=3600,
+        ge=60,
+        validation_alias="AUTH_COOKIE_MAX_AGE_SECONDS",
     )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

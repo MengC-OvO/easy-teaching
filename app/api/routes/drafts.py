@@ -1,11 +1,12 @@
 """Retrieve request-scoped draft snapshots produced by EduFlow runs."""
 
-from typing import Union
+from typing import Optional, Union
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
+from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.schemas import ApiErrorDetail, ApiErrorResponse, DraftResponse, RunStatus
 
 
@@ -48,6 +49,7 @@ def get_draft(
     session_id: str,
     request_id: str,
     request: Request,
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[DraftResponse, JSONResponse]:
     runtime = get_runtime(request)
     conversation = runtime.store.get_conversation_session(session_id)
@@ -60,6 +62,7 @@ def get_draft(
             request_id=request_id,
             recoverable=False,
         )
+    require_session_owner(conversation, current_user)
 
     run = runtime.store.get_conversation_run(request_id)
     if run is None or run["session_id"] != session_id:
@@ -101,4 +104,3 @@ def get_draft(
         approval=result["approval"],
         citations=result["citations"],
     )
-

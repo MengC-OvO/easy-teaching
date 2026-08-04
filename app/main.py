@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import ApiRuntime, build_api_runtime
+from app.api.auth import router as auth_router
 from app.api.recovery import recover_incomplete_runs
 from app.api.routes import (
     approvals_router,
@@ -45,6 +46,7 @@ def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(sessions_router)
+    application.include_router(auth_router)
     application.include_router(messages_router)
     application.include_router(drafts_router)
     application.include_router(approvals_router)

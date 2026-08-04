@@ -99,6 +99,9 @@ class ConversationRunRecord(Base):
             sqlite_where=text(
                 "status IN ('accepted', 'running', 'waiting_for_approval')"
             ),
+            postgresql_where=text(
+                "status IN ('accepted', 'running', 'waiting_for_approval')"
+            ),
         ),
     )
 
@@ -252,10 +255,17 @@ class EduFlowStore:
             future=True,
         )
 
-    def initialize(self) -> None:
-        Base.metadata.create_all(self.engine)
+    def initialize(self, *, create_schema: bool = True) -> None:
+        """Prepare the store.
+
+        SQLite tests and local fallback mode may create their schema directly.
+        PostgreSQL deployments use Alembic and pass ``create_schema=False``.
+        """
+        if create_schema:
+            Base.metadata.create_all(self.engine)
         self._ensure_active_conversation_run_index()
-        self._migrate_long_term_memory_schema()
+        if self.engine.dialect.name == "sqlite":
+            self._migrate_long_term_memory_schema()
         with self.session_factory() as session:
             self._seed_class_profiles(session)
             session.commit()

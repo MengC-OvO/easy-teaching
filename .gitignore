@@ -12,3 +12,4 @@ data/local/
 chroma/
 data/chroma/
 *.db
+/docs/.ef_ref.docx
