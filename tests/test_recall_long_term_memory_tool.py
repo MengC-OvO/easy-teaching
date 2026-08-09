@@ -7,9 +7,9 @@ from app.schemas import (
     MemoryRetrievalMode,
     CapabilityCall,
 )
-from app.services import EduFlowStore
 from app.agents import MainToolExecutor
 from app.tools import ToolExecutionContext, build_default_tool_registry
+from evals.in_memory_store import InMemoryEvalStore
 
 
 def _memory(*, owner: str, content: str, mode: MemoryRetrievalMode):
@@ -25,8 +25,7 @@ def _memory(*, owner: str, content: str, mode: MemoryRetrievalMode):
 
 
 def test_recall_tool_returns_only_active_on_demand_memories_for_current_teacher(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     store.save_long_term_memory(
         _memory(
             owner="teacher-001",
@@ -68,8 +67,7 @@ def test_recall_tool_returns_only_active_on_demand_memories_for_current_teacher(
 
 
 def test_react_executor_supplies_trusted_owner_scope_to_recall_tool(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     store.save_long_term_memory(
         _memory(
             owner="teacher-001",

@@ -18,6 +18,7 @@ from app.services.model_types import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRole,
     ModelUsage,
 )
 from app.services.retry import RetryPolicy
@@ -160,11 +161,12 @@ class ChatCompletionsModelProvider:
         timeout_seconds: Optional[float] = None,
     ) -> ModelResponse:
         started_at = self._clock()
+        attempt_messages = list(messages)
         for attempt in range(1, self.settings.model_structured_max_attempts + 1):
             try:
                 return await self._generate_with_deadline(
                     ModelRequest(
-                        messages=messages,
+                        messages=attempt_messages,
                         model=model,
                         temperature=temperature,
                         timeout_seconds=timeout_seconds,
@@ -183,6 +185,12 @@ class ChatCompletionsModelProvider:
                 )
                 if attempt >= self.settings.model_structured_max_attempts:
                     raise
+                attempt_messages = list(messages) + [
+                    ModelMessage(
+                        role=ModelRole.USER,
+                        content=self._structured_repair_instruction(error),
+                    )
+                ]
         raise RuntimeError("unreachable structured-output retry loop")
 
     def _validate_configuration(self) -> None:
@@ -214,11 +222,45 @@ class ChatCompletionsModelProvider:
         }
 
     def _build_payload(self, request: ModelRequest) -> Dict[str, Any]:
+        messages = [self._message_to_payload(message) for message in request.messages]
+        if request.response_model is not None:
+            schema = request.response_model.model_json_schema()
+            messages.append(
+                {
+                    "role": ModelRole.USER.value,
+                    "content": (
+                        "Return only one JSON object that validates against this JSON "
+                        "Schema. Use the exact field names and enum values; include "
+                        "required fields and no Markdown fences:\n"
+                        + json.dumps(schema, ensure_ascii=False)
+                    ),
+                }
+            )
         return {
             "model": request.model or self.settings.model_name,
-            "messages": [self._message_to_payload(message) for message in request.messages],
+            "messages": messages,
             "temperature": request.temperature,
         }
+
+    def _structured_repair_instruction(self, error: ModelInvalidResponseError) -> str:
+        validation_errors = []
+        for item in error.details.get("errors", []):
+            validation_errors.append(
+                {
+                    "location": list(item.get("loc", ())),
+                    "type": item.get("type"),
+                    "message": item.get("msg"),
+                }
+            )
+        feedback = (
+            json.dumps(validation_errors, ensure_ascii=False)
+            if validation_errors
+            else error.message
+        )
+        return (
+            "The previous structured response was invalid. Correct it using this "
+            f"validation feedback and return JSON only: {feedback}"
+        )
 
     def _message_to_payload(self, message: ModelMessage) -> Dict[str, str]:
         return {"role": message.role.value, "content": message.content}

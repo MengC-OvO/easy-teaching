@@ -11,6 +11,11 @@ from app.services.model_errors import (
 from app.services.model_provider import ChatCompletionsModelProvider
 from app.services.retry import RetryPolicy
 from app.services.observation_redactor import ObservationRedactor
+from app.services.request_guard import (
+    EduFlowRequestGuard,
+    RequestGuardAction,
+    RequestGuardResult,
+)
 from app.services.model_types import (
     ModelJSONParseResult,
     ModelMessage,
@@ -23,8 +28,7 @@ from app.services.context_manager import ContextManager
 from app.services.context_summarizer import ConversationMemoryUpdate, LLMContextSummarizer
 from app.services.long_memory_extractor import LLMLongTermMemoryExtractor
 from app.services.policy_rag import PolicyRAGService
-from app.services.store import ConversationSessionBusyError, EduFlowStore
-from app.services.async_store import AsyncEduFlowStore
+from app.services.async_store import AsyncEduFlowStore, ConversationSessionBusyError
 from app.services.knowledge_ingestion import (
     KnowledgeIngestionService,
     KnowledgeSourceSpec,
@@ -46,7 +50,6 @@ __all__ = [
     "ConversationMemoryUpdate",
     "ConversationSessionBusyError",
     "CrossEncoderReranker",
-    "EduFlowStore",
     "AsyncEduFlowStore",
     "EmbeddingResponse",
     "GeminiEmbeddingProvider",
@@ -70,6 +73,9 @@ __all__ = [
     "ModelTimeoutError",
     "ModelUsage",
     "ObservationRedactor",
+    "EduFlowRequestGuard",
+    "RequestGuardAction",
+    "RequestGuardResult",
     "ParsedTextBlock",
     "PolicyRAGService",
     "RetryPolicy",

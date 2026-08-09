@@ -4,7 +4,7 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 langgraph==0.2.76
 langgraph-checkpoint-postgres==2.0.23
-SQLAlchemy==2.0.45
+SQLAlchemy[asyncio]==2.0.45
 psycopg[binary,pool]==3.2.10
 alembic==1.16.5
 pypdf==6.4.1

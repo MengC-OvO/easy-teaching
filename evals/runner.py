@@ -3,7 +3,6 @@
 import json
 import asyncio
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Iterable, List, Optional
 
@@ -34,11 +33,11 @@ from app.services import (
     BM25KnowledgeIndex,
     ChatCompletionsModelProvider,
     ContextManager,
-    EduFlowStore,
     KnowledgeRetriever,
     ObservationRedactor,
     PolicyRAGService,
 )
+from evals.in_memory_store import InMemoryEvalStore
 from app.tools import (
     ToolCategory,
     ToolDefinition,
@@ -91,10 +90,7 @@ class EvalRunner:
         output_cost_per_million: float = 0.0,
     ) -> None:
         self.mode = mode
-        self._temporary_directory = TemporaryDirectory(prefix="eduflow-evals-")
-        database_path = Path(self._temporary_directory.name) / "eval.db"
-        self.store = EduFlowStore(f"sqlite:///{database_path}")
-        self.store.initialize()
+        self.store = InMemoryEvalStore()
         self._seed_memories()
         self.registry = build_default_tool_registry(self.store)
         self.context_manager = ContextManager(long_term_memory_reader=self.store)
@@ -121,8 +117,7 @@ class EvalRunner:
         self.graph = self._build_trajectory_graph()
 
     def close(self) -> None:
-        self.store.engine.dispose()
-        self._temporary_directory.cleanup()
+        self.store.close()
 
     def run(self, cases: Iterable[EvalCase]) -> EvalReport:
         return build_eval_report(
