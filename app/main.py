@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Callable
+import inspect
+from typing import Awaitable, Callable, Union
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -10,7 +11,6 @@ from app.api import ApiRuntime, build_api_runtime
 from app.api.auth import router as auth_router
 from app.api.recovery import recover_incomplete_runs
 from app.api.routes import (
-    approvals_router,
     drafts_router,
     events_router,
     messages_router,
@@ -19,7 +19,7 @@ from app.api.routes import (
 from app.config import settings
 
 
-RuntimeFactory = Callable[[], ApiRuntime]
+RuntimeFactory = Callable[[], Union[ApiRuntime, Awaitable[ApiRuntime]]]
 WEB_DIRECTORY = Path(__file__).resolve().parent / "web"
 
 
@@ -28,13 +28,18 @@ def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        runtime = runtime_factory()
+        runtime_or_awaitable = runtime_factory()
+        runtime = (
+            await runtime_or_awaitable
+            if inspect.isawaitable(runtime_or_awaitable)
+            else runtime_or_awaitable
+        )
         app.state.runtime = runtime
-        recover_incomplete_runs(runtime)
+        await recover_incomplete_runs(runtime)
         try:
             yield
         finally:
-            runtime.close()
+            await runtime.close()
 
     application = FastAPI(
         title="EduFlow AU Agent",
@@ -49,7 +54,6 @@ def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
     application.include_router(auth_router)
     application.include_router(messages_router)
     application.include_router(drafts_router)
-    application.include_router(approvals_router)
     application.include_router(events_router)
     application.mount(
         "/assets",

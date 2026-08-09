@@ -1,6 +1,5 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from app.services import EduFlowStore
 from app.tools.controlled_tools.align_to_eylf_outcomes import (
     EylfAlignmentModelProvider,
     build_align_to_eylf_outcomes_tool,
@@ -12,17 +11,19 @@ from app.tools.controlled_tools.retrieve_risk_guidance import (
 )
 from app.tools.controlled_tools.check_activity_safety import build_check_activity_safety_tool
 from app.tools.controlled_tools.get_class_profile import build_get_class_profile_tool
-from app.tools.controlled_tools.load_skill import build_load_skill_tool
-from app.tools.controlled_tools.save_draft import build_save_draft_tool
 from app.tools.controlled_tools.recall_long_term_memory import (
     build_recall_long_term_memory_tool,
+)
+from app.tools.controlled_tools.external_public import (
+    build_get_public_weather_tool,
+    build_search_public_resources_tool,
 )
 from app.tools.definition import ToolDefinition
 from app.tools.registry import ToolRegistry
 
 
 def build_default_tool_definitions(
-    store: EduFlowStore,
+    store: Any,
     *,
     knowledge_retriever: Optional[KnowledgeRetrieverProtocol] = None,
     risk_guidance_model_provider: Optional[RiskGuidanceModelProvider] = None,
@@ -39,23 +40,15 @@ def build_default_tool_definitions(
             knowledge_retriever,
             model_provider=eylf_alignment_model_provider,
         ),
-        build_save_draft_tool(store),
         build_recall_long_term_memory_tool(store),
+        build_search_public_resources_tool(),
+        build_get_public_weather_tool(),
     ]
-    registered_tool_names = {
-        "load_skill",
-        *(tool.name for tool in domain_tools),
-    }
-    return [
-        build_load_skill_tool(
-            registered_tool_names=registered_tool_names,
-        ),
-        *domain_tools,
-    ]
+    return domain_tools
 
 
 def build_default_tool_registry(
-    store: EduFlowStore,
+    store: Any,
     *,
     knowledge_retriever: Optional[KnowledgeRetrieverProtocol] = None,
     risk_guidance_model_provider: Optional[RiskGuidanceModelProvider] = None,

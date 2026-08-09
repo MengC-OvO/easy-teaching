@@ -1,36 +1,19 @@
-import sqlite3
 import json
 from datetime import date, datetime, time
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict
 from uuid import UUID
 
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel
-from psycopg import connect
+from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.types.json import set_json_dumps
 
-from app.config import settings
-
-
-CheckpointPath = Union[str, Path]
-
-
-def build_sqlite_checkpointer(
-    database_path: CheckpointPath = settings.checkpoint_database_path,
-) -> SqliteSaver:
-    path = Path(database_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(str(path), check_same_thread=False)
-    return SqliteSaver(connection)
-
-
-def build_postgres_checkpointer(database_url: str) -> PostgresSaver:
+async def build_postgres_checkpointer(database_url: str) -> AsyncPostgresSaver:
     """Create and initialize the production PostgreSQL checkpointer."""
-    connection = connect(
+    connection = await AsyncConnection.connect(
         database_url,
         autocommit=True,
         row_factory=dict_row,
@@ -39,11 +22,11 @@ def build_postgres_checkpointer(database_url: str) -> PostgresSaver:
         lambda value: json.dumps(value, default=_checkpoint_json_default),
         connection,
     )
-    checkpointer = PostgresSaver(connection)
+    checkpointer = AsyncPostgresSaver(connection)
     try:
-        checkpointer.setup()
+        await checkpointer.setup()
     except Exception:
-        connection.close()
+        await connection.close()
         raise
     return checkpointer
 

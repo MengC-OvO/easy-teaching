@@ -1,15 +1,14 @@
+import asyncio
+
 from app.schemas import (
     LongTermMemoryCandidate,
     LongTermMemoryScope,
     LongTermMemoryType,
     MemoryRetrievalMode,
-    ReActAction,
-    ReActDecision,
-    ReActState,
-    ToolCall,
+    CapabilityCall,
 )
 from app.services import EduFlowStore
-from app.agents import ReActToolExecutor
+from app.agents import MainToolExecutor
 from app.tools import ToolExecutionContext, build_default_tool_registry
 
 
@@ -78,26 +77,23 @@ def test_react_executor_supplies_trusted_owner_scope_to_recall_tool(tmp_path) ->
             mode=MemoryRetrievalMode.RECALL_ONLY,
         )
     )
-    executor = ReActToolExecutor(
+    executor = MainToolExecutor(
         build_default_tool_registry(store),
         allowed_tool_names={"recall_long_term_memory"},
     )
-    state = ReActState(
-        user_message="Plan an outdoor activity.",
-        teacher_id="teacher-001",
-        decision=ReActDecision(
-            action=ReActAction.CALL_TOOL,
-            reason="Need historical activity context.",
-            tool_call=ToolCall(
-                tool_name="recall_long_term_memory",
-                tool_args={"query": "water-play"},
+    result = asyncio.run(
+        executor.execute_one(
+            CapabilityCall(
+                name="recall_long_term_memory",
+                arguments={"query": "water-play"},
+                result_key="memory",
             ),
-        ),
+            teacher_id="teacher-001",
+            class_id=None,
+        )
     )
 
-    result = executor.execute(state)
-
-    assert result["observations"][0].success is True
-    assert result["observations"][0].data["memories"][0]["content"].startswith(
+    assert result.status.value == "completed"
+    assert result.data["memories"][0]["content"].startswith(
         "Previously used water-play"
     )

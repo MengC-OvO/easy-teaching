@@ -76,7 +76,7 @@ async def _event_stream(
     cursor = after_sequence
     idle_polls = 0
     while True:
-        records = runtime.store.list_conversation_events(
+        records = await runtime.store.list_conversation_events(
             request_id=request_id,
             after_sequence=cursor,
         )
@@ -86,7 +86,7 @@ async def _event_stream(
             idle_polls = 0
             yield _sse_frame(event)
 
-        run = runtime.store.get_conversation_run(request_id)
+        run = await runtime.store.get_conversation_run(request_id)
         if run is None or run["status"] in _STREAM_END_STATUSES:
             return
         if await request.is_disconnected():
@@ -107,7 +107,7 @@ async def _event_stream(
         status.HTTP_404_NOT_FOUND: {"model": ApiErrorResponse},
     },
 )
-def stream_events(
+async def stream_events(
     session_id: str,
     request: Request,
     request_id: str = Query(..., min_length=1, max_length=128),
@@ -115,7 +115,7 @@ def stream_events(
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[StreamingResponse, JSONResponse]:
     runtime = get_runtime(request)
-    conversation = runtime.store.get_conversation_session(session_id)
+    conversation = await runtime.store.get_conversation_session(session_id)
     if conversation is None:
         return _error_response(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -126,7 +126,7 @@ def stream_events(
         )
     require_session_owner(conversation, current_user)
 
-    run = runtime.store.get_conversation_run(request_id)
+    run = await runtime.store.get_conversation_run(request_id)
     if run is None or run["session_id"] != session_id:
         return _error_response(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Awaitable, Callable, Dict, Optional, Type
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -10,6 +10,18 @@ class ToolPermission(str, Enum):
     AUTO_EXECUTE = "auto_execute"
     REQUIRE_APPROVAL = "require_approval"
     FORBIDDEN = "forbidden"
+
+
+class ToolKind(str, Enum):
+    LOCAL = "local_tool"
+    MCP = "mcp_tool"
+
+
+class ToolDomain(str, Enum):
+    INTERNAL = "internal"
+    LOCAL = "local"
+    EXTERNAL = "external"
+    SYSTEM = "system"
 
 
 class ToolCategory(str, Enum):
@@ -27,6 +39,7 @@ class ToolErrorCode(str, Enum):
     TOOL_NOT_FOUND = "tool_not_found"
     PERMISSION_DENIED = "permission_denied"
     EXECUTION_ERROR = "execution_error"
+    TIMEOUT = "timeout"
 
 
 class ToolError(BaseModel):
@@ -100,6 +113,10 @@ class ToolExecutionContext(BaseModel):
 
 
 RuntimeToolHandler = Callable[[BaseModel, ToolExecutionContext], ToolResult]
+AsyncToolHandler = Callable[[BaseModel], Awaitable[ToolResult]]
+AsyncRuntimeToolHandler = Callable[
+    [BaseModel, ToolExecutionContext], Awaitable[ToolResult]
+]
 
 
 class ToolDefinition(BaseModel):
@@ -110,14 +127,28 @@ class ToolDefinition(BaseModel):
     output_model: Type[BaseModel]
     risk_level: RiskLevel
     permission: ToolPermission
+    kind: ToolKind = ToolKind.LOCAL
+    domain: ToolDomain = ToolDomain.SYSTEM
+    parallel_safe: bool = False
+    timeout_seconds: float = Field(default=30.0, gt=0)
     handler: Optional[ToolHandler] = None
     runtime_handler: Optional[RuntimeToolHandler] = None
+    async_handler: Optional[AsyncToolHandler] = None
+    async_runtime_handler: Optional[AsyncRuntimeToolHandler] = None
 
     model_config = {"arbitrary_types_allowed": True}
 
     @model_validator(mode="after")
     def validate_handler(self) -> "ToolDefinition":
-        if self.handler is None and self.runtime_handler is None:
+        if all(
+            item is None
+            for item in (
+                self.handler,
+                self.runtime_handler,
+                self.async_handler,
+                self.async_runtime_handler,
+            )
+        ):
             raise ValueError("ToolDefinition needs a handler or runtime_handler")
         return self
 

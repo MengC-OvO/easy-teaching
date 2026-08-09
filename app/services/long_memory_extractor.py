@@ -1,5 +1,6 @@
 """Extract privacy-bounded, durable memory candidates from completed turns."""
 
+import inspect
 from typing import Dict, List, Optional, Protocol, Sequence, Type
 
 from app.schemas import (
@@ -86,6 +87,47 @@ class LLMLongTermMemoryExtractor:
             response_model=LongTermMemoryDecision,
             temperature=0.0,
         )
+        if not isinstance(response.structured, LongTermMemoryDecision):
+            raise TypeError("Long-term memory extractor returned an unexpected result")
+        return [
+            operation
+            for operation in response.structured.operations
+            if self._is_allowed_operation(
+                operation,
+                existing_memories,
+                teacher_id,
+                class_id,
+            )
+        ]
+
+    async def decide_async(
+        self,
+        *,
+        turns: Sequence[ConversationTurn],
+        existing_memories: Sequence[Dict[str, str]],
+        teacher_id: Optional[str] = None,
+        class_id: Optional[str] = None,
+    ) -> List[LongTermMemoryOperation]:
+        if not turns or (teacher_id is None and class_id is None):
+            return []
+        response = self.provider.generate_structured(
+            messages=[
+                ModelMessage(role=ModelRole.SYSTEM, content=LONG_TERM_MEMORY_SYSTEM_PROMPT),
+                ModelMessage(
+                    role=ModelRole.USER,
+                    content=self._build_prompt(
+                        turns,
+                        existing_memories,
+                        teacher_id,
+                        class_id,
+                    ),
+                ),
+            ],
+            response_model=LongTermMemoryDecision,
+            temperature=0.0,
+        )
+        if inspect.isawaitable(response):
+            response = await response
         if not isinstance(response.structured, LongTermMemoryDecision):
             raise TypeError("Long-term memory extractor returned an unexpected result")
         return [

@@ -1,4 +1,3 @@
-import sqlite3
 
 from app.schemas import (
     LongTermMemoryAction,
@@ -174,40 +173,3 @@ def test_store_loads_only_high_priority_active_teacher_profile_memories(tmp_path
         "Uses Australian English.",
         "Prefers concise activity-plan steps.",
     ]
-
-
-def test_store_migrates_existing_long_term_memory_table(tmp_path) -> None:
-    database_path = tmp_path / "eduflow.sqlite3"
-    with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE long_term_memories (
-                memory_id VARCHAR PRIMARY KEY,
-                scope VARCHAR NOT NULL,
-                scope_id VARCHAR NOT NULL,
-                memory_type VARCHAR NOT NULL,
-                content VARCHAR NOT NULL,
-                reason VARCHAR NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO long_term_memories
-            (memory_id, scope, scope_id, memory_type, content, reason)
-            VALUES ('legacy-memory', 'teacher', 'teacher-001',
-            'teacher_preference', 'Uses Australian English.', 'Legacy record.')
-            """
-        )
-
-    store = EduFlowStore(database_url=f"sqlite:///{database_path}")
-    store.initialize()
-    memories = store.list_long_term_memories(
-        scope="teacher",
-        scope_id="teacher-001",
-    )
-
-    assert memories[0]["retrieval_mode"] == "recall_only"
-    assert memories[0]["importance"] == "2"
-    assert memories[0]["is_active"] == "true"
-    assert memories[0]["created_at"]

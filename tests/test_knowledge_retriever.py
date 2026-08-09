@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, List, Optional
 
 from app.schemas import (
@@ -22,6 +23,11 @@ class FakeEmbeddingProvider:
         self.calls.append({"text": text, "task_type": task_type})
         return [0.1, 0.2, 0.3]
 
+    async def embed_text_async(
+        self, text: str, *, task_type: str = "RETRIEVAL_QUERY"
+    ) -> List[float]:
+        return self.embed_text(text, task_type=task_type)
+
 
 class FakeVectorStore:
     def __init__(self, chunks: List[RetrievedKnowledgeChunk]) -> None:
@@ -43,6 +49,15 @@ class FakeVectorStore:
             }
         )
         return self.chunks[:top_k]
+
+    async def query_async(
+        self,
+        query_embedding: List[float],
+        *,
+        top_k: int = 5,
+        where: Optional[Dict[str, object]] = None,
+    ) -> List[RetrievedKnowledgeChunk]:
+        return self.query(query_embedding, top_k=top_k, where=where)
 
 
 class FakeCrossEncoderReranker:
@@ -144,6 +159,24 @@ def test_knowledge_retriever_runs_dense_top_k_query() -> None:
     assert result.stats.deduplicated_count == 1
     assert result.stats.returned_count == 1
     assert result.citations[0].source_id == "eylf-v2"
+
+
+def test_knowledge_retriever_async_path_uses_async_dependencies() -> None:
+    embedding_provider = FakeEmbeddingProvider()
+    vector_store = FakeVectorStore([make_retrieved_chunk("chunk-1", 0.1)])
+    retriever = KnowledgeRetriever(
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+        candidate_multiplier=1,
+    )
+
+    result = asyncio.run(
+        retriever.retrieve_async(RetrievalRequest(query="play", top_k=1))
+    )
+
+    assert [chunk.chunk_id for chunk in result.chunks] == ["chunk-1"]
+    assert embedding_provider.calls[0]["task_type"] == "RETRIEVAL_QUERY"
+    assert vector_store.calls[0]["top_k"] == 1
 
 
 def test_knowledge_retriever_builds_chroma_where_filter() -> None:

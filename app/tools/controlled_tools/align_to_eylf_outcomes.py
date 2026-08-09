@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import re
 from typing import List, Optional, Protocol, Type
 
@@ -24,6 +26,7 @@ from app.tools.controlled_tools.retrieve_risk_guidance import (
 from app.tools.definition import (
     ToolCategory,
     ToolDefinition,
+    ToolDomain,
     ToolPermission,
     ToolResult,
 )
@@ -103,6 +106,48 @@ def build_align_to_eylf_outcomes_tool(
             risk_level=RiskLevel.L0_READ_ONLY,
         )
 
+    async def async_handler(input_data: BaseModel) -> ToolResult:
+        nonlocal resolved_retriever, resolved_model_provider
+        data = AlignToEylfOutcomesInput.model_validate(input_data)
+        if resolved_retriever is None:
+            resolved_retriever = KnowledgeRetriever()
+        if resolved_model_provider is None:
+            resolved_model_provider = ChatCompletionsModelProvider()
+        request = RetrievalRequest(
+            query=eylf_alignment_query(data.activity_text),
+            top_k=data.top_k,
+            mode=RetrievalMode.HYBRID,
+            reranker=RerankerMode.LEXICAL,
+        )
+        retrieve_async = getattr(resolved_retriever, "retrieve_async", None)
+        retrieval = (
+            await retrieve_async(request)
+            if retrieve_async is not None
+            else await asyncio.to_thread(resolved_retriever.retrieve, request)
+        )
+        evidence = retrieval_to_evidence(retrieval)
+        model_result = resolved_model_provider.generate_structured(
+            messages=build_eylf_alignment_messages(data.activity_text, evidence),
+            response_model=AlignToEylfOutcomesOutput,
+            temperature=0.0,
+        )
+        if inspect.isawaitable(model_result):
+            model_result = await model_result
+        if not isinstance(model_result.structured, AlignToEylfOutcomesOutput):
+            raise TypeError("EYLF alignment provider returned an unexpected result")
+        return ToolResult.ok(
+            data={
+                "alignments": [
+                    item.model_dump(mode="json")
+                    for item in model_result.structured.alignments
+                ],
+                "evidence": evidence,
+                "mode": retrieval.stats.mode.value,
+                "reranker": retrieval.stats.reranker.value,
+            },
+            risk_level=RiskLevel.L0_READ_ONLY,
+        )
+
     return ToolDefinition(
         name="align_to_eylf_outcomes",
         description=(
@@ -114,7 +159,10 @@ def build_align_to_eylf_outcomes_tool(
         output_model=AlignToEylfOutcomesOutput,
         risk_level=RiskLevel.L0_READ_ONLY,
         permission=ToolPermission.AUTO_EXECUTE,
+        domain=ToolDomain.INTERNAL,
+        parallel_safe=True,
         handler=handler,
+        async_handler=async_handler,
     )
 
 

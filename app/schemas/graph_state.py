@@ -176,3 +176,26 @@ class GraphState(BaseModel):
     trace: Annotated[List[TraceEvent], operator.add] = Field(default_factory=list)
     errors: Annotated[List[GraphError], operator.add] = Field(default_factory=list)
     safety_flags: Annotated[List[SafetyFlag], operator.add] = Field(default_factory=list)
+    # Main ReAct 新路径字段。旧字段暂时保留，用于读取历史 checkpoint。
+    decision: Optional["MainDecision"] = None
+    execution_route: Optional[str] = None
+    validation_feedback: Optional["CapabilityObservation"] = None
+    observations: Dict[str, "CapabilityObservation"] = Field(default_factory=dict)
+    pending_observations: Annotated[
+        List["CapabilityObservation"], operator.add
+    ] = Field(default_factory=list)
+    merged_observation_count: int = Field(default=0, ge=0)
+    react_step: int = Field(default=0, ge=0)
+    tool_call_count: int = Field(default=0, ge=0)
+    worker_batch_count: int = Field(default=0, ge=0)
+    repeated_call_counts: Dict[str, int] = Field(default_factory=dict)
+    run_trace_start: int = Field(default=0, ge=0)
+    run_citation_start: int = Field(default=0, ge=0)
+
+
+from app.schemas.main_react import (  # noqa: E402 解决双向类型引用
+    CapabilityObservation,
+    MainDecision,
+)
+
+GraphState.model_rebuild()

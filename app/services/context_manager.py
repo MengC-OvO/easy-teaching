@@ -1,3 +1,4 @@
+import inspect
 from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
 from app.schemas import (
@@ -113,6 +114,91 @@ class ContextManager:
                 )
             )
         return "\n\n".join(blocks)
+
+    async def build_model_context_async(
+        self,
+        context: ThreadContext,
+        *,
+        teacher_id: Optional[str] = None,
+    ) -> str:
+        memory = context.memory
+        blocks = []
+        if memory.conversation_goal:
+            blocks.append(f"Conversation goal:\n{memory.conversation_goal}")
+        if memory.important_requirements:
+            blocks.append(self._list_block("Important requirements", memory.important_requirements))
+        if memory.confirmed_preferences:
+            blocks.append(self._list_block("Confirmed preferences", memory.confirmed_preferences))
+        if memory.completed_work:
+            blocks.append(self._list_block("Completed work", memory.completed_work))
+        if memory.open_tasks:
+            blocks.append(self._list_block("Open tasks", memory.open_tasks))
+        if memory.compact_summary:
+            blocks.append(f"Compact memory summary:\n{memory.compact_summary}")
+        if context.recent_turns:
+            blocks.append(
+                "Recent conversation:\n"
+                + "\n".join(
+                    f"{turn.role.value}: {turn.content}" for turn in context.recent_turns
+                )
+            )
+        profile_memories = []
+        if self.long_term_memory_reader is not None:
+            profile_memories = self.long_term_memory_reader.list_profile_memories(
+                teacher_id=teacher_id,
+                limit=4,
+            )
+            if inspect.isawaitable(profile_memories):
+                profile_memories = await profile_memories
+        if profile_memories:
+            blocks.append(
+                "Teacher profile preferences:\n"
+                + "\n".join(
+                    f"- [{item['memory_type']}] {item['content']}"
+                    for item in profile_memories
+                )
+            )
+        return "\n\n".join(blocks)
+
+    async def update_after_run_async(self, state: GraphState) -> ThreadContext:
+        thread_id = state.thread_id or state.context.thread_id or state.session_id
+        current_turns = [self._user_turn(state), self._assistant_turn(state)]
+        archived_turns, recent_turns = self._partition_turns(
+            [*state.context.recent_turns, *current_turns],
+            max_recent_turns=state.context.budget.max_recent_turns,
+            max_recent_tokens=state.context.budget.max_recent_tokens,
+        )
+        memory = state.context.memory
+        if archived_turns:
+            updater = getattr(self.memory_updater, "update_memory_async", None)
+            if updater is None:
+                memory = self._update_memory(
+                    previous_memory=memory,
+                    current_turns=current_turns,
+                    archived_turns=archived_turns,
+                    max_summary_chars=state.context.budget.max_memory_summary_chars,
+                )
+            else:
+                try:
+                    memory = await updater(
+                        previous_memory=memory,
+                        current_turns=current_turns,
+                        archived_turns=archived_turns,
+                        max_summary_chars=state.context.budget.max_memory_summary_chars,
+                    )
+                except (ModelProviderError, TypeError, ValueError):
+                    memory = self._fallback_memory(
+                        memory,
+                        current_turns,
+                        state.context.budget.max_memory_summary_chars,
+                    )
+        return ThreadContext(
+            thread_id=thread_id,
+            recent_turns=recent_turns,
+            memory=memory,
+            tool_trace_summary=[*state.context.tool_trace_summary, *state.trace],
+            budget=state.context.budget,
+        )
 
     def _load_profile_memories(
         self,

@@ -26,9 +26,11 @@ class GeminiEmbeddingProvider:
         self,
         provider_settings: Settings = settings,
         client: Optional[httpx.Client] = None,
+        async_client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         self.settings = provider_settings
         self.client = client or httpx.Client()
+        self.async_client = async_client or httpx.AsyncClient()
 
     def embed_text(self, text: str, *, task_type: str = "RETRIEVAL_QUERY") -> List[float]:
         return self.embed_texts([text], task_type=task_type).vectors[0]
@@ -76,6 +78,62 @@ class GeminiEmbeddingProvider:
                 },
             )
 
+        raw_response = self._parse_response_json(response)
+        vectors = self._extract_vectors(raw_response, expected_count=len(texts))
+        return EmbeddingResponse(
+            vectors=vectors,
+            model=self.settings.embedding_model_name,
+            dimension=self.settings.embedding_dimension,
+            raw_response=raw_response,
+        )
+
+    async def embed_text_async(
+        self,
+        text: str,
+        *,
+        task_type: str = "RETRIEVAL_QUERY",
+    ) -> List[float]:
+        response = await self.embed_texts_async([text], task_type=task_type)
+        return response.vectors[0]
+
+    async def embed_texts_async(
+        self,
+        texts: List[str],
+        *,
+        task_type: str = "RETRIEVAL_DOCUMENT",
+    ) -> EmbeddingResponse:
+        self._validate_configuration()
+        if not texts:
+            raise ValueError("texts must contain at least one item")
+        try:
+            response = await self.async_client.post(
+                self._batch_embed_url(),
+                headers=self._headers(),
+                json=self._build_payload(texts, task_type=task_type),
+                timeout=self.settings.embedding_timeout_seconds,
+            )
+        except httpx.TimeoutException as error:
+            raise ModelTimeoutError(
+                "Embedding request timed out.",
+                details={"model": self.settings.embedding_model_name},
+            ) from error
+        except httpx.RequestError as error:
+            raise ModelProviderError(
+                "Embedding request failed before receiving a response.",
+                details={
+                    "error": str(error),
+                    "model": self.settings.embedding_model_name,
+                },
+            ) from error
+        if response.status_code >= 400:
+            raise ModelHTTPError(
+                "Embedding provider returned an HTTP error.",
+                status_code=response.status_code,
+                details={
+                    "body": response.text[:500],
+                    "model": self.settings.embedding_model_name,
+                },
+            )
         raw_response = self._parse_response_json(response)
         vectors = self._extract_vectors(raw_response, expected_count=len(texts))
         return EmbeddingResponse(

@@ -13,3 +13,8 @@ chroma/
 data/chroma/
 *.db
 /docs/.ef_ref.docx
+
+# Internal Codex/refactor working notes (not part of the public repository)
+/AGENTS.md
+/docs/react-refactor-plan.md
+/docs/project-refactor-notes.md

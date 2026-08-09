@@ -45,14 +45,14 @@ def _error_response(
         status.HTTP_409_CONFLICT: {"model": ApiErrorResponse},
     },
 )
-def get_draft(
+async def get_draft(
     session_id: str,
     request_id: str,
     request: Request,
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[DraftResponse, JSONResponse]:
     runtime = get_runtime(request)
-    conversation = runtime.store.get_conversation_session(session_id)
+    conversation = await runtime.store.get_conversation_session(session_id)
     if conversation is None:
         return _error_response(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -64,7 +64,7 @@ def get_draft(
         )
     require_session_owner(conversation, current_user)
 
-    run = runtime.store.get_conversation_run(request_id)
+    run = await runtime.store.get_conversation_run(request_id)
     if run is None or run["session_id"] != session_id:
         return _error_response(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -75,7 +75,7 @@ def get_draft(
             recoverable=False,
         )
 
-    result = runtime.store.get_conversation_run_result(request_id)
+    result = await runtime.store.get_conversation_run_result(request_id)
     if result is None:
         run_status = RunStatus(run["status"])
         in_progress = run_status in {RunStatus.ACCEPTED, RunStatus.RUNNING}

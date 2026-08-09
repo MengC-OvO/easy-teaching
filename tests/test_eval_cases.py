@@ -22,7 +22,7 @@ def test_week4_fixture_round_trips_through_the_eval_contracts() -> None:
     payload = [case.model_dump(mode="json") for case in cases]
 
     assert payload[0]["id"] == "routing-activity-planning"
-    assert payload[-1]["id"] == "trajectory-clarification-route"
+    assert payload[-1]["id"] == "trajectory-clarification"
     assert all(item["input"]["message"] for item in payload)
 
 

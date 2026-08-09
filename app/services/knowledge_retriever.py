@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import math
 import re
 from collections import Counter
@@ -26,6 +28,11 @@ RRF_K = 60
 
 class QueryEmbeddingProvider(Protocol):
     def embed_text(self, text: str, *, task_type: str = "RETRIEVAL_QUERY") -> List[float]:
+        ...
+
+    async def embed_text_async(
+        self, text: str, *, task_type: str = "RETRIEVAL_QUERY"
+    ) -> List[float]:
         ...
 
 
@@ -273,6 +280,87 @@ class KnowledgeRetriever:
                 returned_count=len(returned_chunks),
                 reranked=request.use_reranker,
             ),
+        )
+
+    async def retrieve_async(self, request: RetrievalRequest) -> RetrievalResult:
+        """Non-blocking online retrieval; sync local libraries run off-loop."""
+        candidate_top_k = self._candidate_top_k(request.top_k)
+        dense_chunks, bm25_chunks = await asyncio.gather(
+            self._dense_search_async(request, candidate_top_k),
+            self._bm25_search_async(request, candidate_top_k),
+        )
+        chunks = self._combine_results(request, dense_chunks, bm25_chunks)
+        deduplicated_chunks = self._deduplicate(chunks)
+        reranked_chunks = await asyncio.to_thread(
+            self._rerank,
+            request.query,
+            deduplicated_chunks,
+            mode=request.reranker,
+        )
+        returned_chunks = reranked_chunks[: request.top_k]
+        return RetrievalResult(
+            query=request.query,
+            chunks=returned_chunks,
+            stats=RetrievalStats(
+                requested_top_k=request.top_k,
+                mode=request.mode,
+                reranker=request.reranker,
+                raw_result_count=len(chunks),
+                dense_result_count=len(dense_chunks),
+                bm25_result_count=len(bm25_chunks),
+                deduplicated_count=len(deduplicated_chunks),
+                returned_count=len(returned_chunks),
+                reranked=request.use_reranker,
+            ),
+        )
+
+    async def _dense_search_async(
+        self,
+        request: RetrievalRequest,
+        candidate_top_k: int,
+    ) -> List[RetrievedKnowledgeChunk]:
+        if request.mode is RetrievalMode.BM25:
+            return []
+        embed_async = getattr(self.embedding_provider, "embed_text_async", None)
+        if embed_async is not None:
+            query_embedding = embed_async(
+                request.query,
+                task_type="RETRIEVAL_QUERY",
+            )
+            if inspect.isawaitable(query_embedding):
+                query_embedding = await query_embedding
+        else:
+            query_embedding = await asyncio.to_thread(
+                self.embedding_provider.embed_text,
+                request.query,
+                task_type="RETRIEVAL_QUERY",
+            )
+        query_async = getattr(self.vector_store, "query_async", None)
+        if query_async is not None:
+            chunks = query_async(
+                query_embedding,
+                top_k=candidate_top_k,
+                where=self._build_where_filter(request.filters),
+            )
+            return await chunks if inspect.isawaitable(chunks) else chunks
+        return await asyncio.to_thread(
+            self.vector_store.query,
+            query_embedding,
+            top_k=candidate_top_k,
+            where=self._build_where_filter(request.filters),
+        )
+
+    async def _bm25_search_async(
+        self,
+        request: RetrievalRequest,
+        candidate_top_k: int,
+    ) -> List[RetrievedKnowledgeChunk]:
+        if request.mode is RetrievalMode.DENSE:
+            return []
+        return await asyncio.to_thread(
+            self._bm25_search,
+            request,
+            candidate_top_k,
         )
 
     def _dense_search(

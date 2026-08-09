@@ -6,15 +6,7 @@ class Settings(BaseSettings):
     app_name: str = Field(default="eduflow-au-agent", validation_alias="APP_NAME")
     app_env: str = Field(default="local", validation_alias="APP_ENV")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
-    database_path: str = Field(
-        default="data/local/eduflow.sqlite3",
-        validation_alias="DATABASE_PATH",
-    )
     database_url: str = Field(default="", validation_alias="DATABASE_URL")
-    checkpoint_database_path: str = Field(
-        default="data/local/checkpoints.sqlite3",
-        validation_alias="CHECKPOINT_DATABASE_PATH",
-    )
     checkpoint_database_url: str = Field(
         default="",
         validation_alias="CHECKPOINT_DATABASE_URL",

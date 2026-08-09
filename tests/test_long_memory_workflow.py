@@ -1,3 +1,5 @@
+import asyncio
+
 from app.schemas import (
     ConversationRole,
     ConversationTurn,
@@ -9,7 +11,7 @@ from app.schemas import (
     LongTermMemoryType,
     ThreadContext,
 )
-from app.workflows.main_graph import build_long_memory_update_node
+from app.workflows.main_react_support import build_long_memory_update_node
 
 
 class StubLongTermMemoryExtractor:
@@ -59,8 +61,8 @@ def test_long_memory_update_applies_operations_from_the_latest_exchange() -> Non
     store = StubLongTermMemoryStore(existing=[{"memory_id": "old-memory"}])
     node = build_long_memory_update_node(extractor, store)
 
-    result = node(
-        GraphState(
+    result = asyncio.run(
+        node(GraphState(
             request_id="req-memory",
             session_id="session-memory",
             teacher_id="teacher-001",
@@ -73,7 +75,7 @@ def test_long_memory_update_applies_operations_from_the_latest_exchange() -> Non
                     ConversationTurn(role=ConversationRole.ASSISTANT, content="Done."),
                 ]
             ),
-        )
+        ))
     )
 
     assert [turn.content for turn in extractor.calls[0]["turns"]] == ["Keep it concise.", "Done."]
@@ -87,12 +89,12 @@ def test_long_memory_update_skips_extraction_without_an_owner() -> None:
     store = StubLongTermMemoryStore()
     node = build_long_memory_update_node(extractor, store)
 
-    result = node(
-        GraphState(
+    result = asyncio.run(
+        node(GraphState(
             request_id="req-memory-skip",
             session_id="session-memory-skip",
             user_message="Keep it concise.",
-        )
+        ))
     )
 
     assert extractor.calls == []

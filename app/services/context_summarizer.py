@@ -1,5 +1,6 @@
 """LLM-backed structured memory updates for one conversation thread."""
 
+import inspect
 from typing import List, Optional, Protocol, Type
 
 from pydantic import BaseModel, Field
@@ -67,6 +68,43 @@ class LLMContextSummarizer:
             response_model=ConversationMemoryUpdate,
             temperature=0.0,
         )
+        if not isinstance(response.structured, ConversationMemoryUpdate):
+            raise TypeError("Context memory updater returned an unexpected result")
+        return response.structured.model_copy(
+            update={
+                "compact_summary": self._limit(
+                    response.structured.compact_summary,
+                    max_summary_chars,
+                )
+            }
+        )
+
+    async def update_memory_async(
+        self,
+        *,
+        previous_memory: ConversationMemory,
+        current_turns: List[ConversationTurn],
+        archived_turns: List[ConversationTurn],
+        max_summary_chars: int,
+    ) -> ConversationMemory:
+        response = self.provider.generate_structured(
+            messages=[
+                ModelMessage(role=ModelRole.SYSTEM, content=MEMORY_SYSTEM_PROMPT),
+                ModelMessage(
+                    role=ModelRole.USER,
+                    content=self._build_prompt(
+                        previous_memory,
+                        current_turns,
+                        archived_turns,
+                        max_summary_chars,
+                    ),
+                ),
+            ],
+            response_model=ConversationMemoryUpdate,
+            temperature=0.0,
+        )
+        if inspect.isawaitable(response):
+            response = await response
         if not isinstance(response.structured, ConversationMemoryUpdate):
             raise TypeError("Context memory updater returned an unexpected result")
         return response.structured.model_copy(
