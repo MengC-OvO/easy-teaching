@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -39,6 +40,10 @@ def _provider(handler, *, attempts=1):
 def test_async_provider_generates_and_parses_structured_output():
     def handler(request):
         assert request.headers["authorization"] == "Bearer test-key"
+        payload = json.loads(request.content)
+        schema_instruction = payload["messages"][-1]["content"]
+        assert '"answer"' in schema_instruction
+        assert "exact field names" in schema_instruction
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": '{"answer":"ok"}'}}]},
@@ -56,6 +61,33 @@ def test_async_provider_generates_and_parses_structured_output():
 
     response = asyncio.run(run())
     assert response.structured == StructuredAnswer(answer="ok")
+
+
+def test_async_provider_adds_validation_feedback_before_structured_retry():
+    payloads = []
+
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        content = '{"wrong":"value"}' if len(payloads) == 1 else '{"answer":"ok"}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    async def run():
+        provider = _provider(handler)
+        try:
+            return await provider.generate_structured(
+                messages=[ModelMessage(role=ModelRole.USER, content="Answer")],
+                response_model=StructuredAnswer,
+            )
+        finally:
+            await provider.client.aclose()
+
+    response = asyncio.run(run())
+    assert response.structured == StructuredAnswer(answer="ok")
+    assert len(payloads) == 2
+    assert "previous structured response was invalid" in payloads[1]["messages"][-2][
+        "content"
+    ].lower()
+    assert "answer" in payloads[1]["messages"][-2]["content"]
 
 
 def test_async_provider_retries_recoverable_http_error():

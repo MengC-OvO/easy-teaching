@@ -35,6 +35,11 @@ from app.services import (
     LLMLongTermMemoryExtractor,
     ModelProviderError,
 )
+from app.services.request_guard import (
+    EduFlowRequestGuard,
+    RequestGuardAction,
+    RequestGuardResult,
+)
 from app.tools import ToolPermission, ToolRegistry, build_default_tool_registry
 from app.workflows.main_react_support import (
     ContextManagerProtocol,
@@ -59,6 +64,16 @@ class WorkerRunnerProtocol(Protocol):
         ...
 
 
+class RequestGuardProtocol(Protocol):
+    def evaluate(
+        self,
+        user_message: str,
+        *,
+        conversation_context: str = "",
+    ) -> RequestGuardResult:
+        ...
+
+
 def _state(state: GraphStateInput) -> GraphState:
     if isinstance(state, GraphState):
         return state
@@ -70,6 +85,7 @@ def build_main_react_node(
     registry: ToolRegistry,
     worker_registry: WorkerRegistry,
     context_manager: ContextManagerProtocol,
+    request_guard: RequestGuardProtocol,
     *,
     max_steps: int,
 ):
@@ -108,6 +124,35 @@ def build_main_react_node(
                     teacher_id=current.teacher_id,
                 )
             )
+            guard_result = request_guard.evaluate(
+                current.user_message,
+                conversation_context=conversation_context,
+            )
+            if guard_result.action is not RequestGuardAction.ALLOW:
+                decision = (
+                    MainDecision(
+                        reason="The request is outside the allowed professional boundary.",
+                        final_answer=guard_result.response,
+                    )
+                    if guard_result.action is RequestGuardAction.BLOCK
+                    else MainDecision(
+                        reason="The request needs education-scope clarification.",
+                        clarification_question=guard_result.response,
+                    )
+                )
+                return {
+                    "decision": decision,
+                    "trace": [
+                        TraceEvent(
+                            step="request_guard",
+                            message="Applied the professional scope and injection boundary.",
+                            metadata={
+                                "status": guard_result.action.value,
+                                "code": guard_result.code,
+                            },
+                        )
+                    ],
+                }
             decision = await agent.decide(
                     user_message=current.user_message,
                     conversation_context=conversation_context,
@@ -128,25 +173,28 @@ def build_main_react_node(
                 ],
             }
         except (ModelProviderError, TypeError, ValueError) as error:
+            safe_metadata = (
+                error.safe_metadata()
+                if isinstance(error, ModelProviderError)
+                else {"code": "invalid_main_decision", "recoverable": True}
+            )
             return {
                 "decision": MainDecision(
                     reason="The model decision was unavailable.",
-                    clarification_question=(
-                        "I could not safely decide the next step. Could you briefly "
-                        "restate what draft or information you need?"
-                    ),
+                    final_answer=_model_unavailable_fallback(current, safe_metadata),
                 ),
                 "errors": [
                     GraphError(
                         code="main_react_model_error",
-                        message="Main ReAct used a safe clarification fallback.",
+                        message="Main ReAct used a safe provider-error fallback.",
                         recoverable=True,
                     )
                 ],
                 "trace": [
                     TraceEvent(
                         step="main_react",
-                        message="Main ReAct used the clarification fallback.",
+                        message="Main ReAct stopped after a model provider error.",
+                        metadata=safe_metadata,
                     )
                 ],
             }
@@ -413,6 +461,25 @@ def _bounded_fallback(state: GraphState) -> str:
     )
 
 
+def _model_unavailable_fallback(
+    state: GraphState,
+    metadata: Mapping[str, Any],
+) -> str:
+    completed = [
+        observation.capability_name
+        for observation in state.observations.values()
+        if observation.status is ObservationStatus.COMPLETED
+    ]
+    evidence = ", ".join(completed) if completed else "no completed capability results"
+    code = str(metadata.get("code") or "provider_error")
+    return (
+        "EduFlow could not generate the requested draft because the model provider "
+        f"became unavailable ({code}). Completed results were preserved from: "
+        f"{evidence}. Please retry after the provider recovers; restating the request "
+        "is not required."
+    )
+
+
 def build_main_react_graph(
     *,
     main_agent: Optional[MainAgentProtocol] = None,
@@ -424,6 +491,7 @@ def build_main_react_graph(
     checkpointer: Optional[BaseCheckpointSaver] = None,
     long_memory_extractor: Optional[LongTermMemoryExtractorProtocol] = None,
     long_memory_store: Optional[LongTermMemoryStoreProtocol] = None,
+    request_guard: Optional[RequestGuardProtocol] = None,
     max_steps: int = 8,
     max_tool_calls: int = 12,
     max_worker_batches: int = 2,
@@ -443,6 +511,7 @@ def build_main_react_graph(
         long_term_memory_reader=resolved_store
     )
     resolved_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
+    resolved_request_guard = request_guard or EduFlowRequestGuard()
 
     allowed_tools = {
         tool.name
@@ -468,6 +537,7 @@ def build_main_react_graph(
             resolved_registry,
             resolved_workers,
             resolved_context,
+            resolved_request_guard,
             max_steps=max_steps,
         ),
     )

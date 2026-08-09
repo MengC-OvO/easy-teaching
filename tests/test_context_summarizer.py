@@ -38,5 +38,6 @@ def test_llm_context_summarizer_returns_structured_memory_update() -> None:
     assert memory.conversation_goal == "Complete an activity draft."
     assert memory.important_requirements == ["Use simple materials."]
     assert provider.response_model is ConversationMemoryUpdate
-    assert "Previous structured memory" in provider.messages[1].content
+    assert "Untrusted conversation-memory data" in provider.messages[1].content
+    assert '"removed_instruction_count": 0' in provider.messages[1].content
     assert "Plan an outdoor activity." in provider.messages[1].content

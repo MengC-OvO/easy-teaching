@@ -13,17 +13,43 @@ from app.schemas.long_memory import (
     LongTermMemoryOperation,
     MemoryRetrievalMode,
 )
-from app.services.store import (
-    ACTIVE_CONVERSATION_RUN_STATUSES,
-    SYNTHETIC_CLASS_PROFILES,
+from app.services.models import (
     ClassProfile,
     ConversationEventRecord,
     ConversationRunRecord,
     ConversationRunResultRecord,
-    ConversationSessionBusyError,
     ConversationSessionRecord,
     LongTermMemoryRecord,
 )
+
+
+SYNTHETIC_CLASS_PROFILES = (
+    {
+        "class_id": "kangaroo-room",
+        "name": "Kangaroo Room",
+        "age_group": "3-5",
+        "child_count": 18,
+        "interests": ["outdoor play", "storytelling", "sensory exploration"],
+        "safety_notes": [
+            "synthetic data only",
+            "check allergies before food play",
+        ],
+    },
+)
+
+ACTIVE_CONVERSATION_RUN_STATUSES = (
+    "accepted",
+    "running",
+    "waiting_for_approval",
+)
+
+
+class ConversationSessionBusyError(RuntimeError):
+    """Raised when another active run wins the session-level race."""
+
+    def __init__(self, active_request_id: str) -> None:
+        super().__init__("Conversation session already has an active run")
+        self.active_request_id = active_request_id
 
 
 class AsyncEduFlowStore:

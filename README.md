@@ -238,12 +238,24 @@ Run deterministic reliability and failure-injection checks:
 python scripts/run_reliability_checks.py
 ```
 
+Run one question through the real configured model and the production
+PostgreSQL-backed Main ReAct path:
+
+```bash
+python scripts/ask_live.py \
+  "What does the EYLF say about play-based learning?" \
+  --trace
+```
+
+This command persists a synthetic terminal-demo session in the local database
+and prints the final draft, citations, and optional execution trace.
+
 Latest local verification after the async refactor:
 
 | Check | Result |
 | --- | --- |
-| Complete pytest suite | 221 passed |
-| Reliability matrix | 12/12 passed |
+| Complete pytest suite | 230 passed |
+| Reliability matrix | 14/14 passed |
 | Offline agent evaluation | 28/30 passed |
 | Python compilation and diff whitespace check | Passed |
 

@@ -133,6 +133,25 @@ def build_long_memory_update_node(
 ):
     async def long_memory_update(state: GraphStateInput) -> Dict[str, Any]:
         current = _state(state)
+        guarded = next(
+            (
+                trace
+                for trace in current.trace[current.run_trace_start :]
+                if trace.step == "request_guard"
+                and trace.metadata.get("status") in {"block", "clarify"}
+            ),
+            None,
+        )
+        if guarded is not None:
+            return {
+                "trace": [
+                    TraceEvent(
+                        step="long_memory_update",
+                        message="Long-term memory update was skipped for a guarded request.",
+                        metadata={"applied_operations": 0},
+                    )
+                ]
+            }
         if current.teacher_id is None and current.class_id is None:
             return {"trace": [_memory_trace(0)]}
         try:

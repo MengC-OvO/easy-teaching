@@ -1,4 +1,6 @@
 
+"""Behavior tests for the deterministic, non-production evaluation store."""
+
 from app.schemas import (
     LongTermMemoryAction,
     LongTermMemoryCandidate,
@@ -7,12 +9,11 @@ from app.schemas import (
     LongTermMemoryType,
     MemoryRetrievalMode,
 )
-from app.services.store import EduFlowStore
+from evals.in_memory_store import InMemoryEvalStore
 
 
 def test_store_persists_and_reads_long_term_memory(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     saved = store.save_long_term_memory(
         LongTermMemoryCandidate(
             scope=LongTermMemoryScope.TEACHER,
@@ -34,8 +35,7 @@ def test_store_persists_and_reads_long_term_memory(tmp_path) -> None:
 
 
 def test_store_keeps_long_term_memories_scoped_to_their_owner(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     store.save_long_term_memory(
         LongTermMemoryCandidate(
             scope=LongTermMemoryScope.TEACHER,
@@ -55,8 +55,7 @@ def test_store_keeps_long_term_memories_scoped_to_their_owner(tmp_path) -> None:
 
 
 def test_store_applies_insert_update_and_delete_operations(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     initial = LongTermMemoryCandidate(
         scope=LongTermMemoryScope.TEACHER,
         scope_id="teacher-001",
@@ -103,8 +102,7 @@ def test_store_applies_insert_update_and_delete_operations(tmp_path) -> None:
 
 
 def test_store_rejects_an_update_that_moves_memory_to_a_different_owner(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     saved = store.save_long_term_memory(
         LongTermMemoryCandidate(
             scope=LongTermMemoryScope.TEACHER,
@@ -137,8 +135,7 @@ def test_store_rejects_an_update_that_moves_memory_to_a_different_owner(tmp_path
 
 
 def test_store_loads_only_high_priority_active_teacher_profile_memories(tmp_path) -> None:
-    store = EduFlowStore(database_url=f"sqlite:///{tmp_path / 'eduflow.sqlite3'}")
-    store.initialize()
+    store = InMemoryEvalStore()
     profile = LongTermMemoryCandidate(
         scope=LongTermMemoryScope.TEACHER,
         scope_id="teacher-001",

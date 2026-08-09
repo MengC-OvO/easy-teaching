@@ -8,7 +8,8 @@ from app.schemas import (
     RerankerMode,
     RiskLevel,
 )
-from app.services import EduFlowStore, ModelResponse
+from app.services import ModelResponse
+from evals.in_memory_store import InMemoryEvalStore
 from app.tools import (
     AlignToEylfOutcomesOutput,
     EylfOutcomeAlignment,
@@ -19,10 +20,8 @@ from app.tools import (
 )
 
 
-def make_store(tmp_path) -> EduFlowStore:
-    store = EduFlowStore(f"sqlite:///{tmp_path / 'eduflow-test.sqlite3'}")
-    store.initialize()
-    return store
+def make_store(_tmp_path) -> InMemoryEvalStore:
+    return InMemoryEvalStore()
 
 
 class StubPolicyRetriever:
