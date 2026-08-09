@@ -54,7 +54,7 @@ def _error_response(
         status.HTTP_409_CONFLICT: {"model": ApiErrorResponse},
     },
 )
-def create_message(
+async def create_message(
     session_id: str,
     payload: MessageCreateRequest,
     request: Request,
@@ -62,7 +62,7 @@ def create_message(
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[MessageAcceptedResponse, JSONResponse]:
     runtime = get_runtime(request)
-    conversation = runtime.store.get_conversation_session(session_id)
+    conversation = await runtime.store.get_conversation_session(session_id)
     if conversation is None:
         return _error_response(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -74,7 +74,7 @@ def create_message(
     require_session_owner(conversation, current_user)
 
     request_id = payload.request_id or str(uuid4())
-    existing = runtime.store.get_conversation_run(request_id)
+    existing = await runtime.store.get_conversation_run(request_id)
     if existing is not None:
         if existing["session_id"] != session_id:
             return _error_response(
@@ -90,7 +90,7 @@ def create_message(
             status=existing["status"],
         )
 
-    active = runtime.store.get_active_conversation_run(session_id)
+    active = await runtime.store.get_active_conversation_run(session_id)
     if active is not None:
         return _error_response(
             status_code=status.HTTP_409_CONFLICT,
@@ -101,7 +101,7 @@ def create_message(
         )
 
     try:
-        run = runtime.store.create_conversation_run(
+        run = await runtime.store.create_conversation_run(
             request_id=request_id,
             session_id=session_id,
         )
@@ -129,7 +129,7 @@ def create_message(
             status=run["status"],
         )
 
-    runtime.store.append_conversation_event(
+    await runtime.store.append_conversation_event(
         request_id=request_id,
         session_id=session_id,
         event=StreamEventType.RUN_STARTED.value,

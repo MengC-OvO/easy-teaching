@@ -1,5 +1,4 @@
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -19,7 +18,6 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from app.config import settings
 from app.schemas.long_memory import (
     LongTermMemoryAction,
     LongTermMemoryCandidate,
@@ -96,9 +94,6 @@ class ConversationRunRecord(Base):
             "uq_conversation_runs_one_active_per_session",
             "session_id",
             unique=True,
-            sqlite_where=text(
-                "status IN ('accepted', 'running', 'waiting_for_approval')"
-            ),
             postgresql_where=text(
                 "status IN ('accepted', 'running', 'waiting_for_approval')"
             ),
@@ -247,7 +242,9 @@ class LongTermMemoryRecord(Base):
 
 class EduFlowStore:
     def __init__(self, database_url: Optional[str] = None) -> None:
-        self.database_url = database_url or self._sqlite_url(settings.database_path)
+        if not database_url:
+            raise ValueError("database_url is required")
+        self.database_url = database_url
         self.engine = create_engine(self.database_url, future=True)
         self.session_factory = sessionmaker(
             bind=self.engine,
@@ -256,16 +253,10 @@ class EduFlowStore:
         )
 
     def initialize(self, *, create_schema: bool = True) -> None:
-        """Prepare the store.
-
-        SQLite tests and local fallback mode may create their schema directly.
-        PostgreSQL deployments use Alembic and pass ``create_schema=False``.
-        """
+        """Prepare the store; production PostgreSQL schema ownership is Alembic."""
         if create_schema:
             Base.metadata.create_all(self.engine)
         self._ensure_active_conversation_run_index()
-        if self.engine.dialect.name == "sqlite":
-            self._migrate_long_term_memory_schema()
         with self.session_factory() as session:
             self._seed_class_profiles(session)
             session.commit()
@@ -417,41 +408,6 @@ class EduFlowStore:
                 return None
             return self._conversation_run_result_to_dict(record)
 
-    def create_approval_decision(
-        self,
-        *,
-        request_id: str,
-        session_id: str,
-        decision: str,
-    ) -> Dict[str, Any]:
-        with self.session_factory() as session:
-            existing = session.get(ConversationApprovalDecisionRecord, request_id)
-            if existing is not None:
-                return self._approval_decision_to_dict(existing, created=False)
-
-            record = ConversationApprovalDecisionRecord(
-                request_id=request_id,
-                session_id=session_id,
-                decision=decision,
-            )
-            session.add(record)
-            try:
-                session.commit()
-            except IntegrityError:
-                session.rollback()
-                existing = session.get(ConversationApprovalDecisionRecord, request_id)
-                if existing is None:
-                    raise
-                return self._approval_decision_to_dict(existing, created=False)
-        return self._approval_decision_to_dict(record, created=True)
-
-    def get_approval_decision(self, request_id: str) -> Optional[Dict[str, Any]]:
-        with self.session_factory() as session:
-            record = session.get(ConversationApprovalDecisionRecord, request_id)
-            if record is None:
-                return None
-            return self._approval_decision_to_dict(record, created=False)
-
     def append_conversation_event(
         self,
         *,
@@ -499,89 +455,6 @@ class EduFlowStore:
                 .all()
             )
         return [self._conversation_event_to_dict(record) for record in records]
-
-    def save_draft(
-        self,
-        *,
-        draft_id: str,
-        draft_type: str,
-        title: str,
-        content: str,
-        status: str = "draft",
-        idempotency_key: Optional[str] = None,
-    ) -> Dict[str, str]:
-        with self.session_factory() as session:
-            if idempotency_key:
-                existing = (
-                    session.execute(
-                        select(DraftRecord).where(
-                            DraftRecord.idempotency_key == idempotency_key
-                        )
-                    )
-                    .scalars()
-                    .first()
-                )
-                if existing is not None:
-                    return self._draft_to_dict(existing)
-
-            draft = DraftRecord(
-                draft_id=draft_id,
-                idempotency_key=idempotency_key,
-                draft_type=draft_type,
-                title=title,
-                content=content,
-                status=status,
-            )
-            session.add(draft)
-            session.commit()
-
-        return self._draft_to_dict(draft)
-
-    def save_approved_learning_record(
-        self,
-        *,
-        request_id: str,
-        teacher_id: Optional[str],
-        class_id: Optional[str],
-        title: str,
-        content: str,
-    ) -> Dict[str, Any]:
-        """Save one approved record, returning the original on a retry."""
-        with self.session_factory() as session:
-            existing = self._learning_record_for_request(session, request_id)
-            if existing is not None:
-                return self._learning_record_to_dict(existing, created=False)
-
-            record = LearningRecord(
-                record_id=str(uuid4()),
-                request_id=request_id,
-                teacher_id=teacher_id,
-                class_id=class_id,
-                title=title,
-                content=content,
-                status="approved",
-            )
-            session.add(record)
-            try:
-                session.commit()
-            except IntegrityError:
-                session.rollback()
-                existing = self._learning_record_for_request(session, request_id)
-                if existing is None:
-                    raise
-                return self._learning_record_to_dict(existing, created=False)
-
-        return self._learning_record_to_dict(record, created=True)
-
-    def get_learning_record_by_request_id(
-        self,
-        request_id: str,
-    ) -> Optional[Dict[str, Any]]:
-        with self.session_factory() as session:
-            record = self._learning_record_for_request(session, request_id)
-            if record is None:
-                return None
-            return self._learning_record_to_dict(record, created=False)
 
     def save_long_term_memory(
         self,
@@ -783,11 +656,6 @@ class EduFlowStore:
         )
         index.create(self.engine, checkfirst=True)
 
-    def _sqlite_url(self, database_path: str) -> str:
-        path = Path(database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return f"sqlite:///{path}"
-
     def _class_profile_to_dict(self, profile: ClassProfile) -> Dict[str, Any]:
         return {
             "class_id": profile.class_id,
@@ -839,20 +707,6 @@ class EduFlowStore:
             "created_at": record.created_at.isoformat(),
         }
 
-    def _approval_decision_to_dict(
-        self,
-        record: ConversationApprovalDecisionRecord,
-        *,
-        created: bool,
-    ) -> Dict[str, Any]:
-        return {
-            "request_id": record.request_id,
-            "session_id": record.session_id,
-            "decision": record.decision,
-            "created_at": record.created_at.isoformat(),
-            "created": created,
-        }
-
     def _conversation_event_to_dict(
         self,
         record: ConversationEventRecord,
@@ -865,45 +719,6 @@ class EduFlowStore:
             "sequence": record.sequence,
             "data": record.data,
             "created_at": record.created_at.isoformat(),
-        }
-
-    def _draft_to_dict(self, draft: DraftRecord) -> Dict[str, str]:
-        return {
-            "draft_id": draft.draft_id,
-            "draft_type": draft.draft_type,
-            "title": draft.title,
-            "status": draft.status,
-        }
-
-    def _learning_record_for_request(
-        self,
-        session: Session,
-        request_id: str,
-    ) -> Optional[LearningRecord]:
-        return (
-            session.execute(
-                select(LearningRecord).where(LearningRecord.request_id == request_id)
-            )
-            .scalars()
-            .first()
-        )
-
-    def _learning_record_to_dict(
-        self,
-        record: LearningRecord,
-        *,
-        created: bool,
-    ) -> Dict[str, Any]:
-        return {
-            "record_id": record.record_id,
-            "request_id": record.request_id,
-            "teacher_id": record.teacher_id,
-            "class_id": record.class_id,
-            "title": record.title,
-            "content": record.content,
-            "status": record.status,
-            "created_at": record.created_at.isoformat(),
-            "created": created,
         }
 
     def _long_term_memory_to_dict(
@@ -923,37 +738,6 @@ class EduFlowStore:
             "created_at": memory.created_at.isoformat(),
             "updated_at": memory.updated_at.isoformat(),
         }
-
-    def _migrate_long_term_memory_schema(self) -> None:
-        """Add Day 6 profile/recall fields to an existing local SQLite database."""
-        with self.engine.connect() as connection:
-            columns = {
-                row[1]
-                for row in connection.exec_driver_sql(
-                    "PRAGMA table_info(long_term_memories)"
-                ).fetchall()
-            }
-        additions = {
-            "retrieval_mode": "VARCHAR NOT NULL DEFAULT 'recall_only'",
-            "importance": "INTEGER NOT NULL DEFAULT 2",
-            "is_active": "BOOLEAN NOT NULL DEFAULT 1",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        }
-        with self.engine.begin() as connection:
-            for column, definition in additions.items():
-                if column not in columns:
-                    connection.exec_driver_sql(
-                        f"ALTER TABLE long_term_memories ADD COLUMN {column} {definition}"
-                    )
-            connection.exec_driver_sql(
-                "UPDATE long_term_memories "
-                "SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
-            )
-            connection.exec_driver_sql(
-                "UPDATE long_term_memories "
-                "SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"
-            )
 
     def _validate_memory_owner(
         self,

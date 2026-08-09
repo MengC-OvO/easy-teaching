@@ -152,22 +152,6 @@ function renderDraft(shell, payload) {
     <div class="assistant-copy">${paragraphs(payload.draft.content)}</div>
     ${citationsHtml(payload.citations)}`;
 
-  if (payload.status === "waiting_for_approval") {
-    const card = document.createElement("div");
-    card.className = "approval-card";
-    card.innerHTML = `
-      <strong>Teacher approval required</strong>
-      <p>${escapeHtml(payload.approval.reason || "Review this controlled write before it is saved.")}</p>
-      <div class="approval-actions">
-        <button class="approve" data-decision="approve">Approve</button>
-        <button data-decision="reject">Reject</button>
-      </div>`;
-    card.addEventListener("click", (event) => {
-      const decision = event.target.dataset.decision;
-      if (decision) submitApproval(shell, decision, card);
-    });
-    result.appendChild(card);
-  }
   scrollToBottom();
 }
 
@@ -307,14 +291,9 @@ function connectEvents(shell, afterSequence = state.lastSequence) {
       if (payload.event === "failed") showRunError(shell, "EduFlow could not complete this draft. Please try again.");
       setBusy(false);
     }
-    if (payload.event === "approval_required") {
-      source.close();
-      getDraft(shell);
-      setBusy(false);
-    }
   };
 
-  ["run_started", "route_selected", "trace", "draft_ready", "approval_required", "completed", "failed", "cancelled"]
+  ["run_started", "route_selected", "trace", "draft_ready", "completed", "failed", "cancelled"]
     .forEach((name) => source.addEventListener(name, handle));
 
   source.onerror = () => {
@@ -349,23 +328,6 @@ async function submitMessage(message) {
     connectEvents(shell, state.lastSequence);
   } catch (error) {
     showRunError(shell, error.message);
-  }
-}
-
-async function submitApproval(shell, decision, card) {
-  setBusy(true);
-  card.querySelectorAll("button").forEach((button) => { button.disabled = true; });
-  try {
-    await api(`/sessions/${state.sessionId}/approvals`, {
-      method: "POST",
-      body: JSON.stringify({ request_id: state.requestId, decision }),
-    });
-    card.innerHTML = `<strong>${decision === "approve" ? "Approved" : "Rejected"}</strong><p>EduFlow is applying your decision.</p>`;
-    connectEvents(shell);
-  } catch (error) {
-    showToast(error.message);
-    card.querySelectorAll("button").forEach((button) => { button.disabled = false; });
-    setBusy(false);
   }
 }
 

@@ -1,33 +1,33 @@
 [
   {
-    "id": "transient-timeout-retry",
-    "fault": "The first model request times out.",
-    "expected": "The provider waits once, retries, and returns the second successful response.",
-    "test_node": "tests/test_model_provider.py::test_chat_completions_provider_retries_timeout_then_succeeds"
+    "id": "async-provider-retry",
+    "fault": "The first asynchronous model request returns a transient server error.",
+    "expected": "The provider retries without blocking the event loop and returns the second successful response.",
+    "test_node": "tests/test_async_model_provider.py::test_async_provider_retries_recoverable_http_error"
   },
   {
-    "id": "rate-limit-and-server-retry",
-    "fault": "The model provider returns HTTP 429 and then HTTP 503.",
-    "expected": "Both transient responses are retried with increasing delays before success.",
-    "test_node": "tests/test_model_provider.py::test_chat_completions_provider_retries_429_and_5xx"
+    "id": "nonrecoverable-no-retry",
+    "fault": "The asynchronous model provider returns a non-recoverable HTTP response.",
+    "expected": "The provider exposes a safe error and does not retry the request.",
+    "test_node": "tests/test_async_model_provider.py::test_async_provider_does_not_retry_nonrecoverable_error"
   },
   {
-    "id": "total-time-budget-stop",
-    "fault": "The next retry delay cannot fit inside the total model time budget.",
-    "expected": "The provider stops immediately and marks retry exhaustion without overshooting the budget.",
-    "test_node": "tests/test_model_provider.py::test_chat_completions_provider_stops_when_total_budget_cannot_fit_delay"
+    "id": "async-tool-timeout",
+    "fault": "An asynchronous Tool exceeds its registered timeout.",
+    "expected": "The registry cancels the wait and returns a recoverable error Observation.",
+    "test_node": "tests/test_tool_registry_async.py::test_execute_async_timeout_returns_recoverable_error"
   },
   {
-    "id": "invalid-json-regeneration",
-    "fault": "The first structured model response is not valid JSON.",
-    "expected": "Structured generation runs once more and accepts the valid second response.",
-    "test_node": "tests/test_model_provider.py::test_generate_structured_retries_one_invalid_json_response"
+    "id": "worker-permission-error",
+    "fault": "A Worker asks for a Tool outside its code allowlist.",
+    "expected": "The Worker receives a permission error and cannot escape its isolation boundary.",
+    "test_node": "tests/test_worker_agent.py::test_worker_permission_error_blocks_tool_outside_allowlist"
   },
   {
-    "id": "router-timeout-clarification",
-    "fault": "Intent routing remains unavailable after model retries.",
-    "expected": "The main graph safely completes on the clarification route instead of failing.",
-    "test_node": "tests/test_main_graph.py::test_main_graph_falls_back_to_clarification_when_router_fails"
+    "id": "main-react-model-fallback",
+    "fault": "The Main ReAct decision model remains unavailable after retries.",
+    "expected": "The production graph safely completes with one clarification instead of failing.",
+    "test_node": "tests/test_main_react_graph.py::test_main_react_model_error_falls_back_to_clarification"
   },
   {
     "id": "rag-generation-evidence-fallback",
@@ -42,16 +42,16 @@
     "test_node": "tests/test_policy_rag.py::test_policy_rag_clarifies_when_retrieval_is_empty"
   },
   {
-    "id": "recoverable-tool-error-continue",
-    "fault": "A tool receives invalid arguments during a ReAct run.",
-    "expected": "The error becomes an Observation and the Agent can correct the call and finish.",
-    "test_node": "tests/test_react_graph.py::test_react_graph_continues_after_recoverable_tool_error"
+    "id": "invalid-dependency-feedback",
+    "fault": "Main requests a Tool before its declared dependency is available.",
+    "expected": "Code rejects the batch, records a recoverable Observation, and Main can finish safely.",
+    "test_node": "tests/test_main_react_graph.py::test_invalid_dependency_error_becomes_feedback_then_main_can_recover"
   },
   {
-    "id": "react-step-budget-stop",
-    "fault": "The ReAct workflow consumes its maximum number of steps.",
-    "expected": "The graph stops deterministically with max_steps_reached instead of looping.",
-    "test_node": "tests/test_react_graph.py::test_react_graph_stops_when_step_budget_is_used"
+    "id": "main-react-step-budget-stop",
+    "fault": "Main ReAct consumes its maximum number of turns.",
+    "expected": "The production graph returns a bounded limitation draft instead of looping.",
+    "test_node": "tests/test_main_react_graph.py::test_main_react_step_budget_returns_bounded_fallback"
   },
   {
     "id": "safe-error-metadata",
@@ -60,9 +60,15 @@
     "test_node": "tests/test_model_errors.py::test_model_provider_safe_metadata_excludes_provider_payloads"
   },
   {
-    "id": "sse-trace-allowlist",
-    "fault": "A graph Trace contains both approved operational fields and private metadata.",
-    "expected": "SSE persists approved fields and removes private Provider and user content.",
-    "test_node": "tests/test_api_events.py::test_sse_persists_every_graph_trace_with_safe_metadata"
+    "id": "async-session-busy-error",
+    "fault": "A teacher submits another request while the same session already has an active run.",
+    "expected": "The asynchronous API rejects the conflicting request with a session-busy error.",
+    "test_node": "tests/test_async_api.py::test_same_session_busy_error_rejects_a_second_active_run"
+  },
+  {
+    "id": "parallel-worker-partial-error",
+    "fault": "One Worker branch fails while an independent sibling succeeds.",
+    "expected": "The merge preserves the successful Observation and exposes the failed branch as recoverable evidence.",
+    "test_node": "tests/test_main_react_graph.py::test_parallel_worker_error_preserves_successful_sibling"
   }
 ]

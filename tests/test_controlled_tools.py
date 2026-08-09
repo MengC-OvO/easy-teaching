@@ -14,6 +14,7 @@ from app.tools import (
     EylfOutcomeAlignment,
     RetrieveRiskGuidanceOutput,
     ToolErrorCode,
+    ToolExecutionContext,
     build_default_tool_registry,
 )
 
@@ -124,13 +125,13 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
     assert [tool.name for tool in registry.list_tools()] == [
-        "load_skill",
         "get_class_profile",
         "retrieve_risk_guidance",
         "check_activity_safety",
         "align_to_eylf_outcomes",
-        "save_draft",
         "recall_long_term_memory",
+        "search_public_resources",
+        "get_public_weather",
     ]
 
 
@@ -145,6 +146,19 @@ def test_get_class_profile_tool_reads_synthetic_data(tmp_path) -> None:
     assert "synthetic data only" in result.data["safety_notes"]
     assert result.trace is not None
     assert result.trace.tool_name == "get_class_profile"
+
+
+def test_get_class_profile_rejects_another_session_class(tmp_path) -> None:
+    registry = build_default_tool_registry(make_store(tmp_path))
+
+    result = registry.execute(
+        "get_class_profile",
+        {"class_id": "kangaroo-room"},
+        execution_context=ToolExecutionContext(class_id="another-room"),
+    )
+
+    assert result.success is False
+    assert result.error.code is ToolErrorCode.PERMISSION_DENIED
 
 
 def test_retrieve_risk_guidance_tool_returns_citable_chunks(tmp_path) -> None:
@@ -237,101 +251,6 @@ def test_align_to_eylf_outcomes_tool_uses_retrieved_evidence(tmp_path) -> None:
     assert provider.response_model is AlignToEylfOutcomesOutput
     assert "Activity draft:" in provider.messages[1].content
     assert "[E1]" in provider.messages[1].content
-
-
-def test_save_draft_tool_requires_approval(tmp_path) -> None:
-    registry = build_default_tool_registry(make_store(tmp_path))
-
-    result = registry.execute(
-        "save_draft",
-        {
-            "draft_id": "draft-001",
-            "idempotency_key": "request-001:save-draft",
-            "draft_type": "activity_plan",
-            "title": "Outdoor sensory walk",
-            "content": "Synthetic draft content.",
-        },
-    )
-
-    assert result.success is False
-    assert result.error is not None
-    assert result.error.code is ToolErrorCode.PERMISSION_DENIED
-    assert result.risk_level is RiskLevel.L2_CONTROLLED_WRITE
-
-
-def test_save_draft_tool_writes_after_approval(tmp_path) -> None:
-    registry = build_default_tool_registry(make_store(tmp_path))
-
-    result = registry.execute(
-        "save_draft",
-        {
-            "draft_id": "draft-001",
-            "idempotency_key": "request-001:save-draft",
-            "draft_type": "activity_plan",
-            "title": "Outdoor sensory walk",
-            "content": "Synthetic draft content.",
-        },
-        approved=True,
-    )
-
-    assert result.success is True
-    assert result.data == {
-        "draft_id": "draft-001",
-        "draft_type": "activity_plan",
-        "title": "Outdoor sensory walk",
-        "status": "draft",
-    }
-
-
-def test_save_draft_tool_requires_idempotency_key(tmp_path) -> None:
-    registry = build_default_tool_registry(make_store(tmp_path))
-
-    result = registry.execute(
-        "save_draft",
-        {
-            "draft_id": "draft-001",
-            "draft_type": "activity_plan",
-            "title": "Outdoor sensory walk",
-            "content": "Synthetic draft content.",
-        },
-        approved=True,
-    )
-
-    assert result.success is False
-    assert result.error is not None
-    assert result.error.code is ToolErrorCode.VALIDATION_ERROR
-    assert result.error.details["errors"][0]["loc"] == ("idempotency_key",)
-
-
-def test_save_draft_tool_reuses_existing_result_for_same_idempotency_key(tmp_path) -> None:
-    registry = build_default_tool_registry(make_store(tmp_path))
-
-    first = registry.execute(
-        "save_draft",
-        {
-            "draft_id": "draft-001",
-            "idempotency_key": "request-001:save-draft",
-            "draft_type": "activity_plan",
-            "title": "Outdoor sensory walk",
-            "content": "Synthetic draft content.",
-        },
-        approved=True,
-    )
-    second = registry.execute(
-        "save_draft",
-        {
-            "draft_id": "draft-002",
-            "idempotency_key": "request-001:save-draft",
-            "draft_type": "activity_plan",
-            "title": "Should not replace original",
-            "content": "Different synthetic content.",
-        },
-        approved=True,
-    )
-
-    assert first.success is True
-    assert second.success is True
-    assert second.data == first.data
 
 
 def test_get_class_profile_tool_reports_missing_profile(tmp_path) -> None:

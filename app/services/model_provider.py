@@ -1,4 +1,5 @@
 import json
+import asyncio
 import time
 from typing import Any, Callable, Dict, Optional, Type
 
@@ -26,13 +27,13 @@ class ChatCompletionsModelProvider:
     def __init__(
         self,
         provider_settings: Settings = settings,
-        client: Optional[httpx.Client] = None,
+        client: Optional[httpx.AsyncClient] = None,
         retry_policy: Optional[RetryPolicy] = None,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], Any] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = provider_settings
-        self.client = client or httpx.Client()
+        self.client = client or httpx.AsyncClient()
         self.retry_policy = retry_policy or RetryPolicy(
             max_attempts=provider_settings.model_retry_max_attempts,
             initial_delay_seconds=(
@@ -44,10 +45,10 @@ class ChatCompletionsModelProvider:
         self._sleep = sleep
         self._clock = clock
 
-    def generate(self, request: ModelRequest) -> ModelResponse:
-        return self._generate_with_deadline(request, started_at=self._clock())
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        return await self._generate_with_deadline(request, started_at=self._clock())
 
-    def _generate_with_deadline(
+    async def _generate_with_deadline(
         self,
         request: ModelRequest,
         *,
@@ -55,7 +56,7 @@ class ChatCompletionsModelProvider:
     ) -> ModelResponse:
         self._validate_configuration()
         payload = self._build_payload(request)
-        response = self._post_with_retry(request, payload, started_at=started_at)
+        response = await self._post_with_retry(request, payload, started_at=started_at)
 
         raw_response = self._parse_response_json(response)
         content = self._extract_content(raw_response)
@@ -75,7 +76,7 @@ class ChatCompletionsModelProvider:
             structured=structured,
         )
 
-    def _post_with_retry(
+    async def _post_with_retry(
         self,
         request: ModelRequest,
         payload: Dict[str, Any],
@@ -89,7 +90,7 @@ class ChatCompletionsModelProvider:
                 remaining_seconds,
             )
             try:
-                response = self.client.post(
+                response = await self.client.post(
                     self._chat_completions_url(),
                     headers=self._headers(),
                     json=payload,
@@ -128,7 +129,7 @@ class ChatCompletionsModelProvider:
                 )
                 raise error
 
-            self._sleep(self.retry_policy.delay_after(attempt))
+            await self._sleep(self.retry_policy.delay_after(attempt))
 
         raise RuntimeError("unreachable retry loop")
 
@@ -149,7 +150,7 @@ class ChatCompletionsModelProvider:
         )
         return max(remaining, 0.000_001)
 
-    def generate_structured(
+    async def generate_structured(
         self,
         *,
         messages: list[ModelMessage],
@@ -161,7 +162,7 @@ class ChatCompletionsModelProvider:
         started_at = self._clock()
         for attempt in range(1, self.settings.model_structured_max_attempts + 1):
             try:
-                return self._generate_with_deadline(
+                return await self._generate_with_deadline(
                     ModelRequest(
                         messages=messages,
                         model=model,

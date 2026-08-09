@@ -3,14 +3,12 @@
 from enum import Enum
 from typing import Any, Dict, Optional, Set
 
-from langgraph.types import Command
-
 from app.api.runtime import ApiRuntime
 from app.schemas import GraphState, RunStatus, StreamEventType, TraceEvent, WorkflowStatus
 from app.workflows import checkpoint_config
 
 
-def execute_message(
+async def execute_message(
     *,
     runtime: ApiRuntime,
     request_id: str,
@@ -21,7 +19,7 @@ def execute_message(
     message: str,
 ) -> None:
     """Run one accepted message and persist its API-facing lifecycle status."""
-    runtime.store.update_conversation_run_status(request_id, RunStatus.RUNNING.value)
+    await runtime.store.update_conversation_run_status(request_id, RunStatus.RUNNING.value)
     state: Optional[GraphState] = None
     try:
         initial_state_model = GraphState(
@@ -32,21 +30,23 @@ def execute_message(
             class_id=class_id,
             user_message=message,
         )
-        initial_state = (
-            initial_state_model.model_dump(mode="json")
-            if runtime.store.engine.dialect.name == "postgresql"
-            else initial_state_model
+        # 只提交本次消息字段。未提交的 context 由同 thread checkpoint 保留；
+        # initialize 节点会重置本轮临时 ReAct 字段。
+        incremental_state = initial_state_model.model_dump(
+            mode="json",
+            exclude_defaults=True,
+            exclude_none=True,
         )
-        result = runtime.graph.invoke(
-            initial_state,
+        result = await runtime.graph.ainvoke(
+            incremental_state,
             config=checkpoint_config(thread_id),
         )
         state = GraphState.model_validate(result)
         final_status = _run_status(state.workflow_status)
     except Exception:
-        state = _state_from_checkpoint(runtime, thread_id)
+        state = await _state_from_checkpoint(runtime, thread_id)
         final_status = RunStatus.FAILED
-    persist_run_outcome(
+    await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
         session_id=session_id,
@@ -55,41 +55,7 @@ def execute_message(
     )
 
 
-def execute_approval(
-    *,
-    runtime: ApiRuntime,
-    request_id: str,
-    session_id: str,
-    thread_id: str,
-    decision: str,
-) -> None:
-    """Resume one approval-interrupted graph and refresh its public result."""
-    state: Optional[GraphState] = None
-    try:
-        result = runtime.graph.invoke(
-            Command(
-                resume={
-                    "request_id": request_id,
-                    "decision": decision,
-                }
-            ),
-            config=checkpoint_config(thread_id),
-        )
-        state = GraphState.model_validate(result)
-        final_status = _run_status(state.workflow_status)
-    except Exception:
-        state = _state_from_checkpoint(runtime, thread_id)
-        final_status = RunStatus.FAILED
-    persist_run_outcome(
-        runtime=runtime,
-        request_id=request_id,
-        session_id=session_id,
-        state=state,
-        final_status=final_status,
-    )
-
-
-def execute_checkpoint_resume(
+async def execute_checkpoint_resume(
     *,
     runtime: ApiRuntime,
     request_id: str,
@@ -99,16 +65,16 @@ def execute_checkpoint_resume(
     """Continue a non-interrupted run from its latest durable checkpoint."""
     state: Optional[GraphState] = None
     try:
-        result = runtime.graph.invoke(
+        result = await runtime.graph.ainvoke(
             None,
             config=checkpoint_config(thread_id),
         )
         state = GraphState.model_validate(result)
         final_status = _run_status(state.workflow_status)
     except Exception:
-        state = _state_from_checkpoint(runtime, thread_id)
+        state = await _state_from_checkpoint(runtime, thread_id)
         final_status = RunStatus.FAILED
-    persist_run_outcome(
+    await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
         session_id=session_id,
@@ -117,7 +83,7 @@ def execute_checkpoint_resume(
     )
 
 
-def persist_run_outcome(
+async def persist_run_outcome(
     *,
     runtime: ApiRuntime,
     request_id: str,
@@ -127,12 +93,12 @@ def persist_run_outcome(
 ) -> None:
     """Persist one terminal or paused state and publish replay-safe events."""
     if state is not None:
-        _save_public_result(runtime, state)
-    runtime.store.update_conversation_run_status(request_id, final_status.value)
+        await _save_public_result(runtime, state)
+    await runtime.store.update_conversation_run_status(request_id, final_status.value)
     if state is not None:
-        _publish_state_events(runtime, state, final_status)
+        await _publish_state_events(runtime, state, final_status)
         return
-    _append_event_once(
+    await _append_event_once(
         runtime,
         request_id=request_id,
         session_id=session_id,
@@ -141,24 +107,27 @@ def persist_run_outcome(
     )
 
 
-def _save_public_result(runtime: ApiRuntime, state: GraphState) -> None:
+async def _save_public_result(runtime: ApiRuntime, state: GraphState) -> None:
     if state.draft is None:
         return
-    runtime.store.save_conversation_run_result(
+    await runtime.store.save_conversation_run_result(
         request_id=state.request_id,
         session_id=state.session_id,
         draft=state.draft.model_dump(mode="json"),
         approval=state.approval.model_dump(mode="json"),
-        citations=[citation.model_dump(mode="json") for citation in state.citations],
+        citations=[
+            citation.model_dump(mode="json")
+            for citation in state.citations[state.run_citation_start :]
+        ],
     )
 
 
-def _state_from_checkpoint(
+async def _state_from_checkpoint(
     runtime: ApiRuntime,
     thread_id: str,
 ) -> Optional[GraphState]:
     try:
-        snapshot = runtime.graph.get_state(checkpoint_config(thread_id))
+        snapshot = await runtime.graph.aget_state(checkpoint_config(thread_id))
         if not snapshot.values:
             return None
         return GraphState.model_validate(snapshot.values)
@@ -166,15 +135,15 @@ def _state_from_checkpoint(
         return None
 
 
-def _publish_state_events(
+async def _publish_state_events(
     runtime: ApiRuntime,
     state: GraphState,
     final_status: RunStatus,
 ) -> None:
-    _publish_graph_trace(runtime, state)
+    await _publish_graph_trace(runtime, state)
 
     if state.draft is not None:
-        _append_event_once(
+        await _append_event_once(
             runtime,
             request_id=state.request_id,
             session_id=state.session_id,
@@ -186,7 +155,7 @@ def _publish_state_events(
         )
 
     if final_status is RunStatus.WAITING_FOR_APPROVAL:
-        _append_event_once(
+        await _append_event_once(
             runtime,
             request_id=state.request_id,
             session_id=state.session_id,
@@ -198,7 +167,7 @@ def _publish_state_events(
             },
         )
     elif final_status is RunStatus.COMPLETED:
-        _append_event_once(
+        await _append_event_once(
             runtime,
             request_id=state.request_id,
             session_id=state.session_id,
@@ -206,7 +175,7 @@ def _publish_state_events(
             data={"status": final_status.value},
         )
     elif final_status is RunStatus.FAILED:
-        _append_event_once(
+        await _append_event_once(
             runtime,
             request_id=state.request_id,
             session_id=state.session_id,
@@ -215,20 +184,23 @@ def _publish_state_events(
         )
 
 
-def _publish_graph_trace(runtime: ApiRuntime, state: GraphState) -> None:
+async def _publish_graph_trace(runtime: ApiRuntime, state: GraphState) -> None:
     existing_indexes: Set[int] = {
         event["data"]["trace_index"]
-        for event in runtime.store.list_conversation_events(
+        for event in await runtime.store.list_conversation_events(
             request_id=state.request_id,
         )
         if event["event"] == StreamEventType.TRACE.value
         and event["data"].get("origin") == "graph"
         and isinstance(event["data"].get("trace_index"), int)
     }
-    for trace_index, trace in enumerate(state.trace):
+    for trace_index, trace in enumerate(
+        state.trace[state.run_trace_start :],
+        start=state.run_trace_start,
+    ):
         if trace_index in existing_indexes:
             continue
-        _append_event(
+        await _append_event(
             runtime,
             request_id=state.request_id,
             session_id=state.session_id,
@@ -331,7 +303,7 @@ def _safe_json_value(value: Any) -> Any:
     return str(value)
 
 
-def _append_event(
+async def _append_event(
     runtime: ApiRuntime,
     *,
     request_id: str,
@@ -339,7 +311,7 @@ def _append_event(
     event: StreamEventType,
     data: dict,
 ) -> None:
-    runtime.store.append_conversation_event(
+    await runtime.store.append_conversation_event(
         request_id=request_id,
         session_id=session_id,
         event=event.value,
@@ -347,7 +319,7 @@ def _append_event(
     )
 
 
-def _append_event_once(
+async def _append_event_once(
     runtime: ApiRuntime,
     *,
     request_id: str,
@@ -355,10 +327,10 @@ def _append_event_once(
     event: StreamEventType,
     data: dict,
 ) -> None:
-    existing = runtime.store.list_conversation_events(request_id=request_id)
+    existing = await runtime.store.list_conversation_events(request_id=request_id)
     if any(item["event"] == event.value and item["data"] == data for item in existing):
         return
-    _append_event(
+    await _append_event(
         runtime,
         request_id=request_id,
         session_id=session_id,

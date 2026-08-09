@@ -210,12 +210,6 @@ button { cursor: pointer; }
 .citation-list { display: grid; gap: 7px; margin-top: 18px; }
 .citation { display: block; border-left: 2px solid #c5baf8; padding: 7px 10px; color: #5e5d69; background: #f8f6ff; font-size: 10px; line-height: 1.45; text-decoration: none; }
 .citation:hover { background: #f1edff; }
-.approval-card { margin-top: 17px; border: 1px solid #ded8fb; border-radius: 13px; padding: 14px; background: #f7f4ff; }
-.approval-card strong { display: block; font-size: 12px; }
-.approval-card p { margin: 5px 0 12px; color: var(--muted); font-size: 11px; }
-.approval-actions { display: flex; gap: 8px; }
-.approval-actions button { border: 1px solid #d8d3ed; border-radius: 9px; padding: 8px 12px; color: #4c485c; background: white; font-size: 11px; font-weight: 700; }
-.approval-actions .approve { border-color: var(--purple); color: white; background: var(--purple); }
 
 .composer-area {
   position: fixed;

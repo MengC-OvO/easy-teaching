@@ -1,17 +1,19 @@
 """Run fixed evaluation cases against real EduFlow components."""
 
 import json
+import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Iterable, List, Optional
 
-from app.agents import IntentRouter
+from pydantic import BaseModel
+
+from app.agents import WorkerProfile, WorkerRegistry
 from app.schemas import (
-    Approval,
-    ApprovalStatus,
-    Draft,
-    ForbiddenSpecialistAction,
+    CapabilityCall,
+    CapabilityObservation,
+    CapabilitySource,
     GraphState,
     Intent,
     IntentRouteResult,
@@ -19,17 +21,14 @@ from app.schemas import (
     LongTermMemoryScope,
     LongTermMemoryType,
     MemoryRetrievalMode,
+    MainDecision,
+    ObservationStatus,
     RetrievalMode,
     RerankerMode,
     RiskLevel,
-    SpecialistInput,
-    SpecialistKind,
-    SpecialistPermissionDenied,
-    SpecialistResult,
     ThreadContext,
-    TraceEvent,
-    WorkflowStatus,
-    get_specialist_permission,
+    WorkerCall,
+    WorkerName,
 )
 from app.services import (
     BM25KnowledgeIndex,
@@ -40,8 +39,17 @@ from app.services import (
     ObservationRedactor,
     PolicyRAGService,
 )
-from app.tools import ToolExecutionContext, build_default_tool_registry
-from app.workflows.main_graph import build_main_graph
+from app.tools import (
+    ToolCategory,
+    ToolDefinition,
+    ToolDomain,
+    ToolExecutionContext,
+    ToolPermission,
+    ToolRegistry,
+    ToolResult,
+    build_default_tool_registry,
+)
+from app.workflows import build_main_react_graph
 from evals.cases import load_eval_cases
 from evals.evaluators import evaluate_case
 from evals.errors import safe_eval_error_code
@@ -180,7 +188,7 @@ class EvalRunner:
         return self._trajectory_actual(case)
 
     def _routing_actual(self, case: EvalCase) -> RoutingActual:
-        router = IntentRouter(provider=self.meter) if self.meter else _KeywordRouter()
+        router = _KeywordRouter()
         route = router.route(
             case.input.message,
             conversation_context=case.input.conversation_context,
@@ -252,14 +260,10 @@ class EvalRunner:
     def _safety_actual(self, case: EvalCase) -> SafetyActual:
         message = case.input.message.lower()
         if "diagnos" in message:
-            permission = get_specialist_permission(SpecialistKind.PLANNING)
-            try:
-                permission.require_action(ForbiddenSpecialistAction.CHILD_DIAGNOSIS)
-            except SpecialistPermissionDenied:
-                return SafetyActual(
-                    outcome=SafetyOutcome.BLOCK,
-                    error_codes=["forbidden_action"],
-                )
+            return SafetyActual(
+                outcome=SafetyOutcome.BLOCK,
+                error_codes=["forbidden_action"],
+            )
         if "without teacher approval" in message:
             result = self.registry.execute(
                 "save_draft",
@@ -287,14 +291,14 @@ class EvalRunner:
         )
 
     def _trajectory_actual(self, case: EvalCase) -> TrajectoryActual:
-        state = self.graph.invoke(
-            GraphState(
+        state = asyncio.run(
+            self.graph.ainvoke(GraphState(
                 request_id=case.id,
                 session_id=f"eval-{case.id}",
                 user_message=case.input.message,
                 teacher_id=case.input.teacher_id,
                 class_id=case.input.class_id,
-            )
+            ))
         )
         resolved = GraphState.model_validate(state)
         return TrajectoryActual(steps=[event.step for event in resolved.trace])
@@ -335,29 +339,24 @@ class EvalRunner:
             self.store.save_long_term_memory(fixture)
 
     def _build_trajectory_graph(self):
-        return build_main_graph(
-            router=_KeywordRouter(),
-            planning_workflow=_StaticSpecialist(
-                SpecialistKind.PLANNING,
-                "planning_react",
-            ),
-            policy_workflow=_StaticSpecialist(
-                SpecialistKind.POLICY,
-                "policy_rag",
-            ),
-            documentation_workflow=_StaticSpecialist(
-                SpecialistKind.DOCUMENTATION,
-                "documentation_draft",
-                needs_approval=True,
-            ),
-            family_workflow=_StaticSpecialist(
-                SpecialistKind.FAMILY,
-                "family_draft_skeleton",
-            ),
+        workers = WorkerRegistry(
+            [
+                WorkerProfile(
+                    name=name,
+                    description="Deterministic evaluation Worker.",
+                    allowed_tool_names=frozenset(),
+                )
+                for name in WorkerName
+            ]
+        )
+        return build_main_react_graph(
+            main_agent=_TrajectoryMainAgent(),
+            registry=_trajectory_registry(),
+            worker_registry=workers,
+            worker_runner=_TrajectoryWorkerRunner(),
             context_manager=self.context_manager,
             long_memory_extractor=_NoOpMemoryExtractor(),
             long_memory_store=self.store,
-            learning_record_store=self.store,
         )
 
 
@@ -393,41 +392,124 @@ class _KeywordRouter:
         )
 
 
-class _StaticSpecialist:
-    """Minimal specialist output used to exercise the real main graph path."""
+class _TrajectoryToolInput(BaseModel):
+    value: str = "ok"
 
-    def __init__(
-        self,
-        specialist: SpecialistKind,
-        trace_step: str,
-        *,
-        needs_approval: bool = False,
-    ) -> None:
-        self.specialist = specialist
-        self.trace_step = trace_step
-        self.needs_approval = needs_approval
 
-    def invoke(self, input_data: SpecialistInput) -> SpecialistResult:
-        approval = Approval()
-        status = WorkflowStatus.COMPLETED
-        if self.needs_approval:
-            approval = Approval(
-                status=ApprovalStatus.REQUIRED,
-                risk_level=RiskLevel.L2_CONTROLLED_WRITE,
-                reason="Teacher review is required.",
+class _TrajectoryToolOutput(BaseModel):
+    value: str
+
+
+def _trajectory_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    for name in ("eval_tool_a", "eval_tool_b"):
+        registry.register(
+            ToolDefinition(
+                name=name,
+                description="Deterministic read-only trajectory tool.",
+                category=ToolCategory.SYSTEM,
+                input_model=_TrajectoryToolInput,
+                output_model=_TrajectoryToolOutput,
+                risk_level=RiskLevel.L0_READ_ONLY,
+                permission=ToolPermission.AUTO_EXECUTE,
+                domain=ToolDomain.INTERNAL,
+                parallel_safe=True,
+                handler=lambda args, tool_name=name: ToolResult.ok(
+                    data={"value": f"{tool_name}:{args.value}"},
+                    risk_level=RiskLevel.L0_READ_ONLY,
+                ),
             )
-            status = WorkflowStatus.WAITING_FOR_APPROVAL
-        return SpecialistResult(
-            specialist=self.specialist,
-            status=status,
-            draft=Draft(title="Synthetic eval draft", content="Synthetic eval content"),
-            approval=approval,
-            trace=[
-                TraceEvent(
-                    step=self.trace_step,
-                    message="Synthetic specialist completed for graph evaluation.",
-                )
-            ],
+        )
+    return registry
+
+
+class _TrajectoryMainAgent:
+    """用固定决定验证真实生产主图，不调用外部模型。"""
+
+    async def decide(self, *, user_message, observations, **kwargs):
+        message = user_message.lower()
+        if "clarification" in message:
+            return MainDecision(
+                reason="The deterministic case needs clarification.",
+                clarification_question="What result do you need?",
+            )
+        if "parallel workers" in message and not observations:
+            return MainDecision(
+                reason="Two independent deep tasks.",
+                worker_calls=[
+                    WorkerCall(
+                        name=WorkerName.INTERNAL_RESEARCH,
+                        arguments={"task": "internal evidence"},
+                        result_key="internal",
+                    ),
+                    WorkerCall(
+                        name=WorkerName.EXTERNAL_RESEARCH,
+                        arguments={"task": "public evidence"},
+                        result_key="external",
+                    ),
+                ],
+            )
+        if "parallel tools" in message and not observations:
+            return MainDecision(
+                reason="Two independent simple calls.",
+                tool_calls=[
+                    CapabilityCall(
+                        name="eval_tool_a",
+                        arguments={"value": "a"},
+                        result_key="a",
+                    ),
+                    CapabilityCall(
+                        name="eval_tool_b",
+                        arguments={"value": "b"},
+                        result_key="b",
+                    ),
+                ],
+            )
+        if "dependency" in message and "first" not in observations:
+            return MainDecision(
+                reason="Run prerequisite first.",
+                tool_calls=[
+                    CapabilityCall(
+                        name="eval_tool_a",
+                        arguments={"value": "first"},
+                        result_key="first",
+                    )
+                ],
+            )
+        if "dependency" in message and "second" not in observations:
+            return MainDecision(
+                reason="Prerequisite is now available.",
+                tool_calls=[
+                    CapabilityCall(
+                        name="eval_tool_b",
+                        arguments={"value": "second"},
+                        needs=["first"],
+                        result_key="second",
+                    )
+                ],
+            )
+        if "single tool" in message and not observations:
+            return MainDecision(
+                reason="One simple lookup.",
+                tool_calls=[
+                    CapabilityCall(
+                        name="eval_tool_a",
+                        arguments={"value": "single"},
+                        result_key="single",
+                    )
+                ],
+            )
+        return MainDecision(reason="Evidence is sufficient.", final_answer="Eval draft.")
+
+
+class _TrajectoryWorkerRunner:
+    async def run(self, call, **kwargs):
+        return CapabilityObservation(
+            result_key=call.result_key,
+            capability_name=call.name.value,
+            source_kind=CapabilitySource.WORKER,
+            status=ObservationStatus.COMPLETED,
+            data={"summary": call.arguments["task"]},
         )
 
 

@@ -32,12 +32,12 @@ def _public_session(record: Dict[str, Any]) -> SessionCreateResponse:
     response_model=SessionCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_session(
+async def create_session(
     payload: SessionCreateRequest,
     request: Request,
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> SessionCreateResponse:
-    record = get_runtime(request).store.create_conversation_session(
+    record = await get_runtime(request).store.create_conversation_session(
         session_id=str(uuid4()),
         thread_id=str(uuid4()),
         teacher_id=current_user.teacher_id if current_user else payload.teacher_id,
@@ -51,12 +51,12 @@ def create_session(
     response_model=SessionCreateResponse,
     responses={status.HTTP_404_NOT_FOUND: {"model": ApiErrorResponse}},
 )
-def get_session(
+async def get_session(
     session_id: str,
     request: Request,
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[SessionCreateResponse, JSONResponse]:
-    record = get_runtime(request).store.get_conversation_session(session_id)
+    record = await get_runtime(request).store.get_conversation_session(session_id)
     if record is not None:
         require_session_owner(record, current_user)
         return _public_session(record)

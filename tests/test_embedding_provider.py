@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 
@@ -62,6 +64,25 @@ def test_embedding_provider_embed_text_uses_query_task_type() -> None:
     vector = make_provider(handler).embed_text("query")
 
     assert vector == [0.1, 0.2, 0.3]
+
+
+def test_embedding_provider_async_path_uses_async_client() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b"RETRIEVAL_QUERY" in request.read()
+        return httpx.Response(
+            200,
+            json={"embeddings": [{"values": [0.1, 0.2, 0.3]}]},
+        )
+
+    async def run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        provider = GeminiEmbeddingProvider(make_settings(), async_client=client)
+        try:
+            return await provider.embed_text_async("query")
+        finally:
+            await client.aclose()
+
+    assert asyncio.run(run()) == [0.1, 0.2, 0.3]
 
 
 def test_embedding_provider_requires_configuration() -> None:

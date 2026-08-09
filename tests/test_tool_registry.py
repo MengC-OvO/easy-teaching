@@ -203,3 +203,28 @@ def test_registry_wraps_handler_exceptions() -> None:
     assert result.error is not None
     assert result.error.code is ToolErrorCode.EXECUTION_ERROR
     assert result.error.details == {"error": "database unavailable"}
+
+
+def test_registry_rejects_invalid_success_output() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="invalid_output",
+            description="Return the wrong success shape.",
+            category=ToolCategory.SYSTEM,
+            input_model=EchoInput,
+            output_model=EchoOutput,
+            risk_level=RiskLevel.L0_READ_ONLY,
+            permission=ToolPermission.AUTO_EXECUTE,
+            handler=lambda _: ToolResult.ok(
+                data={"wrong": "shape"},
+                risk_level=RiskLevel.L0_READ_ONLY,
+            ),
+        )
+    )
+
+    result = registry.execute("invalid_output", {"text": "hello"})
+
+    assert result.success is False
+    assert result.error.code is ToolErrorCode.EXECUTION_ERROR
+    assert result.error.details["errors"][0]["location"] == ["text"]

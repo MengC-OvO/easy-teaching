@@ -50,6 +50,15 @@ from app.schemas.long_memory import (
     LongTermMemoryType,
     MemoryRetrievalMode,
 )
+from app.schemas.main_react import (
+    CapabilityCall,
+    CapabilityObservation,
+    CapabilitySource,
+    MainDecision,
+    ObservationStatus,
+    WorkerCall,
+    WorkerName,
+)
 from app.schemas.planning import (
     ActivityObservationPoint,
     ActivityPlan,
@@ -75,25 +84,9 @@ from app.schemas.knowledge import (
     VectorIndexMetadata,
 )
 from app.schemas.react import (
-    Observation,
     ReActAction,
     ReActDecision,
-    ReActState,
-    StopReason,
     ToolCall,
-)
-from app.schemas.skill import LoadedSkill, SkillManifest
-from app.schemas.specialist import (
-    SpecialistInput,
-    SpecialistKind,
-    SpecialistResult,
-)
-from app.schemas.specialist_permissions import (
-    DEFAULT_SPECIALIST_PERMISSIONS,
-    ForbiddenSpecialistAction,
-    SpecialistPermissionDenied,
-    SpecialistPermissionPolicy,
-    get_specialist_permission,
 )
 
 __all__ = [
@@ -113,14 +106,15 @@ __all__ = [
     "CitationMetadata",
     "CancelRunResponse",
     "ContextBudget",
+    "CapabilityCall",
+    "CapabilityObservation",
+    "CapabilitySource",
     "DeidentifiedObservation",
     "ConversationMemory",
     "ConversationRole",
     "ConversationTurn",
     "Draft",
     "DraftResponse",
-    "DEFAULT_SPECIALIST_PERMISSIONS",
-    "ForbiddenSpecialistAction",
     "GraphError",
     "GraphState",
     "Intent",
@@ -136,32 +130,24 @@ __all__ = [
     "LongTermMemoryOperation",
     "LongTermMemoryScope",
     "LongTermMemoryType",
-    "LoadedSkill",
+    "MainDecision",
     "MemoryRetrievalMode",
     "MessageAcceptedResponse",
     "MessageCreateRequest",
-    "Observation",
+    "ObservationStatus",
     "PIIType",
     "PolicyEvidence",
     "PolicyRAGResult",
     "PolicyRAGStatus",
     "ReActAction",
     "ReActDecision",
-    "ReActState",
     "RiskLevel",
     "RunStatus",
     "SafetyFlag",
     "SessionCreateRequest",
     "SessionCreateResponse",
     "SessionStatus",
-    "SkillManifest",
-    "SpecialistInput",
-    "SpecialistKind",
-    "SpecialistPermissionDenied",
-    "SpecialistPermissionPolicy",
-    "SpecialistResult",
     "ThreadContext",
-    "StopReason",
     "StreamEvent",
     "StreamEventType",
     "TraceEvent",
@@ -175,5 +161,6 @@ __all__ = [
     "ToolCall",
     "VectorIndexMetadata",
     "WorkflowStatus",
-    "get_specialist_permission",
+    "WorkerCall",
+    "WorkerName",
 ]

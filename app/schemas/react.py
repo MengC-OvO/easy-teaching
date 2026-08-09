@@ -1,39 +1,16 @@
-import operator
 from enum import Enum
-from typing import Any, Dict, List, Optional
-from typing_extensions import Annotated
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, model_validator
-
-from app.schemas.skill import LoadedSkill
-
 
 class ReActAction(str, Enum):
     CALL_TOOL = "call_tool"
     FINAL_ANSWER = "final_answer"
 
 
-class StopReason(str, Enum):
-    NOT_STOPPED = "not_stopped"
-    COMPLETED = "completed"
-    MAX_STEPS_REACHED = "max_steps_reached"
-    TOOL_ERROR = "tool_error"
-    APPROVAL_REQUIRED = "approval_required"
-    MODEL_ERROR = "model_error"
-    SKILL_REQUIRED = "skill_required"
-    SKILL_REQUIREMENTS_MISSING = "skill_requirements_missing"
-
-
 class ToolCall(BaseModel):
     tool_name: str = Field(min_length=1)
     tool_args: Dict[str, Any] = Field(default_factory=dict)
-
-
-class Observation(BaseModel):
-    tool_name: str = Field(min_length=1)
-    success: bool
-    data: Dict[str, Any] = Field(default_factory=dict)
-    error: Optional[Dict[str, Any]] = None
 
 
 class ReActDecision(BaseModel):
@@ -55,27 +32,3 @@ class ReActDecision(BaseModel):
             if self.tool_call is not None:
                 raise ValueError("tool_call must be empty when action is final_answer")
         return self
-
-
-class ReActState(BaseModel):
-    user_message: str
-    teacher_id: Optional[str] = None
-    class_id: Optional[str] = None
-    conversation_context: str = ""
-    required_skill_name: Optional[str] = None
-    loaded_skill: Optional[LoadedSkill] = None
-    final_output_schema: Dict[str, Any] = Field(default_factory=dict)
-    max_steps: int = Field(default=4, ge=1)
-    current_step: int = Field(default=0, ge=0)
-    decision: Optional[ReActDecision] = None
-    final_answer: Optional[str] = None
-    stop_reason: StopReason = StopReason.NOT_STOPPED
-    observations: Annotated[List[Observation], operator.add] = Field(default_factory=list)
-
-    @property
-    def should_stop(self) -> bool:
-        return self.stop_reason is not StopReason.NOT_STOPPED
-
-    @property
-    def has_steps_remaining(self) -> bool:
-        return self.current_step < self.max_steps

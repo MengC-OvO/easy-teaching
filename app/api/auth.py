@@ -1,6 +1,7 @@
 """Minimal Supabase Auth integration for the FastAPI boundary."""
 
 from dataclasses import dataclass
+import inspect
 from typing import Any, Optional
 
 import httpx
@@ -55,14 +56,14 @@ class SupabaseAuthClient:
         base_url: str,
         publishable_key: str,
         timeout_seconds: float = 5.0,
-        http_client: Optional[httpx.Client] = None,
+        http_client: Optional[Any] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.publishable_key = publishable_key
         self.timeout_seconds = timeout_seconds
         self.http_client = http_client
 
-    def get_user(self, access_token: str) -> CurrentUser:
+    async def get_user(self, access_token: str) -> CurrentUser:
         headers = {
             "apikey": self.publishable_key,
             "Authorization": f"Bearer {access_token}",
@@ -74,11 +75,14 @@ class SupabaseAuthClient:
                     headers=headers,
                 )
             else:
-                response = httpx.get(
-                    f"{self.base_url}/auth/v1/user",
-                    headers=headers,
-                    timeout=self.timeout_seconds,
-                )
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"{self.base_url}/auth/v1/user",
+                        headers=headers,
+                        timeout=self.timeout_seconds,
+                    )
+            if inspect.isawaitable(response):
+                response = await response
         except httpx.HTTPError as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -135,7 +139,7 @@ def _request_token(request: Request) -> Optional[str]:
     return None
 
 
-def get_current_user(request: Request) -> Optional[CurrentUser]:
+async def get_current_user(request: Request) -> Optional[CurrentUser]:
     """Return a trusted user when auth is enabled; preserve local offline mode."""
 
     if not settings.auth_enabled:
@@ -147,7 +151,7 @@ def get_current_user(request: Request) -> Optional[CurrentUser]:
             detail="Please log in to continue.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return _auth_client().get_user(token)
+    return await _auth_client().get_user(token)
 
 
 def require_authenticated_user(
@@ -191,8 +195,10 @@ def auth_config() -> AuthConfigResponse:
 
 
 @router.post("/session", response_model=AuthUserResponse)
-def create_auth_session(payload: AuthSessionRequest, response: Response) -> AuthUserResponse:
-    user = _auth_client().get_user(payload.access_token)
+async def create_auth_session(
+    payload: AuthSessionRequest, response: Response
+) -> AuthUserResponse:
+    user = await _auth_client().get_user(payload.access_token)
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=payload.access_token,

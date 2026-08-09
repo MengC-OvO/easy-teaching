@@ -7,6 +7,7 @@ from app.schemas import RiskLevel
 from app.tools.definition import (
     ToolCategory,
     ToolDefinition,
+    ToolDomain,
     ToolPermission,
     ToolResult,
 )
@@ -91,6 +92,8 @@ def build_check_activity_safety_tool() -> ToolDefinition:
         output_model=CheckActivitySafetyOutput,
         risk_level=RiskLevel.L0_READ_ONLY,
         permission=ToolPermission.AUTO_EXECUTE,
+        domain=ToolDomain.INTERNAL,
+        parallel_safe=True,
         handler=handler,
     )
 

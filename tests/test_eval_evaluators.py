@@ -99,13 +99,15 @@ def test_safety_evaluator_checks_redaction_output() -> None:
 
 def test_trajectory_evaluator_allows_extra_steps_but_preserves_required_order() -> None:
     result = evaluate_case(
-        _case("trajectory-policy-route"),
+        _case("trajectory-single-tool"),
         TrajectoryActual(
             steps=[
                 "initialize",
                 "extra_safe_trace",
-                "intent_router",
-                "policy_rag",
+                "main_react",
+                "validate_decision",
+                "merge_observations",
+                "finalize_draft",
                 "context_update",
                 "long_memory_update",
             ]

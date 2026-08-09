@@ -1,7 +1,7 @@
 # Architecture
 
-This document explains how EduFlow's modules cooperate without repeating the
-implementation history kept in Git.
+EduFlow 的生产 Runtime 只使用一条统一 Main ReAct 主线。旧 Intent Router、固定
+Specialist、Skill、审批图和同步单 Tool ReAct 已删除。
 
 ## Request lifecycle
 
@@ -9,107 +9,117 @@ implementation history kept in Git.
 sequenceDiagram
     participant UI as Web workspace
     participant API as FastAPI
-    participant DB as Self-hosted PostgreSQL
-    participant G as LangGraph
+    participant DB as PostgreSQL
+    participant G as Main ReAct LangGraph
+    participant C as Tool / Worker
 
-    UI->>API: POST /sessions
-    API->>DB: create session + thread id
-    API-->>UI: session id
-    UI->>API: POST /messages + request id
-    API->>DB: create idempotent run + run_started event
+    UI->>API: POST session message
+    API->>DB: create idempotent run + run_started
     API-->>UI: 202 accepted
-    API->>G: invoke in background
-    G->>G: route and execute specialist
-    G->>DB: checkpoints and domain writes
-    API->>DB: save public draft + ordered events
-    UI->>API: GET /events (SSE)
-    API-->>UI: replay events after sequence cursor
-    UI->>API: GET /drafts/{request_id}
-    API-->>UI: draft + approval + citations
+    API->>G: await graph.ainvoke
+    loop one current decision per turn
+        G->>G: Main selects current call or batch
+        G->>G: validate name, schema, permission, dependency and budget
+        G->>C: one Tool / concurrent Tools / Worker fan-out
+        C-->>G: immutable Observation
+    end
+    G->>G: Main creates final teacher draft
+    G->>DB: checkpoint, context and scoped memory
+    API->>DB: persist public draft + ordered SSE events
+    UI->>API: replay SSE and fetch draft
 ```
 
-## Layers and responsibilities
+Main 不预先生成完整执行计划。每一轮只选择当前一个调用或当前可以安全并行的
+批次；有依赖的调用等待 Observation 后由下一轮重新决定。
+
+## Production graph
+
+```text
+initialize
+  → main_react
+  → validate_decision
+      ├─ single_tool
+      ├─ parallel_tools
+      ├─ run_worker (LangGraph Send fan-out)
+      ├─ decision_feedback
+      ├─ clarification
+      └─ finalize_draft
+
+single/parallel/worker/feedback
+  → merge_observations
+  → main_react
+
+finalize_draft/clarification
+  → context_update
+  → long_memory_update
+  → END
+```
+
+只有 Main 可以产生教师可见草稿。Tool、MCP 适配器和 Worker 只能返回
+Observation，不能直接写主 State 或执行业务副作用。
+
+## Execution choices
+
+| 当前需要 | 执行方式 |
+| --- | --- |
+| 一个普通或单一深度任务 | Main 跨多轮调用一个 Tool |
+| 多个独立简单查询 | `parallel_tools` 内异步并发 |
+| 多个独立深度研究 | 固定 Worker Profile 并行 fan-out |
+| 有依赖或独立性不确定 | 先执行一个前置调用，下一轮继续 |
+| 信息足够 | 结束循环并生成草稿 |
+
+三个 Worker Profile 分别限制为内部政策/EYLF、本地 teacher-scoped 上下文、
+以及去身份化公开信息。它们有独立模型上下文、固定工具白名单和最大 3 轮预算。
+
+## Code boundaries
 
 ### `app/api`
 
-The transport layer. Route modules validate HTTP requests and delegate work.
-`runtime.py` builds one shared store, checkpointer, and compiled graph for the
-FastAPI lifespan. `execution.py` converts graph outcomes into public run state,
-results, and replay-safe events. API modules should not contain specialist
-prompt logic or retrieval algorithms.
+负责认证、session ownership、幂等、session busy、公开结果、SSE replay 和恢复。
+生产 Runtime 只接受 PostgreSQL，使用 `AsyncPostgresSaver`、异步 SQLAlchemy
+Store 和 `await graph.ainvoke()`。API、恢复、SSE 查询、模型 HTTP 和外部 HTTP
+工具均通过原生 `await`，不再把整张图放入工作线程。
 
-### `app/workflows`
+### `app/workflows/main_react_graph.py`
 
-The orchestration layer. `main_graph.py` owns the high-level path from context
-loading to intent routing, specialist invocation, context update, and memory
-update. Specialist workflows own private state and return a common
-`SpecialistResult`, which prevents the main graph from depending on every
-specialist's internal fields.
+负责节点、条件边、Worker `Send`、Observation reducer、安全合并和循环预算。
+并行分支不共享可变字典，只向 `pending_observations` 追加；唯一 merge 节点更新
+主 Observation map。
 
 ### `app/agents`
 
-Model-driven decision makers. The intent router chooses a supported workflow.
-The Planning ReAct agent decides which controlled tool to request next; the
-executor validates and performs the request. Agents propose actions, but do not
-gain authority merely by naming a function.
+`MainReActAgent` 只提出结构化当前决定；`MainDecisionValidator` 用代码重做权限、
+依赖、隐私字段、并发安全和重复调用检查；`BoundedWorkerRunner` 在小上下文内运行
+受限 ReAct。
 
-### `app/tools` and `app/skills`
+### `app/tools`
 
-Tools are code capabilities with Pydantic input/output contracts, risk levels,
-permissions, and handlers. `ToolRegistry` is the enforcement point. Skills are
-trusted local Markdown/JSON instructions. Loading a Skill changes the workflow
-guidance and required tools, but cannot expand the specialist's code-level
-permission policy.
+`ToolRegistry` 是真实执行边界。每个 Tool 包含 Pydantic 输入/输出、领域、风险、
+权限、超时和并发标记。可信 `teacher_id/class_id` 由图注入，模型参数不能扩大
+本地读取范围。
 
 ### `app/services`
 
-Reusable infrastructure and domain operations: SQLAlchemy persistence, model
-provider calls, retry policy, embeddings, knowledge ingestion/retrieval,
-redaction, context compaction, and long-term memory extraction. These modules
-do not know about HTML or browser state.
+保留 SQLAlchemy Store、模型 Provider/retry、Chroma + BM25 hybrid RAG、reranker、
+引用、短上下文压缩和长期记忆。它们是普通 Python 模块，不被隐藏到图框架中。
 
-### `app/schemas`
-
-The shared contract layer. Pydantic models make invalid state fail at a named
-boundary instead of leaking loosely shaped dictionaries across the system.
-Graph state, public API payloads, specialist input/output, tool results, and
-knowledge citations live here.
-
-### `app/web`
-
-A dependency-free local client served by FastAPI. It only talks to public HTTP
-routes and SSE, so it exercises the same runtime as curl or another future
-frontend. Browser-only recent-conversation labels are stored locally; durable
-session and workflow state stays in the backend.
-
-### `evals`, `data/evals`, and `scripts`
-
-Evaluation code is intentionally outside `app/`: it measures production logic
-but is not imported by the API. JSON manifests describe cases and failure
-scenarios, while small script entry points make them runnable from a terminal.
-
-## State is stored at different levels
+## State and persistence
 
 | State | Location | Purpose |
 | --- | --- | --- |
-| Graph checkpoint | LangGraph PostgresSaver | Resume the exact LangGraph thread |
-| API session/run/event | SQLAlchemy PostgreSQL store | Idempotency, status, SSE replay |
-| Short-term context | Graph state | Bounded recent turns and compact summary |
-| Long-term memory | SQLAlchemy PostgreSQL store | Scoped teacher/class preferences and recall |
-| Vector knowledge | Chroma | Searchable policy/source chunks |
-| UI labels | Browser local storage | Convenience-only recent conversation names |
+| Graph checkpoint | LangGraph AsyncPostgresSaver | 恢复精确节点和同一 thread |
+| API session/run/event | SQLAlchemy PostgreSQL | 幂等、状态和 SSE replay |
+| Current ReAct state | GraphState | 当前决定、Observation、预算和 trace |
+| Short context | checkpointed GraphState | 有界 recent turns 和摘要 |
+| Long-term memory | SQLAlchemy PostgreSQL | teacher/class scoped durable memory |
+| Knowledge index | Chroma + BM25 | 政策与 EYLF 检索 |
 
-These are not duplicate copies of one object. Each representation serves a
-different recovery, security, or product boundary.
+同一个 checkpoint thread 会跨消息保留 context，但 `initialize` 为每个新
+`request_id` 重置临时 Observation、计数和重复调用记录，并记录本轮 trace/citation
+起点，避免 SSE 重放上一轮运行数据。
 
-## Dependency direction
+## Current safety boundary
 
-Prefer dependencies pointing inward:
-
-```text
-web -> public API -> workflow -> agent/tool/service -> schema/domain contract
-```
-
-Evaluation code may import production modules, but production code must not
-import `evals`. Specialist-private state must not leak into route handlers, and
-browser code must not access PostgreSQL or LangGraph directly.
+生产主图只生成草稿，不保存学习记录、不发送消息、不进入审批，也不执行其他
+副作用。旧审批 API 已移除。真实儿童数据的本地隐私模型和可逆映射仍是后续
+项目；在此之前只允许测试或彻底脱敏数据。
