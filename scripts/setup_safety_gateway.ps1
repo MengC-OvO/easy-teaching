@@ -33,12 +33,13 @@ if (-not (Test-Path -LiteralPath $SafetyPython)) {
 Write-Host "Installing pinned Safety Gateway dependencies..." -ForegroundColor Cyan
 & $SafetyPython -m pip install `
     -r (Join-Path $ProjectRoot "safety_gateway\requirements.txt") `
-    -r (Join-Path $ProjectRoot "safety_gateway\requirements-model.txt")
+    -r (Join-Path $ProjectRoot "safety_gateway\requirements-model-cuda.txt")
 if ($LASTEXITCODE -ne 0) { throw "Safety Gateway dependency installation failed" }
 
 $ModelForEnv = $ResolvedModel.Replace("\", "/")
 $AdapterForEnv = $ResolvedAdapter.Replace("\", "/")
 $ConfigLines = @(
+    "SAFETY_MODEL_BACKEND=auto",
     "SAFETY_MODEL_DIR=`"$ModelForEnv`"",
     "SAFETY_ADAPTER_DIR=`"$AdapterForEnv`"",
     "SAFETY_MAX_INPUT_TOKENS=1536",

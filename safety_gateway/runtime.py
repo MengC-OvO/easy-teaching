@@ -20,10 +20,11 @@ LOGGER = logging.getLogger("easyteaching.safety_gateway")
 async def lifespan(application: FastAPI):
     settings = GatewaySettings()
     try:
-        LOGGER.info("Loading local safety model and adapter")
+        LOGGER.info("Loading local safety model and adapter (backend=%s)", settings.model_backend)
         annotator = LocalQwenAnnotator.load(
             model_dir=settings.model_dir,
             adapter_dir=settings.adapter_dir,
+            backend=settings.model_backend,
             max_input_tokens=settings.max_input_tokens,
             max_new_tokens=settings.max_new_tokens,
         )
@@ -31,7 +32,7 @@ async def lifespan(application: FastAPI):
             annotator=annotator,
             vault=InMemoryMappingVault(settings.mapping_ttl_seconds),
         )
-        LOGGER.info("Local safety gateway is ready")
+        LOGGER.info("Local safety gateway is ready (backend=%s)", annotator.backend)
     except Exception as error:
         application.state.pipeline = UnavailableSafetyPipeline()
         LOGGER.error("Local safety gateway is not ready (%s)", type(error).__name__)

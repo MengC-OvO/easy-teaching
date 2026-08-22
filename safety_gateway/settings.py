@@ -1,11 +1,15 @@
 """Environment settings owned by the standalone safety gateway."""
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class GatewaySettings(BaseSettings):
+    model_backend: Literal["auto", "cuda", "mps"] = Field(
+        default="auto", validation_alias="SAFETY_MODEL_BACKEND"
+    )
     model_dir: Path = Field(
         default=Path("local_models/Qwen2.5-1.5B-Instruct"),
         validation_alias="SAFETY_MODEL_DIR",
