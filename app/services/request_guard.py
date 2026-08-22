@@ -86,7 +86,7 @@ class EduFlowRequestGuard:
                 action=RequestGuardAction.BLOCK,
                 code="high_risk_professional_boundary",
                 response=(
-                    "EduFlow can provide general educational and safety information, but it "
+                    "EasyTeaching can provide general educational and safety information, but it "
                     "cannot diagnose a child, prescribe treatment, or give legal/compliance "
                     "conclusions. Please consult the appropriate qualified professional."
                 ),
@@ -96,7 +96,7 @@ class EduFlowRequestGuard:
                 action=RequestGuardAction.BLOCK,
                 code="outside_education_scope",
                 response=(
-                    "EduFlow is limited to Australian early-childhood education work, such as "
+                    "EasyTeaching is limited to Australian early-childhood education work, such as "
                     "activities, EYLF alignment, teacher drafts, class context, and safety "
                     "guidance."
                 ),

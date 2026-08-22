@@ -4,6 +4,9 @@ from app.config import Settings
 def test_model_settings_have_safe_defaults() -> None:
     settings = Settings(_env_file=None)
 
+    assert settings.privacy_gateway_mode == "disabled"
+    assert settings.privacy_gateway_url == "http://127.0.0.1:8010"
+    assert settings.privacy_gateway_timeout_seconds == 15.0
     assert settings.model_chat_completions_path == "/chat/completions"
     assert settings.model_name == "gemini-2.5-flash"
     assert settings.model_timeout_seconds == 10.0

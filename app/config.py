@@ -1,11 +1,23 @@
+from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = Field(default="eduflow-au-agent", validation_alias="APP_NAME")
+    app_name: str = Field(default="easy-teaching", validation_alias="APP_NAME")
     app_env: str = Field(default="local", validation_alias="APP_ENV")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    privacy_gateway_mode: Literal["disabled", "shadow", "enforce"] = Field(
+        default="disabled",
+        validation_alias="PRIVACY_GATEWAY_MODE",
+    )
+    privacy_gateway_url: str = Field(
+        default="http://127.0.0.1:8010",
+        validation_alias="PRIVACY_GATEWAY_URL",
+    )
+    privacy_gateway_timeout_seconds: float = Field(
+        default=15.0, gt=0.0, validation_alias="PRIVACY_GATEWAY_TIMEOUT_SECONDS"
+    )
     database_url: str = Field(default="", validation_alias="DATABASE_URL")
     checkpoint_database_url: str = Field(
         default="",

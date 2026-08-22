@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ask one question through the real EduFlow production execution path."""
+"""Ask one question through the real EasyTeaching production execution path."""
 
 import argparse
 import asyncio
@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
             "PostgreSQL store, and PostgreSQL checkpoint saver."
         )
     )
-    parser.add_argument("question", help="Teacher question to send to EduFlow.")
+    parser.add_argument("question", help="Teacher question to send to EasyTeaching.")
     parser.add_argument(
         "--teacher-id",
         default="terminal-demo-teacher",
@@ -105,7 +105,7 @@ async def ask_live(args: argparse.Namespace) -> int:
             return 1
 
         draft = result["draft"]
-        print(f"\n{draft.get('title') or 'EduFlow answer'}")
+        print(f"\n{draft.get('title') or 'EasyTeaching answer'}")
         print("=" * 60)
         print(draft.get("content", ""))
 

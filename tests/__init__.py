@@ -1,1 +1,1 @@
-"""Test package for EduFlow AU."""
+"""Test package for EasyTeaching."""

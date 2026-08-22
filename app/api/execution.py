@@ -1,4 +1,4 @@
-"""Background execution for accepted EduFlow API messages."""
+"""Background execution for accepted EasyTeaching API messages."""
 
 from enum import Enum
 from typing import Any, Dict, Optional, Set

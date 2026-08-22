@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models for EduFlow-owned PostgreSQL tables."""
+"""SQLAlchemy ORM models for EasyTeaching-owned PostgreSQL tables."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional

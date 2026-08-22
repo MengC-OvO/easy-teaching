@@ -1,4 +1,4 @@
-"""Agent modules for EduFlow AU workflows."""
+"""Agent modules for EasyTeaching workflows."""
 
 from app.agents.main_react_agent import (
     MAIN_REACT_SYSTEM_PROMPT,

@@ -1,4 +1,4 @@
-"""Retrieve request-scoped draft snapshots produced by EduFlow runs."""
+"""Retrieve request-scoped draft snapshots produced by EasyTeaching runs."""
 
 from typing import Optional, Union
 

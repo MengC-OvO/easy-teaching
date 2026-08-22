@@ -1,4 +1,4 @@
-"""Create and retrieve durable EduFlow conversation sessions."""
+"""Create and retrieve durable EasyTeaching conversation sessions."""
 
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4

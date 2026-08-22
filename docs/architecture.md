@@ -1,6 +1,6 @@
 # Architecture
 
-EduFlow 的生产 Runtime 只使用一条统一 Main ReAct 主线。旧 Intent Router、固定
+EasyTeaching 的生产 Runtime 只使用一条统一 Main ReAct 主线。旧 Intent Router、固定
 Specialist、Skill、审批图和同步单 Tool ReAct 已删除。
 
 ## Request lifecycle

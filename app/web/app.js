@@ -288,7 +288,7 @@ function connectEvents(shell, afterSequence = state.lastSequence) {
     if (["completed", "failed", "cancelled"].includes(payload.event)) {
       source.close();
       if (payload.event === "completed") getDraft(shell);
-      if (payload.event === "failed") showRunError(shell, "EduFlow could not complete this draft. Please try again.");
+      if (payload.event === "failed") showRunError(shell, "EasyTeaching could not complete this draft. Please try again.");
       setBusy(false);
     }
   };

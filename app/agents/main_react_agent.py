@@ -11,7 +11,7 @@ from app.tools import ToolDefinition
 
 
 MAIN_REACT_SYSTEM_PROMPT = """
-You are the Main ReAct agent for EduFlow AU.
+You are the Main ReAct agent for EasyTeaching.
 
 Decide only the current executable action or current executable batch. Never
 produce a complete future plan.

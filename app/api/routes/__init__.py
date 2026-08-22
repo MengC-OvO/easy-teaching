@@ -1,4 +1,4 @@
-"""HTTP route groups for the EduFlow API."""
+"""HTTP route groups for the EasyTeaching API."""
 
 from app.api.routes.drafts import router as drafts_router
 from app.api.routes.events import router as events_router

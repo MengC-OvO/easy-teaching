@@ -152,7 +152,7 @@ class PolicyRAGService:
 
     def _system_prompt(self) -> str:
         return (
-            "You are EduFlow AU, a cautious teacher assistant for Australian "
+            "You are EasyTeaching, a cautious teacher assistant for Australian "
             "early childhood education policy questions. Answer only from the "
             "provided evidence. Cite evidence IDs like [E1] for every substantive "
             "claim. If the evidence is insufficient, say what is missing. Do not "

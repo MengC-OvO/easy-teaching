@@ -15,7 +15,7 @@ from evals import EvalCategory, EvalMode, run_eval_suite  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate EduFlow routing, tools, RAG, memory, safety, and graph paths."
+        description="Evaluate EasyTeaching routing, tools, RAG, memory, safety, and graph paths."
     )
     parser.add_argument(
         "--live-model",
