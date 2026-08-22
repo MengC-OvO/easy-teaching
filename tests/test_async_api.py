@@ -1,9 +1,17 @@
 from types import SimpleNamespace
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.schemas import Draft, GraphState, RunStatus, WorkflowStatus
+from app.integrations.privacy_gateway_client import PrivacyGatewayUnavailableError
+from safety_gateway.contracts import (
+    GatewayAction,
+    InspectResponse,
+    RestoreResponse,
+    SafetySignals,
+)
 
 
 class MemoryStore:
@@ -115,10 +123,78 @@ class FakeRuntime:
     def __init__(self):
         self.store = MemoryStore()
         self.graph = RecordingGraph()
+        self.privacy_gateway_mode = "disabled"
+        self.privacy_gateway_client = None
         self.is_closed = False
 
     async def close(self):
         self.is_closed = True
+
+
+class FakeGatewayClient:
+    def __init__(self, result=None, error=None, restore_error=None):
+        self.result = result
+        self.error = error
+        self.restore_error = restore_error
+        self.requests = []
+        self.restore_requests = []
+        self.discarded_mapping_ids = []
+
+    async def inspect(self, request):
+        self.requests.append(request)
+        if self.error:
+            raise self.error
+        return self.result
+
+    async def discard(self, mapping_id):
+        self.discarded_mapping_ids.append(mapping_id)
+        return None
+
+    async def restore(self, request):
+        self.restore_requests.append(request)
+        if self.restore_error:
+            raise self.restore_error
+        return RestoreResponse(
+            restored_text=request.text.replace("<PERSON_NAME_1>", "Maya Example")
+        )
+
+
+class PlaceholderGraph(RecordingGraph):
+    async def ainvoke(self, state, config):
+        self.calls.append((state, config))
+        result = GraphState.model_validate(state).model_copy(
+            update={
+                "workflow_status": WorkflowStatus.COMPLETED,
+                "draft": Draft(
+                    title="EasyTeaching draft",
+                    content="A learning plan for <PERSON_NAME_1>.",
+                ),
+            }
+        )
+        self.states[result.thread_id] = result
+        return result
+
+
+class FailingGraph(RecordingGraph):
+    async def ainvoke(self, state, config):
+        self.calls.append((state, config))
+        raise RuntimeError("synthetic graph failure")
+
+
+def gateway_result(*, action="allow"):
+    return InspectResponse(
+        request_id=uuid4(),
+        action=GatewayAction(action),
+        reason_code=f"synthetic_{action}",
+        signals=SafetySignals(
+            injection_risk="normal" if action == "allow" else "block",
+            education_scope="in_scope",
+            professional_risk="none",
+        ),
+        redacted_text="Create a plan for <PERSON_NAME_1>." if action == "allow" else None,
+        mapping_id="opaque-mapping-id-123456789" if action == "allow" else None,
+        entity_counts={"PERSON_NAME": 1} if action == "allow" else {},
+    )
 
 
 def test_async_message_lifecycle_idempotency_draft_and_events():
@@ -145,6 +221,7 @@ def test_async_message_lifecycle_idempotency_draft_and_events():
     assert second.status_code == 202
     assert second.json()["status"] == RunStatus.COMPLETED.value
     assert len(runtime.graph.calls) == 1
+    assert runtime.graph.calls[0][0]["privacy_mapping_id"] is None
     assert draft.status_code == 200
     assert draft.json()["draft"]["is_draft"] is True
     assert events.status_code == 200
@@ -169,3 +246,112 @@ def test_same_session_busy_error_rejects_a_second_active_run():
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "session_busy"
+
+
+def test_enforce_mode_check_happens_before_run_persistence_and_forwards_only_redacted_text():
+    runtime = FakeRuntime()
+    runtime.graph = PlaceholderGraph()
+    runtime.privacy_gateway_mode = "enforce"
+    gateway = FakeGatewayClient(gateway_result())
+    runtime.privacy_gateway_client = gateway
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Synthetic child Maya Example needs a plan.", "request_id": "safe-1"},
+        )
+    assert response.status_code == 202
+    submitted_state = runtime.graph.calls[0][0]
+    assert submitted_state["user_message"] == "Create a plan for <PERSON_NAME_1>."
+    assert submitted_state["privacy_mapping_id"] == "opaque-mapping-id-123456789"
+    assert "Maya Example" not in str(submitted_state)
+    assert runtime.graph.states[submitted_state["thread_id"]].draft.content == (
+        "A learning plan for <PERSON_NAME_1>."
+    )
+    assert runtime.store.results["safe-1"]["draft"]["content"] == (
+        "A learning plan for Maya Example."
+    )
+    assert len(gateway.restore_requests) == 1
+
+
+def test_enforce_block_creates_no_run_and_never_invokes_graph():
+    runtime = FakeRuntime()
+    runtime.privacy_gateway_mode = "enforce"
+    runtime.privacy_gateway_client = FakeGatewayClient(gateway_result(action="block"))
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Synthetic direct injection", "request_id": "blocked-1"},
+        )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "safety_blocked"
+    assert runtime.store.runs == {}
+    assert runtime.graph.calls == []
+
+
+def test_enforce_gateway_failure_creates_no_run_and_fails_closed():
+    runtime = FakeRuntime()
+    runtime.privacy_gateway_mode = "enforce"
+    runtime.privacy_gateway_client = FakeGatewayClient(
+        error=PrivacyGatewayUnavailableError("synthetic unavailable")
+    )
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Synthetic family request", "request_id": "failed-1"},
+        )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "privacy_gateway_unavailable"
+    assert runtime.store.runs == {}
+    assert runtime.graph.calls == []
+
+
+def test_enforce_graph_failure_discards_mapping_and_exposes_no_draft():
+    runtime = FakeRuntime()
+    runtime.graph = FailingGraph()
+    runtime.privacy_gateway_mode = "enforce"
+    gateway = FakeGatewayClient(gateway_result())
+    runtime.privacy_gateway_client = gateway
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Synthetic child Maya Example.", "request_id": "failed-run-1"},
+        )
+
+    assert response.status_code == 202
+    assert runtime.store.runs["failed-run-1"]["status"] == RunStatus.FAILED.value
+    assert runtime.store.results == {}
+    assert gateway.discarded_mapping_ids == ["opaque-mapping-id-123456789"]
+
+
+def test_enforce_restore_failure_marks_run_failed_and_publishes_no_draft():
+    runtime = FakeRuntime()
+    runtime.graph = PlaceholderGraph()
+    runtime.privacy_gateway_mode = "enforce"
+    gateway = FakeGatewayClient(
+        gateway_result(),
+        restore_error=PrivacyGatewayUnavailableError("synthetic restore failure"),
+    )
+    runtime.privacy_gateway_client = gateway
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Synthetic child Maya Example.", "request_id": "restore-fail-1"},
+        )
+
+    assert response.status_code == 202
+    assert runtime.store.runs["restore-fail-1"]["status"] == RunStatus.FAILED.value
+    assert runtime.store.results == {}
+    event_types = [item["event"] for item in runtime.store.events["restore-fail-1"]]
+    assert "draft_ready" not in event_types
+    assert "failed" in event_types
+    assert gateway.discarded_mapping_ids == ["opaque-mapping-id-123456789"]

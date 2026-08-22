@@ -2,8 +2,9 @@
 
 EasyTeaching is a safety-aware teacher workflow assistant for Australian
 early childhood education. It combines FastAPI, LangGraph, controlled tools,
-local memory, and retrieval-augmented generation (RAG) to turn educator
-requests into reviewable drafts and evidence-backed answers.
+local memory, retrieval-augmented generation (RAG), and a local Qwen privacy
+gateway to turn educator requests into de-identified, reviewable drafts and
+evidence-backed answers.
 
 The repository is both a working local application and a learning project. All
 example data must be synthetic, public, or thoroughly de-identified.
@@ -28,13 +29,19 @@ example data must be synthetic, public, or thoroughly de-identified.
   short-term context, and scoped long-term teacher/class memory.
 - **Web workspace** — offers a ChatGPT-style local interface for sessions,
   messages, SSE progress events, draft display, and citations.
+- **Local privacy and safety gateway** — combines deterministic rules with a
+  Qwen2.5-1.5B QLoRA adapter before ReAct, then restores approved output using
+  one-time opaque mappings owned by local Python code.
 
 ## System overview
 
 ```mermaid
 flowchart LR
-    Browser["Teacher web workspace"] --> API["FastAPI API"]
-    API --> Runtime["Application runtime"]
+    Browser["Teacher web workspace"] --> API["FastAPI API :8000"]
+    API --> Gateway["Local Safety Gateway :8010"]
+    Gateway --> Rules["Regex + policy"]
+    Gateway --> Qwen["Local Qwen v11 adapter"]
+    Gateway -->|redacted text + opaque id| Runtime["Application runtime"]
     Runtime --> Graph["LangGraph main graph"]
     Graph --> Main["Main ReAct loop"]
     Main --> Validate["Code validation"]
@@ -44,6 +51,8 @@ flowchart LR
     Workers --> Main
     Tools --> Knowledge["Hybrid RAG + citations"]
     Graph --> Store[("Self-hosted PostgreSQL")]
+    Graph -->|redacted final draft| Gateway
+    Gateway -->|deterministically restored draft| API
     API --> Events["Persisted SSE events"]
     Events --> Browser
 ```
@@ -53,6 +62,12 @@ checkpointer, and compiled graph. HTTP routes accept work and return quickly;
 FastAPI then runs the accepted request asynchronously, persists its public
 outcome, and publishes ordered events that the browser can replay over
 Server-Sent Events (SSE).
+
+In `enforce` mode the API calls the local gateway before it creates a
+conversation run. ReAct, RAG, external model providers, logs, and LangGraph
+checkpoints receive placeholders instead of detected personal information.
+The gateway model only annotates; Python owns policy, blocking, placeholder
+generation, mapping storage, and final restoration.
 
 The Main assistant does not create a complete future plan. On each loop it
 chooses only the next executable action: one Tool/MCP call, a concurrent batch
@@ -75,7 +90,7 @@ app/
   web/          local browser interface (HTML, CSS and JavaScript)
   workflows/    production Main ReAct graph and async PostgreSQL checkpointing
 
-services/       independently runnable local services, including the safety gateway
+safety_gateway/ independent FastAPI process, Qwen loader, rules and mapping vault
 data/
   knowledge/    tracked source manifest and processed public knowledge
   evals/        deterministic evaluation and reliability manifests
@@ -83,8 +98,8 @@ data/
 
 docs/           stable architecture and operating documentation
 evals/          offline evaluation models, evaluators and runner
-scripts/        local demos, ingestion, evaluation and maintenance entry points
-tests/          unit and integration coverage
+scripts/        named setup, demo, ingestion, evaluation and maintenance commands
+tests/          committed unit, contract and integration regression coverage
 ```
 
 This structure keeps delivery code under `app/`, offline quality measurement
@@ -92,9 +107,10 @@ under `evals/`, local operator commands under `scripts/`, and explanatory
 material under `docs/`. The core modules were not moved merely for appearance;
 their current imports already express useful boundaries.
 
-The Local Privacy & Safety Gateway contract and service skeleton live under
-`services/local_safety_gateway/`. See [Local Safety Gateway](docs/local-safety-gateway.md)
-for the process boundary, fail-closed behavior, and staged rollout plan.
+The Local Privacy & Safety Gateway runtime lives under `safety_gateway/`; its
+typed client and message-route integration live under `app/integrations/` and
+`app/api/`. See [Local Safety Gateway](docs/local-safety-gateway.md) for the
+process boundary, fail-closed behavior, and staged rollout plan.
 
 ## Quick start
 
@@ -137,6 +153,49 @@ PostgreSQL is bound only to `127.0.0.1` in local development. SQLAlchemy owns
 EasyTeaching operational and business tables; LangGraph's official `PostgresSaver`
 owns its checkpoint tables in the same database. Chroma remains the separate
 RAG vector store.
+
+## Local privacy gateway (Windows + NVIDIA)
+
+The gateway is a second local process in the same repository. It deliberately
+uses its own `.venv-safety` because CUDA PyTorch, Transformers, PEFT, and
+bitsandbytes are much heavier than the FastAPI application dependencies. Model
+weights, adapters, secrets, and local gateway configuration are ignored by Git.
+
+Create or refresh the gateway environment using model assets that already exist
+on the machine (the command does not copy or upload them):
+
+```powershell
+.\scripts\setup_safety_gateway.ps1 `
+  -ModelDir "C:\path\to\Qwen2.5-1.5B-Instruct" `
+  -AdapterDir "C:\path\to\qlora-formal-v11\best-adapter"
+```
+
+Start the gateway in one terminal:
+
+```powershell
+.\scripts\start_safety_gateway.ps1
+```
+
+For the real application, set the local `.env` value below and start the main
+FastAPI process separately. `disabled` remains the safe default until the
+gateway is ready.
+
+```dotenv
+PRIVACY_GATEWAY_MODE=enforce
+PRIVACY_GATEWAY_URL=http://127.0.0.1:8010
+```
+
+Run the synthetic-only one-command demonstration:
+
+```powershell
+.\scripts\demo_privacy_flow.ps1
+```
+
+The demo starts or reuses the real local Qwen gateway and prints the original
+synthetic sentence, Qwen/rule decision, redacted GraphState input, placeholder
+draft, restored FastAPI draft, and final run status. Its ReAct node is a
+deterministic local substitute so the privacy integration can be demonstrated
+without PostgreSQL or an external model-provider credential.
 
 ### Optional Supabase login
 
@@ -222,6 +281,34 @@ timeouts, dependency checks and trusted teacher/class execution scope.
 Human approval is required before any future controlled write is re-enabled;
 the current draft-only graph never reaches that boundary.
 
+### Privacy gateway contract
+
+The local adapter returns strict JSON annotations for injection risk, education
+scope, professional boundary, and exact PII values (`PERSON_NAME`, `PHONE`,
+`EMAIL`, `ADDRESS`, and `DOB`). It does **not** redact text, choose placeholders,
+store mappings, restore names, grant permissions, or perform a write. Those
+operations remain deterministic Python responsibilities.
+
+Input modes are explicit:
+
+| Mode | Intended use | Behavior |
+| --- | --- | --- |
+| `disabled` | Default/bootstrap | Do not call the gateway |
+| `shadow` | Synthetic local diagnostics only | Inspect, discard mappings, forward original text |
+| `enforce` | Integrated local gateway | Fail closed; only allowed redacted text reaches ReAct |
+
+The current mapping vault is memory-only, single-process, one-time-use, and
+TTL-bound. That is appropriate for this local demonstration, but a gateway
+restart can invalidate an in-flight mapping. Encrypted durable mapping storage,
+deployment key management, retention controls, and a formal privacy review are
+required before any real-data deployment.
+
+The v11 adapter's frozen synthetic test set contained 1,050 records. It achieved
+PII F1 `0.947`, injection/scope/professional joint risk accuracy values reported
+separately (`0.910` / `0.957` / `0.907`), and strict JSON plus deterministic
+resolution validity `0.963`. These are synthetic benchmark results, not claims
+of production safety or performance on real children, families, or educators.
+
 ## Testing and evaluation
 
 Run the complete automated suite:
@@ -255,17 +342,20 @@ python scripts/ask_live.py \
 This command persists a synthetic terminal-demo session in the local database
 and prints the final draft, citations, and optional execution trace.
 
-Latest local verification after the async refactor:
+Latest checks relevant to the local privacy integration:
 
 | Check | Result |
 | --- | --- |
-| Complete pytest suite | 230 passed |
-| Reliability matrix | 14/14 passed |
-| Offline agent evaluation | 28/30 passed |
-| Python compilation and diff whitespace check | Passed |
+| Frozen synthetic v11 generation test | 1,050 records evaluated |
+| PII overall precision / recall / F1 | `0.991` / `0.906` / `0.947` |
+| Strict JSON + deterministic resolution validity | `0.963` |
+| Privacy/API targeted regression suite | 41 passed |
+| Real Qwen-to-FastAPI synthetic demo | Passed |
 
-The two offline evaluation misses are known RAG source-selection cases, not
-Main ReAct routing or execution failures.
+Automated tests are intentionally committed source code, not generated output.
+They document contracts and protect fail-closed behavior during refactoring.
+Generated caches, reports, logs, local databases, environments, model weights,
+adapters, and secrets are excluded through `.gitignore`.
 
 The evaluation suite retains component-level routing checks and now exercises
 the production Main ReAct trajectory for single Tool, concurrent Tool,
@@ -288,7 +378,10 @@ Known follow-up work:
 
 - improve RAG recall and source-selection quality for the remaining evaluation
   misses;
-- add stronger privacy-session handling for real multi-turn learning records;
+- replace the single-process in-memory mapping vault with encrypted durable
+  storage before any real-data or multi-instance deployment;
+- evaluate the safety adapter on independently authored, governance-approved
+  de-identified data before making production claims;
 - run a real PostgreSQL migration and API smoke test when Docker is available;
 - remove historical database compatibility columns only through a backed-up,
   reversible Alembic migration;

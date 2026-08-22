@@ -7,9 +7,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
+from app.api.errors import ConversationSessionBusyError
 from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.api.execution import execute_message
-from app.services import ConversationSessionBusyError
+from app.integrations.input_safety import InputSafetyRejected, prepare_user_input
+from app.integrations.privacy_gateway_client import PrivacyGatewayUnavailableError
 from app.schemas import (
     ApiErrorDetail,
     ApiErrorResponse,
@@ -29,13 +31,14 @@ def _error_response(
     message: str,
     details: dict,
     request_id: Optional[str] = None,
+    recoverable: bool = False,
 ) -> JSONResponse:
     error = ApiErrorResponse(
         request_id=request_id,
         error=ApiErrorDetail(
             code=code,
             message=message,
-            recoverable=False,
+            recoverable=recoverable,
             details=details,
         ),
     )
@@ -101,6 +104,50 @@ async def create_message(
         )
 
     try:
+        prepared = await prepare_user_input(
+            mode=getattr(runtime, "privacy_gateway_mode", "disabled"),
+            client=getattr(runtime, "privacy_gateway_client", None),
+            session_id=session_id,
+            text=payload.message,
+        )
+    except InputSafetyRejected as error:
+        inspection = error.inspection
+        response_status = (
+            status.HTTP_403_FORBIDDEN
+            if inspection.action.value == "block"
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+        return _error_response(
+            status_code=response_status,
+            code=(
+                "safety_blocked"
+                if inspection.action.value == "block"
+                else "safety_clarification_required"
+            ),
+            message=(
+                "The request was blocked by the local safety boundary."
+                if inspection.action.value == "block"
+                else "Please clarify or rephrase the request before continuing."
+            ),
+            details={
+                "action": inspection.action.value,
+                "reason_code": inspection.reason_code,
+                "signals": inspection.signals.model_dump(mode="json"),
+            },
+            request_id=request_id,
+            recoverable=inspection.action.value == "clarify",
+        )
+    except PrivacyGatewayUnavailableError:
+        return _error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="privacy_gateway_unavailable",
+            message="The local privacy gateway could not safely process the request.",
+            details={"mode": getattr(runtime, "privacy_gateway_mode", "disabled")},
+            request_id=request_id,
+            recoverable=True,
+        )
+
+    try:
         run = await runtime.store.create_conversation_run(
             request_id=request_id,
             session_id=session_id,
@@ -143,7 +190,8 @@ async def create_message(
         thread_id=conversation["thread_id"],
         teacher_id=conversation["teacher_id"],
         class_id=conversation["class_id"],
-        message=payload.message,
+        message=prepared.forwarded_text,
+        privacy_mapping_id=prepared.mapping_id,
     )
     return MessageAcceptedResponse(
         session_id=session_id,

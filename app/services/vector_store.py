@@ -13,7 +13,7 @@ from app.schemas import (
 )
 
 
-INDEX_VERSION = "eduflow-knowledge-v1"
+INDEX_VERSION = "easyteaching-knowledge-v1"
 INDEX_METHOD = "hnsw"
 DISTANCE_METRIC = "cosine"
 

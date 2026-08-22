@@ -4,7 +4,7 @@ from uuid import uuid4
 import httpx
 
 from app.integrations.privacy_gateway_client import PrivacyGatewayClient
-from services.local_safety_gateway.contracts import InspectRequest
+from safety_gateway.contracts import InspectRequest
 
 
 def test_client_serializes_request_and_validates_response() -> None:
@@ -47,3 +47,26 @@ def test_client_serializes_request_and_validates_response() -> None:
             assert result.signals.injection_risk.value == "suspicious"
 
     asyncio.run(run())
+
+
+def test_client_discards_an_opaque_mapping_id() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(204)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            base_url="http://gateway.test",
+            transport=httpx.MockTransport(handler),
+        ) as http_client:
+            client = PrivacyGatewayClient(
+                base_url="http://gateway.test",
+                timeout_seconds=1,
+                http_client=http_client,
+            )
+            await client.discard("synthetic-opaque-mapping-id")
+
+    asyncio.run(run())
+    assert seen == [("DELETE", "/v1/mappings/synthetic-opaque-mapping-id")]

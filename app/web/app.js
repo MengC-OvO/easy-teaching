@@ -7,7 +7,7 @@ const state = {
   authConfig: null,
   authClient: null,
   user: null,
-  conversations: JSON.parse(localStorage.getItem("eduflow-conversations") || "[]"),
+  conversations: JSON.parse(localStorage.getItem("easyteaching-conversations") || "[]"),
 };
 
 const ui = {
@@ -74,7 +74,7 @@ function showToast(message) {
 }
 
 function saveConversations() {
-  localStorage.setItem("eduflow-conversations", JSON.stringify(state.conversations.slice(0, 8)));
+  localStorage.setItem("easyteaching-conversations", JSON.stringify(state.conversations.slice(0, 8)));
   renderConversationList();
 }
 
@@ -250,7 +250,7 @@ async function logout() {
     // The local login screen still closes access if the remote session is unavailable.
   }
   state.conversations = [];
-  localStorage.removeItem("eduflow-conversations");
+  localStorage.removeItem("easyteaching-conversations");
   resetConversation();
   showLogin();
 }

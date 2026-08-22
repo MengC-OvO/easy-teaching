@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     scenarios = load_reliability_scenarios()
-    print(f"EduFlow reliability matrix: {len(scenarios)} scenarios")
+    print(f"EasyTeaching reliability matrix: {len(scenarios)} scenarios")
     for index, scenario in enumerate(scenarios, start=1):
         print(f"  {index:02d}. {scenario.id}: {scenario.expected}")
     if args.list:

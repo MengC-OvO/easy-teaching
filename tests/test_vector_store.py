@@ -175,7 +175,7 @@ def test_chroma_vector_store_exposes_index_metadata(tmp_path) -> None:
     assert metadata.distance_metric == "cosine"
     assert metadata.embedding_model_name == "test-embedding-model"
     assert metadata.embedding_dimension == 3
-    assert metadata.index_version == "eduflow-knowledge-v1"
+    assert metadata.index_version == "easyteaching-knowledge-v1"
 
 
 def test_chroma_vector_store_rejects_existing_collection_with_different_model(
@@ -228,7 +228,7 @@ def test_chroma_vector_store_rejects_existing_collection_with_wrong_distance_met
             "distance_metric": "l2",
             "embedding_model_name": settings.embedding_model_name,
             "embedding_dimension": settings.embedding_dimension,
-            "index_version": "eduflow-knowledge-v1",
+            "index_version": "easyteaching-knowledge-v1",
         },
     )
     chunk = make_chunk("Stable content.", "Policy")

@@ -1,5 +1,7 @@
 from typing import Literal
-from pydantic import Field
+from urllib.parse import urlparse
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,7 +82,7 @@ class Settings(BaseSettings):
         validation_alias="CHROMA_PATH",
     )
     chroma_collection_name: str = Field(
-        default="eduflow_knowledge",
+        default="easyteaching_knowledge",
         validation_alias="CHROMA_COLLECTION_NAME",
     )
     reranker_model_name: str = Field(
@@ -103,6 +105,24 @@ class Settings(BaseSettings):
         ge=60,
         validation_alias="AUTH_COOKIE_MAX_AGE_SECONDS",
     )
+
+    @model_validator(mode="after")
+    def validate_privacy_gateway_boundary(self) -> "Settings":
+        if self.privacy_gateway_mode == "shadow" and self.app_env.lower() not in {
+            "local",
+            "test",
+            "development",
+        }:
+            raise ValueError("shadow privacy mode is restricted to local synthetic diagnostics")
+        if self.privacy_gateway_mode != "disabled":
+            parsed = urlparse(self.privacy_gateway_url)
+            if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+                "127.0.0.1",
+                "localhost",
+                "::1",
+            }:
+                raise ValueError("privacy gateway must use a loopback HTTP(S) URL")
+        return self
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -1,11 +1,15 @@
 """Background execution for accepted EasyTeaching API messages."""
+from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
-from app.api.runtime import ApiRuntime
+from app.api.checkpoint_config import checkpoint_config
+from app.integrations.privacy_gateway_client import PrivacyGatewayUnavailableError
 from app.schemas import GraphState, RunStatus, StreamEventType, TraceEvent, WorkflowStatus
-from app.workflows import checkpoint_config
+from safety_gateway.contracts import RestoreRequest
+if TYPE_CHECKING:
+    from app.api.runtime import ApiRuntime
 
 
 async def execute_message(
@@ -17,6 +21,7 @@ async def execute_message(
     teacher_id: Optional[str] = None,
     class_id: Optional[str] = None,
     message: str,
+    privacy_mapping_id: Optional[str] = None,
 ) -> None:
     """Run one accepted message and persist its API-facing lifecycle status."""
     await runtime.store.update_conversation_run_status(request_id, RunStatus.RUNNING.value)
@@ -29,6 +34,7 @@ async def execute_message(
             teacher_id=teacher_id,
             class_id=class_id,
             user_message=message,
+            privacy_mapping_id=privacy_mapping_id,
         )
         # 只提交本次消息字段。未提交的 context 由同 thread checkpoint 保留；
         # initialize 节点会重置本轮临时 ReAct 字段。
@@ -37,6 +43,10 @@ async def execute_message(
             exclude_defaults=True,
             exclude_none=True,
         )
+        # An explicit null clears a previous turn's opaque handle in the same
+        # LangGraph thread. Without this assignment, checkpoint merge semantics
+        # could retain a stale mapping id on a later message with no PII.
+        incremental_state["privacy_mapping_id"] = privacy_mapping_id
         result = await runtime.graph.ainvoke(
             incremental_state,
             config=checkpoint_config(thread_id),
@@ -52,6 +62,7 @@ async def execute_message(
         session_id=session_id,
         state=state,
         final_status=final_status,
+        fallback_mapping_id=privacy_mapping_id,
     )
 
 
@@ -90,13 +101,30 @@ async def persist_run_outcome(
     session_id: str,
     state: Optional[GraphState],
     final_status: RunStatus,
+    fallback_mapping_id: Optional[str] = None,
 ) -> None:
     """Persist one terminal or paused state and publish replay-safe events."""
-    if state is not None:
-        await _save_public_result(runtime, state)
+    mapping_id = state.privacy_mapping_id if state is not None else fallback_mapping_id
+    public_result_saved = False
+    if state is not None and state.draft is not None:
+        try:
+            await _save_public_result(runtime, state)
+            public_result_saved = True
+        except PrivacyGatewayUnavailableError:
+            # A placeholder-bearing draft must never be exposed as a completed
+            # teacher result when deterministic restoration failed.
+            final_status = RunStatus.FAILED
+            await _discard_mapping_best_effort(runtime, mapping_id)
+    elif mapping_id is not None:
+        await _discard_mapping_best_effort(runtime, mapping_id)
     await runtime.store.update_conversation_run_status(request_id, final_status.value)
     if state is not None:
-        await _publish_state_events(runtime, state, final_status)
+        await _publish_state_events(
+            runtime,
+            state,
+            final_status,
+            public_result_saved=public_result_saved,
+        )
         return
     await _append_event_once(
         runtime,
@@ -110,16 +138,52 @@ async def persist_run_outcome(
 async def _save_public_result(runtime: ApiRuntime, state: GraphState) -> None:
     if state.draft is None:
         return
+    # Recovery may revisit a run after the result commit succeeded but before
+    # the run status commit did. Reuse that durable result instead of trying to
+    # consume the already-used mapping a second time.
+    if await runtime.store.get_conversation_run_result(state.request_id) is not None:
+        return
+    public_draft = state.draft
+    if state.privacy_mapping_id is not None:
+        client = runtime.privacy_gateway_client
+        if runtime.privacy_gateway_mode != "enforce" or client is None:
+            raise PrivacyGatewayUnavailableError(
+                "Privacy mapping cannot be restored outside enforce mode"
+            )
+        restored = await client.restore(
+            RestoreRequest(
+                mapping_id=state.privacy_mapping_id,
+                text=state.draft.content,
+            )
+        )
+        # The checkpoint remains redacted; only this API-facing snapshot gets
+        # the deterministically restored teacher-visible content.
+        public_draft = state.draft.model_copy(
+            update={"content": restored.restored_text}
+        )
     await runtime.store.save_conversation_run_result(
         request_id=state.request_id,
         session_id=state.session_id,
-        draft=state.draft.model_dump(mode="json"),
+        draft=public_draft.model_dump(mode="json"),
         approval=state.approval.model_dump(mode="json"),
         citations=[
             citation.model_dump(mode="json")
             for citation in state.citations[state.run_citation_start :]
         ],
     )
+
+
+async def _discard_mapping_best_effort(
+    runtime: ApiRuntime,
+    mapping_id: Optional[str],
+) -> None:
+    if mapping_id is None or runtime.privacy_gateway_client is None:
+        return
+    try:
+        await runtime.privacy_gateway_client.discard(mapping_id)
+    except PrivacyGatewayUnavailableError:
+        # The gateway TTL remains the final cleanup boundary when it is down.
+        return
 
 
 async def _state_from_checkpoint(
@@ -139,10 +203,12 @@ async def _publish_state_events(
     runtime: ApiRuntime,
     state: GraphState,
     final_status: RunStatus,
+    *,
+    public_result_saved: bool = True,
 ) -> None:
     await _publish_graph_trace(runtime, state)
 
-    if state.draft is not None:
+    if state.draft is not None and public_result_saved:
         await _append_event_once(
             runtime,
             request_id=state.request_id,

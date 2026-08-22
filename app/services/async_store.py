@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.api.errors import ConversationSessionBusyError
 from app.schemas.long_memory import (
     LongTermMemoryAction,
     LongTermMemoryOperation,
@@ -44,15 +45,7 @@ ACTIVE_CONVERSATION_RUN_STATUSES = (
 )
 
 
-class ConversationSessionBusyError(RuntimeError):
-    """Raised when another active run wins the session-level race."""
-
-    def __init__(self, active_request_id: str) -> None:
-        super().__init__("Conversation session already has an active run")
-        self.active_request_id = active_request_id
-
-
-class AsyncEduFlowStore:
+class AsyncEasyTeachingStore:
     """Async SQLAlchemy store; production schema ownership remains with Alembic."""
 
     def __init__(self, database_url: str) -> None:

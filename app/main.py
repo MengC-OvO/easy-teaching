@@ -1,13 +1,12 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 import inspect
-from typing import Awaitable, Callable, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import ApiRuntime, build_api_runtime
 from app.api.auth import router as auth_router
 from app.api.recovery import recover_incomplete_runs
 from app.api.routes import (
@@ -19,16 +18,23 @@ from app.api.routes import (
 from app.config import settings
 
 
-RuntimeFactory = Callable[[], Union[ApiRuntime, Awaitable[ApiRuntime]]]
+RuntimeFactory = Callable[[], Union[Any, Awaitable[Any]]]
 WEB_DIRECTORY = Path(__file__).resolve().parent / "web"
 
 
-def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
+async def _build_default_runtime():
+    from app.api.runtime import build_api_runtime
+
+    return await build_api_runtime()
+
+
+def create_app(runtime_factory: Optional[RuntimeFactory] = None) -> FastAPI:
     """Create a FastAPI app with one runtime for its full lifespan."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        runtime_or_awaitable = runtime_factory()
+        resolved_factory = runtime_factory or _build_default_runtime
+        runtime_or_awaitable = resolved_factory()
         runtime = (
             await runtime_or_awaitable
             if inspect.isawaitable(runtime_or_awaitable)

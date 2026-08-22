@@ -1,18 +1,29 @@
 .venv/
+.venv-safety/
+.safety-gateway.env
 __pycache__/
 *.pyc
 .env
 .DS_Store
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+htmlcov/
 dist/
 build/
 *.egg-info/
+*.log
+/artifacts/
+/reports/
 data/local/
 chroma/
 data/chroma/
 *.db
+.vscode/
+.idea/
 /docs/.ef_ref.docx
+/local_models/
 
 # Internal Codex/refactor working notes (not part of the public repository)
 /AGENTS.md

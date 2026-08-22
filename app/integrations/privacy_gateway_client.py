@@ -6,7 +6,12 @@ from typing import Optional
 import httpx
 from pydantic import ValidationError
 
-from services.local_safety_gateway.contracts import InspectRequest, InspectResponse
+from safety_gateway.contracts import (
+    InspectRequest,
+    InspectResponse,
+    RestoreRequest,
+    RestoreResponse,
+)
 
 
 class PrivacyGatewayError(RuntimeError):
@@ -44,7 +49,6 @@ class PrivacyGatewayClient:
             raise PrivacyGatewayUnavailableError(
                 "Local privacy gateway request failed"
             ) from error
-
         if response.status_code != 200:
             raise PrivacyGatewayUnavailableError(
                 f"Local privacy gateway returned HTTP {response.status_code}"
@@ -55,6 +59,40 @@ class PrivacyGatewayClient:
             raise PrivacyGatewayUnavailableError(
                 "Local privacy gateway returned an invalid contract"
             ) from error
+
+    async def restore(self, request: RestoreRequest) -> RestoreResponse:
+        try:
+            response = await self._client.post(
+                "/v1/restore",
+                content=request.model_dump_json(),
+                headers={"content-type": "application/json"},
+            )
+        except httpx.HTTPError as error:
+            raise PrivacyGatewayUnavailableError(
+                "Local privacy gateway restore request failed"
+            ) from error
+        if response.status_code != 200:
+            raise PrivacyGatewayUnavailableError(
+                f"Local privacy gateway returned HTTP {response.status_code}"
+            )
+        try:
+            return RestoreResponse.model_validate_json(response.content)
+        except ValidationError as error:
+            raise PrivacyGatewayUnavailableError(
+                "Local privacy gateway returned an invalid restore contract"
+            ) from error
+
+    async def discard(self, mapping_id: str) -> None:
+        try:
+            response = await self._client.delete(f"/v1/mappings/{mapping_id}")
+        except httpx.HTTPError as error:
+            raise PrivacyGatewayUnavailableError(
+                "Local privacy gateway discard request failed"
+            ) from error
+        if response.status_code != 204:
+            raise PrivacyGatewayUnavailableError(
+                f"Local privacy gateway returned HTTP {response.status_code}"
+            )
 
     async def aclose(self) -> None:
         if self._owns_client:

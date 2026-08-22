@@ -2,8 +2,8 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
-from services.local_safety_gateway.api import create_app
-from services.local_safety_gateway.contracts import (
+from safety_gateway.api import create_app
+from safety_gateway.contracts import (
     GatewayAction,
     InspectRequest,
     InspectResponse,
@@ -28,6 +28,9 @@ class ReadySyntheticPipeline:
             redacted_text=request.text,
             entity_counts={},
         )
+
+    async def discard(self, mapping_id: str) -> None:
+        self.discarded = mapping_id
 
 
 def test_default_gateway_is_alive_but_not_ready() -> None:
@@ -72,3 +75,12 @@ def test_injected_pipeline_proves_the_versioned_http_contract() -> None:
     assert UUID(payload["request_id"]) == request_id
     assert payload["contract_version"] == "1.0"
     assert payload["action"] == "allow"
+
+
+def test_discard_endpoint_delegates_without_returning_mapping_data() -> None:
+    pipeline = ReadySyntheticPipeline()
+    client = TestClient(create_app(pipeline))
+    response = client.delete("/v1/mappings/synthetic-opaque-mapping-id")
+    assert response.status_code == 204
+    assert response.content == b""
+    assert pipeline.discarded == "synthetic-opaque-mapping-id"
