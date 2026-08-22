@@ -1,9 +1,13 @@
 """Reconcile and resume durable conversation runs when the API starts."""
+from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from app.api.checkpoint_config import checkpoint_config
 from app.api.execution import execute_checkpoint_resume, persist_run_outcome
-from app.api.runtime import ApiRuntime
 from app.schemas import GraphState, RunStatus, WorkflowStatus
-from app.workflows import checkpoint_config
+if TYPE_CHECKING:
+    from app.api.runtime import ApiRuntime
 
 
 _INCOMPLETE_STATUSES = [

@@ -1,16 +1,19 @@
 """Replay ordered conversation events over Server-Sent Events."""
+from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.dependencies import get_runtime
 from app.api.auth import CurrentUser, get_current_user, require_session_owner
-from app.api.runtime import ApiRuntime
 from app.schemas import ApiErrorDetail, ApiErrorResponse, RunStatus, StreamEvent
+
+if TYPE_CHECKING:
+    from app.api.runtime import ApiRuntime
 
 
 router = APIRouter(prefix="/sessions", tags=["events"])

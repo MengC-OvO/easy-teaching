@@ -1,1 +1,0 @@
-"""Independently runnable EasyTeaching services."""

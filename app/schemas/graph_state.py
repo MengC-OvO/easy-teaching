@@ -165,6 +165,8 @@ class GraphState(BaseModel):
     thread_id: Optional[str] = None
     teacher_id: Optional[str] = None
     class_id: Optional[str] = None
+    # Opaque gateway handle only; plaintext mappings never enter checkpoints.
+    privacy_mapping_id: Optional[str] = None
     context: ThreadContext = Field(default_factory=ThreadContext)
     intent: Intent = Intent.UNKNOWN
     needs_clarification: bool = False

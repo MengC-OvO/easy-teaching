@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 CONTRACT_VERSION = "1.0"
@@ -54,6 +54,29 @@ class EntityLabel(str, Enum):
     DOB = "DOB"
 
 
+class DetectedEntity(StrictModel):
+    """The model may report only an exact value and its semantic label."""
+
+    value: str = Field(min_length=1, max_length=500, strict=True)
+    label: EntityLabel
+
+
+class ModelAnnotation(StrictModel):
+    """Strict JSON emitted by the local Qwen adapter."""
+
+    injection_risk: InjectionRisk
+    education_scope: EducationScope
+    professional_risk: ProfessionalRisk
+    entities: list[DetectedEntity] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def reject_duplicates(self) -> "ModelAnnotation":
+        pairs = [(entity.value, entity.label) for entity in self.entities]
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("entities must not repeat value/label pairs")
+        return self
+
+
 class InspectRequest(StrictModel):
     contract_version: Literal["1.0"] = CONTRACT_VERSION
     request_id: UUID
@@ -79,6 +102,17 @@ class InspectResponse(StrictModel):
     entity_counts: dict[EntityLabel, int] = Field(default_factory=dict)
 
 
+class RestoreRequest(StrictModel):
+    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    mapping_id: str = Field(min_length=20, max_length=160, strict=True)
+    text: str = Field(min_length=1, max_length=30_000, strict=True)
+
+
+class RestoreResponse(StrictModel):
+    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    restored_text: str = Field(min_length=1, max_length=50_000, strict=True)
+
+
 class GatewayHealth(StrictModel):
     status: Literal["ok"] = "ok"
     service: Literal["easyteaching-local-safety-gateway"] = "easyteaching-local-safety-gateway"
@@ -93,6 +127,6 @@ class GatewayReadiness(StrictModel):
 
 class GatewayError(StrictModel):
     contract_version: Literal["1.0"] = CONTRACT_VERSION
-    request_id: UUID
+    request_id: UUID | None = None
     error_code: str = Field(min_length=1, max_length=80, strict=True)
     message: str = Field(min_length=1, max_length=200, strict=True)

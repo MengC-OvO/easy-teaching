@@ -1,3 +1,5 @@
+import pytest
+
 from app.config import Settings
 
 
@@ -20,7 +22,7 @@ def test_model_settings_have_safe_defaults() -> None:
     assert settings.embedding_dimension == 768
     assert settings.embedding_timeout_seconds == 20.0
     assert settings.chroma_path == "data/chroma"
-    assert settings.chroma_collection_name == "eduflow_knowledge"
+    assert settings.chroma_collection_name == "easyteaching_knowledge"
     assert settings.database_url == ""
     assert settings.checkpoint_database_url == ""
     assert settings.auth_enabled is False
@@ -55,3 +57,21 @@ def test_env_example_does_not_contain_real_model_api_key() -> None:
     assert "MODEL_API_KEY=replace-with-your-local-key" in env_example
     assert "EMBEDDING_API_KEY=replace-with-your-local-key" in env_example
     assert "AQ." not in env_example
+
+
+def test_shadow_mode_is_rejected_outside_local_diagnostics() -> None:
+    with pytest.raises(ValueError, match="shadow privacy mode"):
+        Settings(
+            _env_file=None,
+            APP_ENV="production",
+            PRIVACY_GATEWAY_MODE="shadow",
+        )
+
+
+def test_enabled_gateway_must_stay_on_loopback() -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        Settings(
+            _env_file=None,
+            PRIVACY_GATEWAY_MODE="enforce",
+            PRIVACY_GATEWAY_URL="https://remote.example.test",
+        )

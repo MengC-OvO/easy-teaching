@@ -31,12 +31,12 @@ from app.schemas import (
 from app.services import (
     ChatCompletionsModelProvider,
     ContextManager,
-    AsyncEduFlowStore,
+    AsyncEasyTeachingStore,
     LLMLongTermMemoryExtractor,
     ModelProviderError,
 )
 from app.services.request_guard import (
-    EduFlowRequestGuard,
+    EasyTeachingRequestGuard,
     RequestGuardAction,
     RequestGuardResult,
 )
@@ -511,7 +511,7 @@ def build_main_react_graph(
         long_term_memory_reader=resolved_store
     )
     resolved_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
-    resolved_request_guard = request_guard or EduFlowRequestGuard()
+    resolved_request_guard = request_guard or EasyTeachingRequestGuard()
 
     allowed_tools = {
         tool.name
@@ -589,7 +589,7 @@ def build_main_react_graph(
     return graph.compile(checkpointer=checkpointer)
 
 
-def _default_store() -> AsyncEduFlowStore:
+def _default_store() -> AsyncEasyTeachingStore:
     from app.config import settings
 
-    return AsyncEduFlowStore(settings.database_url)
+    return AsyncEasyTeachingStore(settings.database_url)

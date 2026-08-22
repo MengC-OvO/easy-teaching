@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import settings
 
 
-AUTH_COOKIE_NAME = "eduflow_access_token"
+AUTH_COOKIE_NAME = "easyteaching_access_token"
 
 
 @dataclass(frozen=True)

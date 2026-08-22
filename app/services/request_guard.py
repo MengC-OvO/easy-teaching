@@ -61,7 +61,7 @@ _HIGH_RISK_PATTERN = re.compile(
 )
 
 
-class EduFlowRequestGuard:
+class EasyTeachingRequestGuard:
     """Allow education work, clarify ambiguity, and block clear unsafe requests."""
 
     def evaluate(

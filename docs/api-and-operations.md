@@ -71,7 +71,7 @@ loaded from the durable draft endpoint.
 
 The API, business records, and LangGraph checkpoints use the self-hosted
 PostgreSQL container. Its port is bound only to `127.0.0.1`, and its durable
-data lives in the Docker named volume `eduflow_postgres_data`. Chroma remains
+data lives in the Docker named volume `easyteaching_postgres_data`. Chroma remains
 under `data/chroma/`. Production has no SQLite fallback. Do not commit local
 state or use real child or family information in development.
 

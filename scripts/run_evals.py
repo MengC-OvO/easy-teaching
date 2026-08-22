@@ -77,7 +77,7 @@ def main() -> int:
     else:
         summary = report.summary
         print(
-            f"EduFlow eval ({report.mode.value}): "
+            f"EasyTeaching eval ({report.mode.value}): "
             f"{summary.passed}/{summary.total} passed "
             f"({summary.pass_rate:.1%}), average score {summary.average_score:.3f}"
         )
