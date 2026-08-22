@@ -1,1 +1,1 @@
-"""EduFlow AU application package."""
+"""EasyTeaching application package."""

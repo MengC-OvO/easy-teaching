@@ -1,4 +1,4 @@
-"""Run fixed evaluation cases against real EduFlow components."""
+"""Run fixed evaluation cases against real EasyTeaching components."""
 
 import json
 import asyncio

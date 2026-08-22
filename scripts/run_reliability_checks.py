@@ -16,7 +16,7 @@ from evals import load_reliability_scenarios  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Verify EduFlow retry, fallback, stopping, and safe tracing."
+        description="Verify EasyTeaching retry, fallback, stopping, and safe tracing."
     )
     parser.add_argument(
         "--list",

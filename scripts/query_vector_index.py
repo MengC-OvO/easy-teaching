@@ -122,7 +122,7 @@ def preview(content: str, *, max_chars: int = 700) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Query the EduFlow Chroma vector index.")
+    parser = argparse.ArgumentParser(description="Query the EasyTeaching Chroma vector index.")
     parser.add_argument(
         "question",
         nargs="?",

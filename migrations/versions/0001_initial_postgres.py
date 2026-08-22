@@ -1,4 +1,4 @@
-"""Create EduFlow operational and business tables.
+"""Create EasyTeaching operational and business tables.
 
 Revision ID: 0001_initial_postgres
 Revises:

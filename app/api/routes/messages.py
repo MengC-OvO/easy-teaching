@@ -1,4 +1,4 @@
-"""Accept teacher messages for execution on an EduFlow session thread."""
+"""Accept teacher messages for execution on an EasyTeaching session thread."""
 
 from typing import Optional, Union
 from uuid import uuid4

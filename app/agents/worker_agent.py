@@ -20,7 +20,7 @@ from app.tools import ToolExecutionContext, ToolRegistry
 
 
 WORKER_SYSTEM_PROMPT = """
-You are a bounded research Worker inside EduFlow AU. Work only on the assigned
+You are a bounded research Worker inside EasyTeaching. Work only on the assigned
 task and use only the tools listed in the prompt. Choose exactly one action per
 turn: call one tool, or return a concise final_answer based on observations.
 

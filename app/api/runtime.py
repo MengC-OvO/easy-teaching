@@ -1,4 +1,4 @@
-"""Application-scoped resources used by future EduFlow API endpoints."""
+"""Application-scoped resources used by future EasyTeaching API endpoints."""
 
 from dataclasses import dataclass, field
 from typing import Any, Optional

@@ -1,6 +1,6 @@
-# EduFlow AU Agent
+# EasyTeaching
 
-EduFlow AU Agent is a safety-aware teacher workflow assistant for Australian
+EasyTeaching is a safety-aware teacher workflow assistant for Australian
 early childhood education. It combines FastAPI, LangGraph, controlled tools,
 local memory, and retrieval-augmented generation (RAG) to turn educator
 requests into reviewable drafts and evidence-backed answers.
@@ -75,6 +75,7 @@ app/
   web/          local browser interface (HTML, CSS and JavaScript)
   workflows/    production Main ReAct graph and async PostgreSQL checkpointing
 
+services/       independently runnable local services, including the safety gateway
 data/
   knowledge/    tracked source manifest and processed public knowledge
   evals/        deterministic evaluation and reliability manifests
@@ -90,6 +91,10 @@ This structure keeps delivery code under `app/`, offline quality measurement
 under `evals/`, local operator commands under `scripts/`, and explanatory
 material under `docs/`. The core modules were not moved merely for appearance;
 their current imports already express useful boundaries.
+
+The Local Privacy & Safety Gateway contract and service skeleton live under
+`services/local_safety_gateway/`. See [Local Safety Gateway](docs/local-safety-gateway.md)
+for the process boundary, fail-closed behavior, and staged rollout plan.
 
 ## Quick start
 
@@ -129,7 +134,7 @@ SSE workflow events and fetches the resulting draft. The production graph is
 draft-only and exposes no approval, formal-write, or external-send route.
 
 PostgreSQL is bound only to `127.0.0.1` in local development. SQLAlchemy owns
-EduFlow operational and business tables; LangGraph's official `PostgresSaver`
+EasyTeaching operational and business tables; LangGraph's official `PostgresSaver`
 owns its checkpoint tables in the same database. Chroma remains the separate
 RAG vector store.
 
@@ -195,7 +200,7 @@ stored first, then delivered from a sequence cursor.
 
 ## Safety boundaries
 
-EduFlow is a teacher assistant. It **must not**:
+EasyTeaching is a teacher assistant. It **must not**:
 
 - Diagnose children
 - Provide medical advice

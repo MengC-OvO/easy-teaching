@@ -150,7 +150,7 @@ def print_model_error(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the EduFlow Chroma vector index.")
+    parser = argparse.ArgumentParser(description="Build the EasyTeaching Chroma vector index.")
     parser.add_argument(
         "--chunks",
         type=Path,

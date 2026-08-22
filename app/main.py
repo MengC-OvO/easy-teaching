@@ -42,7 +42,7 @@ def create_app(runtime_factory: RuntimeFactory = build_api_runtime) -> FastAPI:
             await runtime.close()
 
     application = FastAPI(
-        title="EduFlow AU Agent",
+        title="EasyTeaching",
         description=(
             "Teacher workflow agent backend for synthetic Australian early "
             "childhood education scenarios."

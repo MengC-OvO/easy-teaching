@@ -1,4 +1,4 @@
-"""EduFlow 生产用统一 Main ReAct LangGraph。"""
+"""EasyTeaching 生产用统一 Main ReAct LangGraph。"""
 
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Union
 
@@ -415,7 +415,7 @@ def finalize_draft(state: GraphStateInput) -> Dict[str, Any]:
     return {
         "workflow_status": WorkflowStatus.COMPLETED,
         "draft": Draft(
-            title="EduFlow draft",
+            title="EasyTeaching draft",
             content=current.decision.final_answer,
             is_draft=True,
         ),
@@ -473,7 +473,7 @@ def _model_unavailable_fallback(
     evidence = ", ".join(completed) if completed else "no completed capability results"
     code = str(metadata.get("code") or "provider_error")
     return (
-        "EduFlow could not generate the requested draft because the model provider "
+        "EasyTeaching could not generate the requested draft because the model provider "
         f"became unavailable ({code}). Completed results were preserved from: "
         f"{evidence}. Please retry after the provider recovers; restating the request "
         "is not required."

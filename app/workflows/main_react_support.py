@@ -89,7 +89,7 @@ def initialize(state: GraphStateInput) -> Dict[str, Any]:
         "trace": [
             TraceEvent(
                 step="initialize",
-                message="Initialized EduFlow graph state.",
+                message="Initialized EasyTeaching graph state.",
                 metadata={"thread_id": thread_id},
             )
         ],

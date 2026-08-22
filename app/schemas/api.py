@@ -1,4 +1,4 @@
-"""Validated HTTP and SSE contracts for the EduFlow public API.
+"""Validated HTTP and SSE contracts for the EasyTeaching public API.
 
 These models deliberately contain no FastAPI or LangGraph execution logic.
 They define the boundary between an API caller and the existing workflow

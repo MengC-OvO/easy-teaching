@@ -11,7 +11,7 @@ from app.services import KnowledgeIngestionService
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Ingest EduFlow AU knowledge sources into processed JSONL chunks."
+        description="Ingest EasyTeaching knowledge sources into processed JSONL chunks."
     )
     parser.add_argument(
         "--manifest",
