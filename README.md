@@ -154,12 +154,20 @@ EasyTeaching operational and business tables; LangGraph's official `PostgresSave
 owns its checkpoint tables in the same database. Chroma remains the separate
 RAG vector store.
 
-## Local privacy gateway (Windows + NVIDIA)
+## Local privacy gateway (Windows NVIDIA + Apple Silicon Mac)
 
 The gateway is a second local process in the same repository. It deliberately
-uses its own `.venv-safety` because CUDA PyTorch, Transformers, PEFT, and
-bitsandbytes are much heavier than the FastAPI application dependencies. Model
+uses its own `.venv-safety` because PyTorch, Transformers, PEFT, and the model
+runtime are much heavier than the FastAPI application dependencies. Model
 weights, adapters, secrets, and local gateway configuration are ignored by Git.
+
+`SAFETY_MODEL_BACKEND=auto` selects NVIDIA CUDA first and Apple MPS second. The
+Windows/NVIDIA path uses bitsandbytes 4-bit quantization. The Apple Silicon path
+loads the same Qwen base model and the same LoRA adapter in FP16 through PyTorch
+MPS, so it does not require a second training run. The gateway fails closed if
+neither supported accelerator is available.
+
+### Windows with NVIDIA
 
 Create or refresh the gateway environment using model assets that already exist
 on the machine (the command does not copy or upload them):
@@ -190,6 +198,29 @@ Run the synthetic-only one-command demonstration:
 ```powershell
 .\scripts\demo_privacy_flow.ps1
 ```
+
+### Apple Silicon Mac
+
+Python 3.10+ and Apple Silicon are required. A 16 GB Mac is recommended; FP16
+inference usually needs roughly 4–6 GB of unified memory including runtime
+overhead. Keep the base-model and adapter files local, then run:
+
+```bash
+bash ./scripts/setup_safety_gateway.sh \
+  /path/to/Qwen2.5-1.5B-Instruct \
+  /path/to/qlora-formal-v11/best-adapter
+bash ./scripts/start_safety_gateway.sh
+```
+
+In a separate terminal, run the synthetic-only full-flow demonstration:
+
+```bash
+bash ./scripts/demo_privacy_flow.sh
+```
+
+Training can remain on the Windows NVIDIA machine; only inference moves to MPS.
+Backend selection is covered by automated tests, but the MPS path still needs a
+one-time smoke test on the target Mac because Windows cannot execute Metal code.
 
 The demo starts or reuses the real local Qwen gateway and prints the original
 synthetic sentence, Qwen/rule decision, redacted GraphState input, placeholder

@@ -1,0 +1,7 @@
+# Apple Silicon inference uses PyTorch MPS + FP16; bitsandbytes is intentionally absent.
+torch==2.11.0
+numpy==2.2.6
+transformers==5.15.0
+accelerate==1.14.0
+peft==0.20.0
+safetensors==0.8.0

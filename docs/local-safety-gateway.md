@@ -71,8 +71,14 @@ the next resilience step so a gateway restart cannot lose an in-flight mapping.
 
 Model weights and adapters belong under the ignored `local_models/` directory or
 at paths supplied by `SAFETY_MODEL_DIR` and `SAFETY_ADAPTER_DIR`. They are never
-committed. Install `requirements-model.txt` only on the CUDA host that runs the
-gateway.
+committed. `SAFETY_MODEL_BACKEND=auto` selects CUDA first and Apple MPS second;
+it never silently falls back to CPU. Use `requirements-model-cuda.txt` on an
+NVIDIA machine and `requirements-model-mac.txt` on an Apple Silicon Mac.
+
+The CUDA backend uses bitsandbytes NF4 4-bit weights with BF16/FP16 computation.
+The MPS backend uses FP16 because bitsandbytes CUDA kernels do not run on Apple
+GPU hardware. Both use the same frozen Qwen base model, PEFT LoRA adapter, strict
+JSON parsing, HTTP contract, and deterministic redaction pipeline.
 
 ## Windows setup and verification
 
@@ -96,3 +102,25 @@ when port 8010 is not already serving a ready instance:
 ```powershell
 .\scripts\demo_privacy_flow.ps1
 ```
+
+## Apple Silicon Mac setup and verification
+
+Use Python 3.10 or newer. A 16 GB Mac is recommended for Qwen2.5-1.5B FP16
+inference. This creates an independent environment without copying or uploading
+model assets:
+
+```bash
+bash ./scripts/setup_safety_gateway.sh \
+  /path/to/Qwen2.5-1.5B-Instruct \
+  /path/to/qlora-formal-v11/best-adapter
+```
+
+Start the gateway or run the complete synthetic demonstration:
+
+```bash
+bash ./scripts/start_safety_gateway.sh
+bash ./scripts/demo_privacy_flow.sh
+```
+
+The MPS path needs a one-time real-device smoke test after checkout. Windows can
+verify selection and shared contracts, but cannot execute Apple's Metal kernels.
