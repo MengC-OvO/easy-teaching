@@ -3,8 +3,6 @@ from typing import Dict, List, Optional
 
 from app.schemas import (
     CitationMetadata,
-    KnowledgeChunk,
-    KnowledgeDocument,
     KnowledgeSourceType,
     RetrievedKnowledgeChunk,
     RerankerMode,
@@ -12,7 +10,7 @@ from app.schemas import (
     RetrievalMode,
     RetrievalRequest,
 )
-from app.services import BM25KnowledgeIndex, KnowledgeRetriever
+from app.services import CrossEncoderReranker, KnowledgeRetriever
 
 
 class FakeEmbeddingProvider:
@@ -80,6 +78,21 @@ class FakeCrossEncoderReranker:
         return reranked
 
 
+class FakeCrossEncoderModel:
+    def predict(self, _pairs):
+        return [0.1, 0.5, 0.9]
+
+
+class FakeLexicalIndex:
+    def __init__(self, chunks: List[RetrievedKnowledgeChunk]) -> None:
+        self.chunks = chunks
+        self.calls = []
+
+    def search(self, query: str, *, top_k: int, filters: RetrievalFilters):
+        self.calls.append({"query": query, "top_k": top_k, "filters": filters})
+        return self.chunks[:top_k]
+
+
 def make_retrieved_chunk(
     chunk_id: str,
     distance: float,
@@ -98,24 +111,6 @@ def make_retrieved_chunk(
         ),
         content_hash=content_hash,
         distance=distance,
-    )
-
-
-def make_knowledge_chunk(
-    content: str,
-    *,
-    source_id: str = "eylf-v2",
-    version: str = "2.0-2022",
-) -> KnowledgeChunk:
-    return KnowledgeChunk.from_document(
-        document=KnowledgeDocument(
-            source_id=source_id,
-            source_type=KnowledgeSourceType.OFFICIAL,
-            title="EYLF V2.0",
-            version=version,
-        ),
-        content=content,
-        page=21,
     )
 
 
@@ -239,12 +234,10 @@ def test_knowledge_retriever_deduplicates_chunks_before_returning_top_k() -> Non
 def test_bm25_mode_searches_lexical_index_without_dense_embedding() -> None:
     embedding_provider = FakeEmbeddingProvider()
     vector_store = FakeVectorStore([])
-    lexical_index = BM25KnowledgeIndex(
-        [
-            make_knowledge_chunk("Play-based learning supports children learning through play."),
-            make_knowledge_chunk("Family communication drafts should be reviewed."),
-        ]
-    )
+    lexical_chunk = make_retrieved_chunk("bm25-play", 0.1, content_hash="p" * 64)
+    lexical_chunk.bm25_score = 4.2
+    lexical_chunk.metadata["bm25_score"] = "4.200000"
+    lexical_index = FakeLexicalIndex([lexical_chunk])
     retriever = KnowledgeRetriever(
         embedding_provider=embedding_provider,
         vector_store=vector_store,
@@ -273,11 +266,10 @@ def test_hybrid_mode_combines_dense_and_bm25_results() -> None:
     embedding_provider = FakeEmbeddingProvider()
     dense_chunk = make_retrieved_chunk("dense-chunk", 0.1, content_hash="d" * 64)
     vector_store = FakeVectorStore([dense_chunk])
-    lexical_index = BM25KnowledgeIndex(
-        [
-            make_knowledge_chunk("Outdoor sensory mud play supports investigation."),
-        ]
-    )
+    lexical_chunk = make_retrieved_chunk("bm25-chunk", 0.2, content_hash="b" * 64)
+    lexical_chunk.bm25_score = 3.5
+    lexical_chunk.metadata["bm25_score"] = "3.500000"
+    lexical_index = FakeLexicalIndex([lexical_chunk])
     retriever = KnowledgeRetriever(
         embedding_provider=embedding_provider,
         vector_store=vector_store,
@@ -300,32 +292,6 @@ def test_hybrid_mode_combines_dense_and_bm25_results() -> None:
     assert result.stats.bm25_result_count == 1
     assert result.stats.returned_count == 2
     assert all("hybrid_score" in chunk.metadata for chunk in result.chunks)
-
-
-def test_reranker_reorders_candidates_by_lexical_overlap() -> None:
-    embedding_provider = FakeEmbeddingProvider()
-    weak = make_retrieved_chunk("weak", 0.1, content_hash="w" * 64)
-    weak.content = "General early childhood guidance."
-    strong = make_retrieved_chunk("strong", 0.4, content_hash="s" * 64)
-    strong.content = "Outdoor sensory play supports investigation and learning."
-    vector_store = FakeVectorStore([weak, strong])
-    retriever = KnowledgeRetriever(
-        embedding_provider=embedding_provider,
-        vector_store=vector_store,
-        candidate_multiplier=1,
-    )
-
-    result = retriever.retrieve(
-        RetrievalRequest(
-            query="outdoor sensory play",
-            top_k=2,
-            use_reranker=True,
-        )
-    )
-
-    assert [chunk.chunk_id for chunk in result.chunks] == ["strong", "weak"]
-    assert result.stats.reranked is True
-    assert result.stats.reranker is RerankerMode.LEXICAL
 
 
 def test_cross_encoder_reranker_is_used_when_requested() -> None:
@@ -356,3 +322,25 @@ def test_cross_encoder_reranker_is_used_when_requested() -> None:
     assert result.chunks[0].metadata["cross_encoder_model"] == "fake-cross-encoder"
     assert result.stats.reranked is True
     assert result.stats.reranker is RerankerMode.CROSS_ENCODER
+
+
+def test_real_cross_encoder_reranker_blends_coarse_and_semantic_ranks() -> None:
+    reranker = CrossEncoderReranker.__new__(CrossEncoderReranker)
+    reranker.model_name = "fake-model"
+    reranker.model = FakeCrossEncoderModel()
+    chunks = [
+        make_retrieved_chunk("coarse-1", 0.1, content_hash="1" * 64),
+        make_retrieved_chunk("coarse-2", 0.2, content_hash="2" * 64),
+        make_retrieved_chunk("coarse-3", 0.3, content_hash="3" * 64),
+    ]
+
+    result = reranker.rerank("play-based learning", chunks)
+
+    assert [chunk.chunk_id for chunk in result] == [
+        "coarse-1",
+        "coarse-2",
+        "coarse-3",
+    ]
+    assert result[0].metadata["pre_reranker_rank"] == "1"
+    assert result[0].metadata["cross_encoder_rank"] == "3"
+    assert result[0].reranker_score == 0.1

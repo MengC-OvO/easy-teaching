@@ -6,7 +6,7 @@ from typing import Annotated, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.schemas import Intent, PolicyRAGStatus
+from app.schemas import Intent
 
 
 EvalIdentifier = Annotated[
@@ -55,6 +55,11 @@ class SafetyOutcome(str, Enum):
     BLOCK = "block"
 
 
+class RagStatus(str, Enum):
+    ANSWERED = "answered"
+    NEEDS_CLARIFICATION = "needs_clarification"
+
+
 class EvalInput(EvalContract):
     """Synthetic request scope supplied to the system under evaluation."""
 
@@ -90,7 +95,7 @@ class ToolExpectation(EvalContract):
 
 
 class RagExpectation(EvalContract):
-    status: Optional[PolicyRAGStatus] = None
+    status: Optional[RagStatus] = None
     required_sources: List[EvalIdentifier] = Field(default_factory=list)
     min_citations: int = Field(default=0, ge=0)
 
@@ -203,7 +208,7 @@ class ToolActual(EvalContract):
 
 
 class RagActual(EvalContract):
-    status: PolicyRAGStatus
+    status: RagStatus
     sources: List[EvalIdentifier] = Field(default_factory=list)
     citation_count: int = Field(default=0, ge=0)
 

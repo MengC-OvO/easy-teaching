@@ -30,7 +30,7 @@ def query_vector_index(
     mode: RetrievalMode,
     reranker: RerankerMode,
 ) -> int:
-    vector_store = ChromaVectorStore()
+    vector_store = ChromaVectorStore() if mode is not RetrievalMode.BM25 else None
     retriever = KnowledgeRetriever(vector_store=vector_store)
     filters = build_retrieval_filters(
         source_type=source_type,
@@ -47,17 +47,20 @@ def query_vector_index(
         )
     )
 
-    metadata = vector_store.index_metadata()
     print("=== Query ===")
     print(question)
     print()
-    print("=== Vector Index ===")
-    print(f"collection_name={metadata.collection_name}")
-    print(f"collection_count={vector_store.count()}")
-    print(f"index_method={metadata.index_method}")
-    print(f"distance_metric={metadata.distance_metric}")
-    print(f"embedding_model_name={metadata.embedding_model_name}")
-    print(f"embedding_dimension={metadata.embedding_dimension}")
+    if vector_store is not None:
+        metadata = vector_store.index_metadata()
+        print("=== Vector Index ===")
+        print(f"collection_name={metadata.collection_name}")
+        print(f"collection_count={vector_store.count()}")
+        print(f"index_method={metadata.index_method}")
+        print(f"distance_metric={metadata.distance_metric}")
+        print(f"embedding_model_name={metadata.embedding_model_name}")
+        print(f"embedding_dimension={metadata.embedding_dimension}")
+    else:
+        print("=== Lexical Index ===")
     print(f"retrieval_mode={result.stats.mode.value}")
     print(f"reranker={result.stats.reranker.value}")
     print(f"stats={result.stats.model_dump(mode='json')}")
@@ -160,11 +163,6 @@ def parse_args() -> argparse.Namespace:
         help="Retrieval strategy to use.",
     )
     parser.add_argument(
-        "--use-reranker",
-        action="store_true",
-        help="Legacy alias for --reranker lexical.",
-    )
-    parser.add_argument(
         "--reranker",
         choices=[mode.value for mode in RerankerMode],
         default=RerankerMode.NONE.value,
@@ -183,19 +181,11 @@ def main() -> int:
             source_ids=args.source_id,
             versions=args.version,
             mode=RetrievalMode(args.mode),
-            reranker=resolve_reranker_mode(args.reranker, args.use_reranker),
+            reranker=RerankerMode(args.reranker),
         )
     except ModelProviderError as error:
         print("VECTOR_QUERY_FAILED")
         print(error.to_dict())
         return 1
-
-
-def resolve_reranker_mode(value: str, legacy_use_reranker: bool) -> RerankerMode:
-    if legacy_use_reranker and value == RerankerMode.NONE.value:
-        return RerankerMode.LEXICAL
-    return RerankerMode(value)
-
-
 if __name__ == "__main__":
     raise SystemExit(main())

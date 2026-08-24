@@ -85,6 +85,10 @@ class Settings(BaseSettings):
         default="easyteaching_knowledge",
         validation_alias="CHROMA_COLLECTION_NAME",
     )
+    lexical_index_path: str = Field(
+        default="data/knowledge/index/knowledge_fts.sqlite3",
+        validation_alias="LEXICAL_INDEX_PATH",
+    )
     reranker_model_name: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
         validation_alias="RERANKER_MODEL_NAME",
