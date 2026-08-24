@@ -255,6 +255,16 @@ python scripts/ingest_knowledge.py \
   --output data/knowledge/processed/chunks.jsonl
 ```
 
+PDFs are parsed with PyMuPDF4LLM's layout-aware path and OCR is disabled for
+the current text-based sources. Chunking follows headings and paragraphs with
+an approximate 350-token target, 500-token maximum and 40-token overlap.
+
+Build the persistent SQLite FTS5/BM25 index (no model API is used):
+
+```bash
+python scripts/build_lexical_index.py
+```
+
 Build the local Chroma index:
 
 ```bash
@@ -269,9 +279,22 @@ python scripts/query_vector_index.py \
   --mode hybrid --top-k 5
 ```
 
-The current retrieval stack supports dense, BM25, and hybrid search with an
-optional cross-encoder reranker. Gemini creates 768-dimensional embeddings;
-Chroma stores and searches them using cosine distance.
+The retrieval stack uses Chroma dense search plus a persistent SQLite FTS5
+BM25 index, then combines their ranks with weighted reciprocal-rank fusion.
+The fast baseline does not rerank. The enhanced path applies a local
+Cross-encoder to the fused shortlist, then blends its rank with the trusted
+Hybrid rank (2:1) so semantic reranking cannot easily discard strong exact
+matches. Gemini creates 768-dimensional embeddings and Chroma searches them
+with cosine distance. Building or querying the dense index consumes embedding
+API quota; ingestion and BM25 indexing do not.
+
+The Agent exposes two generic local-knowledge tools:
+
+- `search_knowledge` performs one focused hybrid retrieval and is the default.
+- `research_knowledge` uses the chat model to rewrite a broad question into
+  several search queries, retrieves them in parallel, and applies a second RRF
+  pass across the query results followed by local Cross-encoder reranking. It
+  has higher latency and model cost.
 
 ## API flow
 

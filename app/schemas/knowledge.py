@@ -10,6 +10,26 @@ class KnowledgeSourceType(str, Enum):
     SYNTHETIC = "synthetic"
 
 
+class KnowledgeScope(str, Enum):
+    ALL = "all"
+    EYLF = "eylf"
+    NQS = "nqs"
+    CENTRE_POLICY = "centre_policy"
+
+
+KNOWLEDGE_SCOPE_SOURCE_IDS = {
+    KnowledgeScope.ALL: (),
+    KnowledgeScope.EYLF: ("eylf-v2",),
+    KnowledgeScope.NQS: ("nqs-guide-qa1",),
+    KnowledgeScope.CENTRE_POLICY: ("synthetic-centre-policies",),
+}
+
+
+def source_ids_for_scope(scope: KnowledgeScope) -> List[str]:
+    """Resolve a teacher-facing knowledge scope to indexed source IDs."""
+    return list(KNOWLEDGE_SCOPE_SOURCE_IDS[scope])
+
+
 class RetrievalMode(str, Enum):
     DENSE = "dense"
     BM25 = "bm25"
@@ -18,15 +38,7 @@ class RetrievalMode(str, Enum):
 
 class RerankerMode(str, Enum):
     NONE = "none"
-    LEXICAL = "lexical"
     CROSS_ENCODER = "cross_encoder"
-
-
-class PolicyRAGStatus(str, Enum):
-    ANSWERED = "answered"
-    NEEDS_CLARIFICATION = "needs_clarification"
-    REFUSED = "refused"
-    EVIDENCE_CONFLICT = "evidence_conflict"
 
 
 class KnowledgeDocument(BaseModel):
@@ -101,6 +113,15 @@ class KnowledgeChunk(BaseModel):
             uri=self.document.uri,
         )
 
+    @property
+    def retrieval_text(self) -> str:
+        """Text indexed for retrieval; the original content remains citation-ready."""
+        context = [self.document.title]
+        if self.section:
+            context.append(self.section)
+        context.append(self.content)
+        return "\n".join(context)
+
     @model_validator(mode="after")
     def validate_citable_location(self) -> "KnowledgeChunk":
         if self.section is None and self.page is None:
@@ -135,6 +156,15 @@ class RetrievedKnowledgeChunk(BaseModel):
     citation: CitationMetadata
     content_hash: str = Field(min_length=64, max_length=64)
     distance: float = Field(ge=0)
+    dense_distance: Optional[float] = Field(default=None, ge=0)
+    dense_rank: Optional[int] = Field(default=None, ge=1)
+    bm25_score: Optional[float] = Field(default=None, ge=0)
+    bm25_rank: Optional[int] = Field(default=None, ge=1)
+    fusion_score: Optional[float] = Field(default=None, ge=0)
+    fusion_rank: Optional[int] = Field(default=None, ge=1)
+    reranker_score: Optional[float] = None
+    reranker_rank: Optional[int] = Field(default=None, ge=1)
+    final_rank: Optional[int] = Field(default=None, ge=1)
     metadata: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -150,15 +180,13 @@ class RetrievalRequest(BaseModel):
     filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
     mode: RetrievalMode = RetrievalMode.DENSE
     reranker: RerankerMode = RerankerMode.NONE
-    use_reranker: bool = False
-    dense_weight: float = Field(default=0.65, ge=0.0)
-    bm25_weight: float = Field(default=0.35, ge=0.0)
+    dense_weight: float = Field(default=0.60, ge=0.0)
+    bm25_weight: float = Field(default=0.40, ge=0.0)
 
     @model_validator(mode="after")
-    def sync_legacy_reranker_flag(self) -> "RetrievalRequest":
-        if self.use_reranker and self.reranker is RerankerMode.NONE:
-            self.reranker = RerankerMode.LEXICAL
-        self.use_reranker = self.reranker is not RerankerMode.NONE
+    def validate_hybrid_weights(self) -> "RetrievalRequest":
+        if self.mode is RetrievalMode.HYBRID and self.dense_weight + self.bm25_weight <= 0:
+            raise ValueError("hybrid retrieval requires at least one positive weight")
         return self
 
 
@@ -182,57 +210,6 @@ class RetrievalResult(BaseModel):
     @property
     def citations(self) -> List[CitationMetadata]:
         return [chunk.citation for chunk in self.chunks]
-
-
-class PolicyEvidence(BaseModel):
-    evidence_id: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-    citation: CitationMetadata
-    relevance_distance: float = Field(ge=0)
-    metadata: Dict[str, str] = Field(default_factory=dict)
-
-    @classmethod
-    def from_retrieved_chunk(
-        cls,
-        chunk: RetrievedKnowledgeChunk,
-        *,
-        index: int,
-    ) -> "PolicyEvidence":
-        return cls(
-            evidence_id=f"E{index}",
-            content=chunk.content,
-            citation=chunk.citation,
-            relevance_distance=chunk.distance,
-            metadata=chunk.metadata,
-        )
-
-
-class PolicyRAGResult(BaseModel):
-    status: PolicyRAGStatus
-    question: str = Field(min_length=1)
-    answer: Optional[str] = None
-    evidence: List[PolicyEvidence] = Field(default_factory=list)
-    citations: List[CitationMetadata] = Field(default_factory=list)
-    clarification_question: Optional[str] = None
-    refusal_reason: Optional[str] = None
-    generation_fallback: bool = False
-    generation_error_code: Optional[str] = None
-    retrieval: RetrievalResult
-
-    @model_validator(mode="after")
-    def validate_status_payload(self) -> "PolicyRAGResult":
-        if self.status is PolicyRAGStatus.ANSWERED and not self.answer:
-            raise ValueError("answered policy result must include an answer")
-        if self.status is PolicyRAGStatus.NEEDS_CLARIFICATION and not self.clarification_question:
-            raise ValueError("clarification policy result must include a question")
-        if self.status in {PolicyRAGStatus.REFUSED, PolicyRAGStatus.EVIDENCE_CONFLICT}:
-            if not self.refusal_reason:
-                raise ValueError("refused or conflicting policy result must include a reason")
-        if self.generation_error_code and not self.generation_fallback:
-            raise ValueError(
-                "generation_error_code requires generation_fallback=true"
-            )
-        return self
 
 
 def stable_hash(value: str) -> str:

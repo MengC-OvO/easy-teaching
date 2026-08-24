@@ -19,9 +19,10 @@ def test_runner_can_filter_to_one_category() -> None:
     assert set(report.summary.categories) == {EvalCategory.SAFETY}
 
 
-def test_fixture_suite_keeps_failures_visible_instead_of_hiding_them() -> None:
+def test_rag_fixture_suite_runs_against_persistent_lexical_index() -> None:
     case_ids = {case.id for case in load_eval_cases()}
     report = run_eval_suite(categories=[EvalCategory.RAG])
 
     assert {result.case_id for result in report.results} <= case_ids
-    assert report.summary.failed >= 1
+    assert report.summary.total == 5
+    assert report.summary.failed == 0

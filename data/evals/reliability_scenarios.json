@@ -30,18 +30,6 @@
     "test_node": "tests/test_main_react_graph.py::test_main_react_model_error_returns_provider_limitation_draft"
   },
   {
-    "id": "rag-generation-evidence-fallback",
-    "fault": "Policy evidence is available but answer generation times out.",
-    "expected": "Policy RAG returns a local evidence-only answer with citations and a fallback marker.",
-    "test_node": "tests/test_policy_rag.py::test_policy_rag_falls_back_to_local_evidence_when_model_fails"
-  },
-  {
-    "id": "rag-empty-retrieval-clarification",
-    "fault": "Policy retrieval returns no evidence.",
-    "expected": "Policy RAG asks a clarification question and does not call the answer model.",
-    "test_node": "tests/test_policy_rag.py::test_policy_rag_clarifies_when_retrieval_is_empty"
-  },
-  {
     "id": "invalid-dependency-feedback",
     "fault": "Main requests a Tool before its declared dependency is available.",
     "expected": "Code rejects the batch, records a recoverable Observation, and Main can finish safely.",

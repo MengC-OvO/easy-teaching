@@ -36,7 +36,7 @@ Chroma PersistentClient、BM25 和可选 Cross-Encoder 只提供同步本地接�
 
 **Observed behavior:** the Planning model loaded `activity_planning` and then
 returned a final answer before calling the Skill's required
-`get_class_profile` and `align_to_eylf_outcomes` tools. The code-level guard
+`get_class_profile` and `search_knowledge` tools. The code-level guard
 correctly rejected the unsupported answer, but it ended the whole request with
 `skill_requirements_missing`.
 

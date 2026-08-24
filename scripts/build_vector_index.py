@@ -62,7 +62,7 @@ def build_vector_index(
     for batch_number, chunk_batch in enumerate(batched(chunks, batch_size), start=1):
         response = embed_with_retries(
             embedding_provider,
-            [chunk.content for chunk in chunk_batch],
+            [chunk.retrieval_text for chunk in chunk_batch],
             max_retries=max_retries,
             retry_delay_seconds=retry_delay_seconds,
         )
@@ -74,6 +74,10 @@ def build_vector_index(
         )
         if batch_delay_seconds > 0:
             time.sleep(batch_delay_seconds)
+
+    if limit is None:
+        removed = vector_store.prune_to_chunk_ids({chunk.chunk_id for chunk in ingestion.read_chunks_jsonl(chunks_path)})
+        print(f"pruned_stale_chunks={removed}")
 
     metadata = vector_store.index_metadata()
     print("=== Vector Index ===")

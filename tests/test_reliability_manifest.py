@@ -9,15 +9,13 @@ def test_reliability_manifest_covers_day4_failure_boundaries() -> None:
     scenarios = load_reliability_scenarios()
     ids = {scenario.id for scenario in scenarios}
 
-    assert len(scenarios) == 14
+    assert len(scenarios) == 12
     assert {
         "async-provider-retry",
         "nonrecoverable-no-retry",
         "async-tool-timeout",
         "worker-permission-error",
         "main-react-model-fallback",
-        "rag-generation-evidence-fallback",
-        "rag-empty-retrieval-clarification",
         "invalid-dependency-feedback",
         "main-react-step-budget-stop",
         "safe-error-metadata",

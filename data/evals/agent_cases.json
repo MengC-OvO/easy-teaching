@@ -81,7 +81,7 @@
     "category": "tool",
     "input": {"message": "Find risk guidance before planning a climbing activity."},
     "expected": {
-      "required_tool_names": ["load_skill", "retrieve_risk_guidance"],
+      "required_tool_names": ["load_skill", "research_knowledge"],
       "forbidden_tool_names": ["save_draft"],
       "required_args": {"load_skill": {"skill_name": "activity_planning"}},
       "ordered": true
@@ -93,7 +93,7 @@
     "category": "tool",
     "input": {"message": "Align this sensory activity to relevant EYLF outcomes."},
     "expected": {
-      "required_tool_names": ["load_skill", "align_to_eylf_outcomes"],
+      "required_tool_names": ["load_skill", "search_knowledge"],
       "forbidden_tool_names": ["save_draft"],
       "required_args": {"load_skill": {"skill_name": "activity_planning"}},
       "ordered": true
@@ -252,7 +252,7 @@
     "input": {"message": "Run the parallel tools trajectory."},
     "expected": {
       "required_steps": ["initialize", "main_react", "validate_decision", "merge_observations", "finalize_draft", "context_update", "long_memory_update"],
-      "forbidden_steps": ["intent_router", "policy_rag", "approval_gate"],
+      "forbidden_steps": ["intent_router", "planning_react", "approval_gate"],
       "ordered_steps": ["initialize", "main_react", "validate_decision", "merge_observations", "finalize_draft", "context_update", "long_memory_update"]
     },
     "tags": ["deterministic", "parallel-tools"]

@@ -39,7 +39,9 @@ def _checkpoint_json_default(value: Any) -> Any:
         return value.value
     if isinstance(value, (date, datetime, time)):
         return value.isoformat()
-    if isinstance(value, (Path, UUID)):
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, UUID):
         return str(value)
     raise TypeError(
         f"Object of type {value.__class__.__name__} is not JSON serializable"

@@ -7,7 +7,7 @@ langgraph-checkpoint-postgres==2.0.23
 SQLAlchemy[asyncio]==2.0.45
 psycopg[binary,pool]==3.2.10
 alembic==1.16.5
-pypdf==6.4.1
+pymupdf4llm==1.28.2
 chromadb==1.5.9
 sentence-transformers==5.1.2
 httpx==0.28.1

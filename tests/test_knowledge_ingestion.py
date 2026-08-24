@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.schemas import KnowledgeSourceType
-from app.services import KnowledgeIngestionService, KnowledgeSourceSpec
+from app.services import KnowledgeIngestionService, KnowledgeSourceSpec, ParsedTextBlock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -156,6 +156,30 @@ def test_ingestion_service_ignores_blank_lines_when_reading_jsonl(tmp_path) -> N
     assert loaded == result.chunks
 
 
+def test_ingestion_service_deduplicates_chunk_ids_when_reading_jsonl(tmp_path) -> None:
+    markdown = tmp_path / "policy.md"
+    markdown.write_text("# Policy\n\nStable content.", encoding="utf-8")
+    source = KnowledgeSourceSpec(
+        source_id="synthetic-test",
+        source_type=KnowledgeSourceType.SYNTHETIC,
+        title="Synthetic Policy",
+        version="2026.07",
+        path=str(markdown),
+        format="markdown",
+    )
+    service = KnowledgeIngestionService(project_root=PROJECT_ROOT)
+    chunk = service.ingest_source(source).chunks[0]
+    output = tmp_path / "chunks.jsonl"
+    output.write_text(
+        f"{chunk.model_dump_json()}\n{chunk.model_dump_json()}\n",
+        encoding="utf-8",
+    )
+
+    loaded = service.read_chunks_jsonl(output)
+
+    assert loaded == [chunk]
+
+
 def test_ingestion_service_rejects_unknown_source_format(tmp_path) -> None:
     file_path = tmp_path / "policy.txt"
     file_path.write_text("Plain text.", encoding="utf-8")
@@ -175,3 +199,30 @@ def test_ingestion_service_rejects_unknown_source_format(tmp_path) -> None:
         assert "Unsupported knowledge source format" in str(error)
     else:
         raise AssertionError("Unknown source format should fail")
+
+
+def test_ingestion_service_chunks_by_approximate_tokens_and_adds_context() -> None:
+    service = KnowledgeIngestionService(
+        project_root=PROJECT_ROOT,
+        target_tokens=20,
+        max_tokens=30,
+        min_tokens=5,
+        overlap_tokens=3,
+    )
+    source = KnowledgeSourceSpec(
+        source_id="synthetic-test",
+        source_type=KnowledgeSourceType.SYNTHETIC,
+        title="Synthetic Policy",
+        version="1",
+        path="unused.md",
+        format="markdown",
+    )
+    words = " ".join(f"word{index}" for index in range(65))
+    chunks = service._blocks_to_chunks(
+        source.to_document(),
+        [ParsedTextBlock(content=words, section="Outdoor Play")],
+    )
+
+    assert len(chunks) >= 3
+    assert all(int(chunk.metadata["approx_tokens"]) <= 30 for chunk in chunks)
+    assert chunks[0].retrieval_text.startswith("Synthetic Policy\nOutdoor Play\n")

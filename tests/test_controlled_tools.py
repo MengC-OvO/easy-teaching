@@ -11,9 +11,7 @@ from app.schemas import (
 from app.services import ModelResponse
 from evals.in_memory_store import InMemoryEvalStore
 from app.tools import (
-    AlignToEylfOutcomesOutput,
-    EylfOutcomeAlignment,
-    RetrieveRiskGuidanceOutput,
+    QueryRewriteOutput,
     ToolErrorCode,
     ToolExecutionContext,
     build_default_tool_registry,
@@ -64,7 +62,7 @@ class StubPolicyRetriever:
         )
 
 
-class StubEylfAlignmentProvider:
+class StubQueryRewriter:
     def __init__(self) -> None:
         self.messages = []
         self.response_model = None
@@ -72,52 +70,30 @@ class StubEylfAlignmentProvider:
     def generate_structured(self, *, messages, response_model, temperature=0.0):
         self.messages = messages
         self.response_model = response_model
-        structured = AlignToEylfOutcomesOutput(
-            alignments=[
-                EylfOutcomeAlignment(
-                    outcome="Outcome 4",
-                    reason="The retrieved evidence supports play, inquiry, and active learning.",
-                    confidence=0.88,
-                    evidence_ids=["E1"],
-                )
-            ],
-            evidence=[],
-            mode=RetrievalMode.HYBRID,
-            reranker=RerankerMode.LEXICAL,
+        structured = QueryRewriteOutput(
+            queries=[
+                "EYLF play based learning outcomes",
+                "intentional teaching collaborative inquiry",
+            ]
         )
         return ModelResponse(
             content=structured.model_dump_json(),
-            model="stub-eylf-alignment",
+            model="stub-query-rewriter",
             structured=structured,
         )
 
 
-class StubRiskGuidanceProvider:
+class StubCrossEncoderReranker:
     def __init__(self) -> None:
-        self.messages = []
-        self.response_model = None
+        self.calls = []
 
-    def generate_structured(self, *, messages, response_model, temperature=0.0):
-        self.messages = messages
-        self.response_model = response_model
-        structured = RetrieveRiskGuidanceOutput(
-            guidance_summary="Outdoor play needs active supervision and risk controls.",
-            risk_level="medium",
-            required_controls=[
-                "Set clear boundaries.",
-                "Maintain active supervision.",
-            ],
-            evidence_ids=["E1"],
-            evidence=[],
-            mode=RetrievalMode.HYBRID,
-            reranker=RerankerMode.LEXICAL,
-            returned_count=1,
-        )
-        return ModelResponse(
-            content=structured.model_dump_json(),
-            model="stub-risk-guidance",
-            structured=structured,
-        )
+    def rerank(self, query, chunks):
+        self.calls.append({"query": query, "candidate_count": len(chunks)})
+        for rank, chunk in enumerate(reversed(chunks), start=1):
+            chunk.reranker_score = 1.0 / rank
+            chunk.reranker_rank = rank
+            chunk.metadata = {**chunk.metadata, "cross_encoder_model": "stub"}
+        return list(reversed(chunks))
 
 
 def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
@@ -125,9 +101,9 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
 
     assert [tool.name for tool in registry.list_tools()] == [
         "get_class_profile",
-        "retrieve_risk_guidance",
+        "search_knowledge",
+        "research_knowledge",
         "check_activity_safety",
-        "align_to_eylf_outcomes",
         "recall_long_term_memory",
         "search_public_resources",
         "get_public_weather",
@@ -160,42 +136,35 @@ def test_get_class_profile_rejects_another_session_class(tmp_path) -> None:
     assert result.error.code is ToolErrorCode.PERMISSION_DENIED
 
 
-def test_retrieve_risk_guidance_tool_returns_citable_chunks(tmp_path) -> None:
+def test_search_knowledge_tool_returns_citable_chunks_without_query_rewrite(tmp_path) -> None:
     retriever = StubPolicyRetriever()
-    provider = StubRiskGuidanceProvider()
     registry = build_default_tool_registry(
         make_store(tmp_path),
         knowledge_retriever=retriever,
-        risk_guidance_model_provider=provider,
     )
 
     result = registry.execute(
-        "retrieve_risk_guidance",
-        {"query": "play based learning", "top_k": 4, "source_type": "official"},
+        "search_knowledge",
+        {
+            "query": "play based learning",
+            "top_k": 4,
+            "knowledge_scope": "eylf",
+            "source_type": "official",
+        },
     )
 
     assert result.success is True
-    assert result.data["guidance_summary"] == (
-        "Outdoor play needs active supervision and risk controls."
-    )
-    assert result.data["risk_level"] == "medium"
-    assert result.data["required_controls"] == [
-        "Set clear boundaries.",
-        "Maintain active supervision.",
-    ]
-    assert result.data["evidence_ids"] == ["E1"]
+    assert result.data["strategy"] == "simple"
+    assert result.data["knowledge_scope"] == "eylf"
+    assert result.data["search_queries"] == ["play based learning"]
     assert result.data["returned_count"] == 1
     assert result.data["evidence"][0]["evidence_id"] == "E1"
     assert result.data["evidence"][0]["citation"]["source_id"] == "eylf-v2"
-    assert "play based learning" in retriever.requests[0].query
-    assert "NQS" in retriever.requests[0].query
-    assert "safety" in retriever.requests[0].query
+    assert retriever.requests[0].query == "play based learning"
     assert retriever.requests[0].top_k == 4
     assert retriever.requests[0].mode is RetrievalMode.HYBRID
+    assert retriever.requests[0].filters.source_ids == ["eylf-v2"]
     assert retriever.requests[0].filters.source_types == [KnowledgeSourceType.OFFICIAL]
-    assert provider.response_model is RetrieveRiskGuidanceOutput
-    assert "Activity/risk query:" in provider.messages[1].content
-    assert "[E1]" in provider.messages[1].content
 
 
 def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
@@ -221,35 +190,54 @@ def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
     }
 
 
-def test_align_to_eylf_outcomes_tool_uses_retrieved_evidence(tmp_path) -> None:
+def test_research_knowledge_tool_rewrites_and_fuses_queries(tmp_path) -> None:
     retriever = StubPolicyRetriever()
-    provider = StubEylfAlignmentProvider()
+    rewriter = StubQueryRewriter()
+    reranker = StubCrossEncoderReranker()
     registry = build_default_tool_registry(
         make_store(tmp_path),
         knowledge_retriever=retriever,
-        eylf_alignment_model_provider=provider,
+        query_rewriter=rewriter,
+        knowledge_reranker=reranker,
     )
 
     result = registry.execute(
-        "align_to_eylf_outcomes",
+        "research_knowledge",
         {
-            "activity_text": (
+            "query": (
                 "Children explore outdoor natural materials through play, "
                 "describe textures, and solve problems together."
             ),
             "top_k": 3,
+            "knowledge_scope": "nqs",
         },
     )
 
     assert result.success is True
+    assert result.data["strategy"] == "enhanced"
+    assert result.data["reranker"] == "cross_encoder"
+    assert result.data["knowledge_scope"] == "nqs"
     assert result.data["evidence"][0]["evidence_id"] == "E1"
-    assert [item["outcome"] for item in result.data["alignments"]] == ["Outcome 4"]
-    assert result.data["alignments"][0]["evidence_ids"] == ["E1"]
-    assert "EYLF curriculum framework" in retriever.requests[0].query
-    assert retriever.requests[0].mode is RetrievalMode.HYBRID
-    assert provider.response_model is AlignToEylfOutcomesOutput
-    assert "Activity draft:" in provider.messages[1].content
-    assert "[E1]" in provider.messages[1].content
+    assert len(result.data["search_queries"]) == 3
+    assert len(retriever.requests) == 3
+    assert all(request.mode is RetrievalMode.HYBRID for request in retriever.requests)
+    assert all(
+        request.filters.source_ids == ["nqs-guide-qa1"]
+        for request in retriever.requests
+    )
+    assert rewriter.response_model is QueryRewriteOutput
+    assert "Question:" in rewriter.messages[1].content
+    assert "multi_query_score" in result.data["evidence"][0]["metadata"]
+    assert result.data["evidence"][0]["reranker_score"] == 1.0
+    assert reranker.calls == [
+        {
+            "query": (
+                "Children explore outdoor natural materials through play, "
+                "describe textures, and solve problems together."
+            ),
+            "candidate_count": 1,
+        }
+    ]
 
 
 def test_get_class_profile_tool_reports_missing_profile(tmp_path) -> None:

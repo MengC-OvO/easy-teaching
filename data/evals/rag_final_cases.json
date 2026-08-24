@@ -1,0 +1,322 @@
+[
+  {
+    "case_id": "final-eylf-01-vision",
+    "split": "test",
+    "query": "What vision does the EYLF set for children's learning and participation in communities?",
+    "scope": "eylf",
+    "tags": ["eylf", "vision", "semantic"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "bfb560a064996a6a6ccd7f847459033b4004f17b5f69b44d476e4d67445115d6", "page": 6, "section_contains": "A VISION FOR CHILDREN", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-02-pedagogy",
+    "split": "test",
+    "query": "How does the EYLF define early childhood pedagogy?",
+    "scope": "eylf",
+    "tags": ["eylf", "pedagogy", "definition"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "410346c2df6b776001dc0f09fad955555569b211995bfb80588a546f1b8dd5bf", "page": 12, "section_contains": "EARLY CHILDHOOD PEDAGOGY", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-03-principles",
+    "split": "test",
+    "query": "What role do the eight EYLF principles play in educators' practice?",
+    "scope": "eylf",
+    "tags": ["eylf", "principles"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "7ebe4b9bf19f95accd7d9862cf74deca2ea0cd260018b529caac9b1f808068b4", "page": 14, "section_contains": "PRINCIPLES", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-04-partnerships",
+    "split": "test",
+    "query": "Why are respectful partnerships with families important for achieving learning outcomes?",
+    "scope": "eylf",
+    "tags": ["eylf", "partnerships", "family"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "2c055c6d5a54eff68f2b129ca995853e58d00818b17d5aa2d5c7bfc448fba75e", "page": 14, "section_contains": "Partnerships", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-05-diversity",
+    "split": "test",
+    "query": "How should educators recognise and respect children's diverse cultures and ways of knowing?",
+    "scope": "eylf",
+    "tags": ["eylf", "diversity", "semantic"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "62635e2230ac467cbb29d7ce4b2f857429ac0f8abed59aa298375b0aa5ec9086", "page": 16, "section_contains": "Respect for diversity", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-06-equity-inclusion",
+    "split": "test",
+    "query": "What does an educator committed to equity, inclusion and high expectations do?",
+    "scope": "eylf",
+    "tags": ["eylf", "equity", "inclusion"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "b0bc69b90c1451ee0a195a8b85fc9a5b69d82ee321220292519cc2e70b32201b", "page": 17, "section_contains": "Equity, inclusion", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-07-sustainability",
+    "split": "test",
+    "query": "How does the EYLF describe environmental, social and economic sustainability?",
+    "scope": "eylf",
+    "tags": ["eylf", "sustainability", "semantic"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "2339d21bc9f93f7f851aeb3ff5d71b6fb1a80f8fa19992e51b776e3e370d0261", "page": 17, "section_contains": "Sustainability", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-08-critical-reflection",
+    "split": "test",
+    "query": "What critical questions can educators ask about who is included, excluded or advantaged by their practice?",
+    "scope": "eylf",
+    "tags": ["eylf", "critical-reflection", "paraphrase"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "28344645ed9327703b28248e3fa001358fa0590a610c815039f337cf73641721", "page": 18, "section_contains": "Critical reflection", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-09-play-intentionality",
+    "split": "test",
+    "query": "How do children and educators take intentional roles in play-based learning?",
+    "scope": "eylf",
+    "tags": ["eylf", "play", "intentionality"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "89deee426705b011cc8dd1823e4bdc59b5cb0c37af57879caf9c17cba46fd27e", "page": 21, "section_contains": "Play-based learning", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-10-cultural-responsiveness",
+    "split": "test",
+    "query": "What does culturally responsive practice require educators to respect and act on?",
+    "scope": "eylf",
+    "tags": ["eylf", "culture", "practice"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "3b0e37750d8c20832f33c657a7c00fcb1996036fe6064012fc317980533a1170", "page": 23, "section_contains": "Cultural responsiveness", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-11-transitions",
+    "split": "test",
+    "query": "How can educators use children's funds of knowledge to support continuity and transitions?",
+    "scope": "eylf",
+    "tags": ["eylf", "transitions", "semantic"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "28c56fd6b689e829316c629b766db050e69517e2c084ca5609e182bf90c41876", "page": 24, "section_contains": "Continuity of learning", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-12-assessment-evaluation",
+    "split": "test",
+    "query": "How are assessment and evaluation connected to the ongoing learning cycle?",
+    "scope": "eylf",
+    "tags": ["eylf", "assessment", "cycle"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "6d2a5895b5b2ae2b53a9415f9bf1f727a7f533119eda295126dbf78542eb7a64", "page": 25, "section_contains": "Assessment and evaluation", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-13-observation-sources",
+    "split": "test",
+    "query": "What sources of information can educators use when observing and documenting learning?",
+    "scope": "eylf",
+    "tags": ["eylf", "planning-cycle", "observation"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "03a80bf4c4755c346025b0475be142c252f163a643478a5e1fe0bab1a76327e6", "page": 28, "section_contains": "OBSERVE", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-14-outcome-one",
+    "split": "test",
+    "query": "Which capabilities are included in EYLF Outcome 1 about identity?",
+    "scope": "eylf",
+    "tags": ["eylf", "outcome-1"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "fabc6913619f3e28678fdc4f0aaf5a1dd6590dc5aabc841702b6a9db9631df0b", "page": 31, "section_contains": "OUTCOME 1", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-15-outcome-two",
+    "split": "test",
+    "query": "What does EYLF Outcome 2 include about community, fairness, diversity and the environment?",
+    "scope": "eylf",
+    "tags": ["eylf", "outcome-2"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "dad498df7b468acaf21ac49af29a2fec16f7061f1881661b8bb1c3b731f96479", "page": 39, "section_contains": "OUTCOME 2", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-16-outcome-three",
+    "split": "test",
+    "query": "What areas of wellbeing and personal safety are covered by EYLF Outcome 3?",
+    "scope": "eylf",
+    "tags": ["eylf", "outcome-3"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "d92d4aa0dfc774fa8b2ef1dce134270eb4e2519bdde03bba2e3c4844a26d7ef1", "page": 45, "section_contains": "OUTCOME 3", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-17-outcome-four",
+    "split": "test",
+    "query": "Which learning dispositions and thinking skills are described in EYLF Outcome 4?",
+    "scope": "eylf",
+    "tags": ["eylf", "outcome-4"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "4a3428c21f9f5737fbcb506cbddb2aba34f9c9afd17c87adf6ffdeab82c60852", "page": 51, "section_contains": "OUTCOME 4", "relevance": 3}]
+  },
+  {
+    "case_id": "final-eylf-18-outcome-five",
+    "split": "test",
+    "query": "How does EYLF Outcome 5 describe the different ways children communicate?",
+    "scope": "eylf",
+    "tags": ["eylf", "outcome-5"],
+    "relevant_evidence": [{"source_id": "eylf-v2", "chunk_id": "28a2229b5d2cddf91200795cfac945d50790bfeb941f2fc7e59613b857d054a8", "page": 57, "section_contains": "Outcome 5", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-01-cultural-responsiveness",
+    "split": "test",
+    "query": "How does the NQS guide define cultural responsiveness and action against discrimination?",
+    "scope": "nqs",
+    "tags": ["nqs", "culture", "definition"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "c52b0ed88723e743c2aba27b82915f50e405ea1ba8d7b2a1ef2af4f3e4ca8b98", "page": 120, "section_contains": "Cultural responsiveness", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-02-standard-program",
+    "split": "test",
+    "query": "What is the central requirement of NQS Standard 1.1 for the educational program?",
+    "scope": "nqs",
+    "tags": ["nqs", "standard-1.1"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "91bf418f4435794705b2f8e6eaed5192823fe4125a43607232ff4be1ef8c29fe", "page": 123, "section_contains": "educational program enhances", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-03-approved-framework",
+    "split": "test",
+    "query": "What does Element 1.1.1 require curriculum decision-making to contribute to?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.1.1"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "e888aa364f9db6a1f5beeab2210ab0b10ba92a040cbc2e24e3c1dba157047d94", "page": 126, "section_contains": "ELEMENT 1.1.1", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-04-curriculum-decisions",
+    "split": "test",
+    "query": "How should observations and family contributions inform curriculum decisions?",
+    "scope": "nqs",
+    "tags": ["nqs", "curriculum", "family"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "ebf1d0dacc04c59462eaf46fd6fdaec0b3c8a23c2415a7c21f935c67a2a49b6a", "page": 127, "section_contains": "Curriculum decision-making", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-05-child-centred",
+    "split": "test",
+    "query": "Which aspects of each child should form the foundation of a child-centred program?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.1.2", "semantic"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "525a87bad1ad4eb3ac46e8de7b894551ee06d66169cc7ea327eca8132e3f29dd", "page": 131, "section_contains": "Child-centred", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-06-program-opportunities",
+    "split": "test",
+    "query": "How can planned and unplanned routines, events and interactions provide learning opportunities?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.1.3", "paraphrase"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "8aa59b4ef2417278865c229fffb308bd5f9873c58558e928771c9b0dc029b6a7", "page": 133, "section_contains": "Element 1.1.3", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-07-intentionality",
+    "split": "test",
+    "query": "What does educator intentionality mean under Element 1.2.1?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.2.1", "definition"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "dfb60caee7837351af0a02a010539b99a9426950e1d0cc37837067cc242bb10b", "page": 140, "section_contains": "Element 1.2.1", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-08-responsive-scaffolding",
+    "split": "test",
+    "query": "How can responsive teaching and scaffolding extend children's ideas and play?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.2.2", "practice"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "0177b146b3b937645bd3d9dcfc07c6eb33b6e1b3f3b73dccb5e83d364887a970", "page": 143, "section_contains": "Element 1.2.2", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-09-child-agency",
+    "split": "test",
+    "query": "Why does child-directed learning support agency, choice and decision-making?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.2.3", "agency"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "8b75b945827f1784e20965fb7a79781864d15f8615f592951fc9e1a8253400e3", "page": 146, "section_contains": "Element 1.2.3", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-10-assessment-cycle",
+    "split": "test",
+    "query": "Which stages make up the ongoing assessment and planning cycle in Element 1.3.1?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.3.1", "cycle"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "e62403366c1c67c2a08d03e8d0f15db7c4c17c192013f65a8d934faf65fb9d1e", "page": 153, "section_contains": "Assessment and planning cycle", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-11-reflection-cycle",
+    "split": "test",
+    "query": "Why should reflection occur at every step of program planning?",
+    "scope": "nqs",
+    "tags": ["nqs", "reflection", "semantic"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "44ad4d677683787e19c9a4fb5a56859241ad7fcb4eb5b5f4403def0c8b49461f", "page": 154, "section_contains": "Observation, analysis, reflection", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-12-documentation",
+    "split": "test",
+    "query": "How does documentation make children's learning visible to educators and families?",
+    "scope": "nqs",
+    "tags": ["nqs", "documentation", "family"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "1b84a87d2c21b9492b666cc41f7dc3d735f222dbb942fe61a7f218fcfbbb3cb5", "page": 155, "section_contains": "Documentation", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-13-reflective-practice",
+    "split": "test",
+    "query": "How does reflective practice drive program planning and implementation?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.3.2", "reflection"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "9addb96c2f60130c9b4d47ad49411da84c212ab5aaf5ccee0e5512d231662fd3", "page": 159, "section_contains": "Element 1.3.2", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-14-family-progress",
+    "split": "test",
+    "query": "What does Element 1.3.3 require about informing families of the program and their child's progress?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-1.3.3", "family"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "eb7c4d7f282c1a2d251a7ed06ec74020eb098889ebb3a5f40c80225666c64244", "page": 162, "section_contains": "Families are informed", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-15-continuous-improvement",
+    "split": "test",
+    "query": "What process must be in place to support continuous improvement under Element 7.2.1?",
+    "scope": "nqs",
+    "tags": ["nqs", "element-7.2.1", "quality-improvement"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "6cac56260255d3475154854fb37cfe0fe87010090ed957c13a4d21af620ef2a5", "page": 340, "section_contains": "Continuous improvement", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-16-support-leader",
+    "split": "test",
+    "query": "What support and skills may an educational leader need for pedagogical leadership?",
+    "scope": "nqs",
+    "tags": ["nqs", "educational-leader", "leadership"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "26aaedf6de7892afcccdf4c48455d73a1986889dc1b45056432d9b8796cae379", "page": 342, "section_contains": "Selecting and supporting", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-17-lead-program",
+    "split": "test",
+    "query": "How does the educational leader guide educators' pedagogy and curriculum decisions?",
+    "scope": "nqs",
+    "tags": ["nqs", "educational-leader", "program"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "bbb2a86d71a3aec249a8f6359e9626488da172d838edafa7a67e63c758949f14", "page": 343, "section_contains": "Leading, developing", "relevance": 3}]
+  },
+  {
+    "case_id": "final-nqs-18-parent-request",
+    "split": "test",
+    "query": "What educational program information must be given to a parent on request?",
+    "scope": "nqs",
+    "tags": ["nqs", "regulation", "parent"],
+    "relevant_evidence": [{"source_id": "nqs-guide-qa1", "chunk_id": "8a977b5fa9eaccf12eaa08e22adfbbb5ba876005f82d0767792a1c4b761825fd", "page": 390, "section_contains": "given to parents", "relevance": 3}]
+  },
+  {
+    "case_id": "final-policy-01-disclaimer",
+    "split": "test",
+    "query": "Can the synthetic centre policies be treated as real legal or operational advice?",
+    "scope": "centre_policy",
+    "tags": ["centre-policy", "boundary"],
+    "relevant_evidence": [{"source_id": "synthetic-centre-policies", "chunk_id": "acb4b16f5ba538c7e9ce9396d49eb0dfcccfb276f612118af73d750427ca517e", "section_contains": "Synthetic Centre Policies", "relevance": 3}]
+  },
+  {
+    "case_id": "final-policy-02-outdoor-play",
+    "split": "test",
+    "query": "What supervision, allergy and environmental checks should be considered for outdoor play?",
+    "scope": "centre_policy",
+    "tags": ["centre-policy", "outdoor", "safety"],
+    "relevant_evidence": [{"source_id": "synthetic-centre-policies", "chunk_id": "4dc53b8977d2d781caa56cb10f8de4fb54b6e2d976257c072a59fa919290f500", "section_contains": "Outdoor Play", "relevance": 3}]
+  },
+  {
+    "case_id": "final-policy-03-learning-records",
+    "split": "test",
+    "query": "How should demo learning records handle personal information and diagnostic claims?",
+    "scope": "centre_policy",
+    "tags": ["centre-policy", "privacy", "records"],
+    "relevant_evidence": [{"source_id": "synthetic-centre-policies", "chunk_id": "7caf52507875599f53ae3402b2971069c0d9f8579b887ca94bfdc79fd49586e6", "section_contains": "Documentation and Learning Records", "relevance": 3}]
+  },
+  {
+    "case_id": "final-policy-04-family-message",
+    "split": "test",
+    "query": "Can EasyTeaching send a generated family message directly without teacher approval?",
+    "scope": "centre_policy",
+    "tags": ["centre-policy", "family", "approval"],
+    "relevant_evidence": [{"source_id": "synthetic-centre-policies", "chunk_id": "a56a6137482c408e6cfb32fd0a758fe4deedd22147ac8f462015e464040d60ee", "section_contains": "Family Communication", "relevance": 3}]
+  }
+]

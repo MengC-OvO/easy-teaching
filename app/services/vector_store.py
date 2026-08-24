@@ -13,7 +13,7 @@ from app.schemas import (
 )
 
 
-INDEX_VERSION = "easyteaching-knowledge-v1"
+INDEX_VERSION = "easyteaching-knowledge-v2"
 INDEX_METHOD = "hnsw"
 DISTANCE_METRIC = "cosine"
 
@@ -82,8 +82,17 @@ class ChromaVectorStore:
     def existing_chunk_ids(self, chunk_ids: List[str]) -> Set[str]:
         if not chunk_ids:
             return set()
-        result = self.collection.get(ids=chunk_ids, include=[])
+        unique_chunk_ids = list(dict.fromkeys(chunk_ids))
+        result = self.collection.get(ids=unique_chunk_ids, include=[])
         return set(result.get("ids", []))
+
+    def prune_to_chunk_ids(self, expected_chunk_ids: Set[str]) -> int:
+        """Remove stale vectors after a full source rebuild."""
+        stored_ids = set(self.collection.get(include=[]).get("ids", []))
+        stale_ids = sorted(stored_ids - expected_chunk_ids)
+        if stale_ids:
+            self.collection.delete(ids=stale_ids)
+        return len(stale_ids)
 
     def index_metadata(self) -> VectorIndexMetadata:
         return VectorIndexMetadata(
@@ -193,6 +202,7 @@ class ChromaVectorStore:
                     citation=self._metadata_to_citation(metadata),
                     content_hash=metadata["content_hash"],
                     distance=distance,
+                    dense_distance=distance,
                     metadata=self._custom_metadata(metadata),
                 )
             )

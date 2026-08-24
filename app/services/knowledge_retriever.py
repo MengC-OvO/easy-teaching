@@ -1,13 +1,9 @@
 import asyncio
 import inspect
-import math
-import re
-from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Protocol, Set, Tuple
 
 from app.schemas import (
-    KnowledgeChunk,
     RetrievedKnowledgeChunk,
     RerankerMode,
     RetrievalFilters,
@@ -18,7 +14,7 @@ from app.schemas import (
 )
 from app.config import settings
 from app.services.embedding_provider import GeminiEmbeddingProvider
-from app.services.knowledge_ingestion import KnowledgeIngestionService
+from app.services.lexical_index import SQLiteFTS5KnowledgeIndex
 from app.services.vector_store import ChromaVectorStore
 
 
@@ -67,140 +63,6 @@ class KnowledgeReranker(Protocol):
         ...
 
 
-class BM25KnowledgeIndex:
-    def __init__(
-        self,
-        chunks: List[KnowledgeChunk],
-        *,
-        k1: float = 1.5,
-        b: float = 0.75,
-    ) -> None:
-        self.chunks = chunks
-        self.k1 = k1
-        self.b = b
-        self.tokenized_chunks = [tokenize(chunk.content) for chunk in chunks]
-        self.term_counts = [Counter(tokens) for tokens in self.tokenized_chunks]
-        self.document_frequencies = self._document_frequencies(self.tokenized_chunks)
-        self.average_document_length = self._average_length(self.tokenized_chunks)
-
-    @classmethod
-    def from_jsonl(
-        cls,
-        chunks_path: Path = DEFAULT_CHUNKS_PATH,
-        *,
-        project_root: Optional[Path] = None,
-    ) -> "BM25KnowledgeIndex":
-        ingestion = KnowledgeIngestionService(project_root=project_root or Path.cwd())
-        return cls(ingestion.read_chunks_jsonl(chunks_path))
-
-    def search(
-        self,
-        query: str,
-        *,
-        top_k: int,
-        filters: RetrievalFilters,
-    ) -> List[RetrievedKnowledgeChunk]:
-        query_terms = tokenize(query)
-        if not query_terms:
-            return []
-
-        scored_chunks: List[Tuple[float, KnowledgeChunk]] = []
-        for chunk, term_count, document_length in zip(
-            self.chunks,
-            self.term_counts,
-            [len(tokens) for tokens in self.tokenized_chunks],
-        ):
-            if not matches_filters(chunk, filters):
-                continue
-            score = self._score(query_terms, term_count, document_length)
-            if score <= 0:
-                continue
-            scored_chunks.append((score, chunk))
-
-        scored_chunks.sort(key=lambda item: item[0], reverse=True)
-        return [
-            self._to_retrieved_chunk(chunk, score)
-            for score, chunk in scored_chunks[:top_k]
-        ]
-
-    def _score(
-        self,
-        query_terms: List[str],
-        term_count: Counter,
-        document_length: int,
-    ) -> float:
-        score = 0.0
-        total_documents = len(self.chunks)
-        for term in query_terms:
-            term_frequency = term_count.get(term, 0)
-            if term_frequency == 0:
-                continue
-            document_frequency = self.document_frequencies.get(term, 0)
-            idf = math.log(
-                1
-                + (total_documents - document_frequency + 0.5)
-                / (document_frequency + 0.5)
-            )
-            denominator = term_frequency + self.k1 * (
-                1
-                - self.b
-                + self.b * document_length / max(self.average_document_length, 1)
-            )
-            score += idf * (term_frequency * (self.k1 + 1)) / denominator
-        return score
-
-    def _to_retrieved_chunk(
-        self,
-        chunk: KnowledgeChunk,
-        score: float,
-    ) -> RetrievedKnowledgeChunk:
-        return RetrievedKnowledgeChunk(
-            chunk_id=chunk.chunk_id,
-            content=chunk.content,
-            citation=chunk.citation,
-            content_hash=chunk.content_hash,
-            distance=1 / (1 + score),
-            metadata={**chunk.metadata, "bm25_score": f"{score:.6f}"},
-        )
-
-    def _document_frequencies(
-        self,
-        tokenized_chunks: List[List[str]],
-    ) -> Dict[str, int]:
-        frequencies: Dict[str, int] = {}
-        for tokens in tokenized_chunks:
-            for token in set(tokens):
-                frequencies[token] = frequencies.get(token, 0) + 1
-        return frequencies
-
-    def _average_length(self, tokenized_chunks: List[List[str]]) -> float:
-        if not tokenized_chunks:
-            return 0.0
-        return sum(len(tokens) for tokens in tokenized_chunks) / len(tokenized_chunks)
-
-
-class LexicalReranker:
-    def rerank(
-        self,
-        query: str,
-        chunks: List[RetrievedKnowledgeChunk],
-    ) -> List[RetrievedKnowledgeChunk]:
-        if not chunks:
-            return []
-        query_terms = set(tokenize(query))
-        if not query_terms:
-            return chunks
-
-        return sorted(
-            chunks,
-            key=lambda chunk: (
-                lexical_overlap_score(query_terms, chunk.content),
-                -chunk.distance,
-            ),
-            reverse=True,
-        )
-
-
 class CrossEncoderReranker:
     def __init__(self, model_name: str = settings.reranker_model_name) -> None:
         self.model_name = model_name
@@ -222,16 +84,36 @@ class CrossEncoderReranker:
             return []
         pairs = [(query, chunk.content) for chunk in chunks]
         scores = [float(score) for score in self.model.predict(pairs)]
-        scored_chunks = list(zip(scores, chunks))
-        scored_chunks.sort(key=lambda item: item[0], reverse=True)
+        original_ranks = {chunk.chunk_id: rank for rank, chunk in enumerate(chunks, 1)}
+        scored_chunks = sorted(
+            zip(scores, chunks), key=lambda item: item[0], reverse=True
+        )
+        cross_encoder_ranks = {
+            chunk.chunk_id: rank
+            for rank, (_, chunk) in enumerate(scored_chunks, start=1)
+        }
+        # Blend the trusted coarse rank with the semantic reranker rank. A pure
+        # Cross-encoder sort can over-promote generally related policy passages
+        # above the exact EYLF/NQS evidence that hybrid retrieval already found.
+        scored_chunks.sort(
+            key=lambda item: (
+                2 / (60 + original_ranks[item[1].chunk_id])
+                + 1 / (60 + cross_encoder_ranks[item[1].chunk_id])
+            ),
+            reverse=True,
+        )
 
         reranked: List[RetrievedKnowledgeChunk] = []
         for score, chunk in scored_chunks:
             chunk.metadata = {
                 **chunk.metadata,
                 "cross_encoder_score": f"{score:.6f}",
+                "cross_encoder_rank": str(cross_encoder_ranks[chunk.chunk_id]),
+                "pre_reranker_rank": str(original_ranks[chunk.chunk_id]),
                 "cross_encoder_model": self.model_name,
             }
+            chunk.reranker_score = score
+            chunk.reranker_rank = len(reranked) + 1
             reranked.append(chunk)
         return reranked
 
@@ -243,14 +125,12 @@ class KnowledgeRetriever:
         embedding_provider: Optional[QueryEmbeddingProvider] = None,
         vector_store: Optional[KnowledgeVectorStore] = None,
         lexical_index: Optional[KnowledgeLexicalIndex] = None,
-        lexical_reranker: Optional[KnowledgeReranker] = None,
         cross_encoder_reranker: Optional[KnowledgeReranker] = None,
-        candidate_multiplier: int = 3,
+        candidate_multiplier: int = 4,
     ) -> None:
-        self.embedding_provider = embedding_provider or GeminiEmbeddingProvider()
-        self.vector_store = vector_store or ChromaVectorStore()
+        self.embedding_provider = embedding_provider
+        self.vector_store = vector_store
         self.lexical_index = lexical_index
-        self.lexical_reranker = lexical_reranker or LexicalReranker()
         self.cross_encoder_reranker = cross_encoder_reranker
         self.candidate_multiplier = candidate_multiplier
 
@@ -265,7 +145,7 @@ class KnowledgeRetriever:
             deduplicated_chunks,
             mode=request.reranker,
         )
-        returned_chunks = reranked_chunks[: request.top_k]
+        returned_chunks = self._finalize_ranks(reranked_chunks[: request.top_k])
         return RetrievalResult(
             query=request.query,
             chunks=returned_chunks,
@@ -278,7 +158,7 @@ class KnowledgeRetriever:
                 bm25_result_count=len(bm25_chunks),
                 deduplicated_count=len(deduplicated_chunks),
                 returned_count=len(returned_chunks),
-                reranked=request.use_reranker,
+                reranked=request.reranker is not RerankerMode.NONE,
             ),
         )
 
@@ -297,7 +177,7 @@ class KnowledgeRetriever:
             deduplicated_chunks,
             mode=request.reranker,
         )
-        returned_chunks = reranked_chunks[: request.top_k]
+        returned_chunks = self._finalize_ranks(reranked_chunks[: request.top_k])
         return RetrievalResult(
             query=request.query,
             chunks=returned_chunks,
@@ -310,7 +190,7 @@ class KnowledgeRetriever:
                 bm25_result_count=len(bm25_chunks),
                 deduplicated_count=len(deduplicated_chunks),
                 returned_count=len(returned_chunks),
-                reranked=request.use_reranker,
+                reranked=request.reranker is not RerankerMode.NONE,
             ),
         )
 
@@ -321,7 +201,9 @@ class KnowledgeRetriever:
     ) -> List[RetrievedKnowledgeChunk]:
         if request.mode is RetrievalMode.BM25:
             return []
-        embed_async = getattr(self.embedding_provider, "embed_text_async", None)
+        embedding_provider = self._embedding_provider()
+        vector_store = self._vector_store()
+        embed_async = getattr(embedding_provider, "embed_text_async", None)
         if embed_async is not None:
             query_embedding = embed_async(
                 request.query,
@@ -331,20 +213,21 @@ class KnowledgeRetriever:
                 query_embedding = await query_embedding
         else:
             query_embedding = await asyncio.to_thread(
-                self.embedding_provider.embed_text,
+                embedding_provider.embed_text,
                 request.query,
                 task_type="RETRIEVAL_QUERY",
             )
-        query_async = getattr(self.vector_store, "query_async", None)
+        query_async = getattr(vector_store, "query_async", None)
         if query_async is not None:
             chunks = query_async(
                 query_embedding,
                 top_k=candidate_top_k,
                 where=self._build_where_filter(request.filters),
             )
-            return await chunks if inspect.isawaitable(chunks) else chunks
-        return await asyncio.to_thread(
-            self.vector_store.query,
+            resolved = await chunks if inspect.isawaitable(chunks) else chunks
+            return self._annotate_dense(resolved)
+        chunks = await asyncio.to_thread(
+            vector_store.query,
             query_embedding,
             top_k=candidate_top_k,
             where=self._build_where_filter(request.filters),
@@ -370,15 +253,16 @@ class KnowledgeRetriever:
     ) -> List[RetrievedKnowledgeChunk]:
         if request.mode is RetrievalMode.BM25:
             return []
-        query_embedding = self.embedding_provider.embed_text(
+        query_embedding = self._embedding_provider().embed_text(
             request.query,
             task_type="RETRIEVAL_QUERY",
         )
-        return self.vector_store.query(
+        chunks = self._vector_store().query(
             query_embedding,
             top_k=candidate_top_k,
             where=self._build_where_filter(request.filters),
         )
+        return self._annotate_dense(chunks)
 
     def _bm25_search(
         self,
@@ -388,16 +272,40 @@ class KnowledgeRetriever:
         if request.mode is RetrievalMode.DENSE:
             return []
         lexical_index = self._lexical_index()
-        return lexical_index.search(
+        chunks = lexical_index.search(
             request.query,
             top_k=candidate_top_k,
             filters=request.filters,
         )
+        for rank, chunk in enumerate(chunks, start=1):
+            chunk.bm25_rank = chunk.bm25_rank or rank
+        return chunks
 
     def _lexical_index(self) -> KnowledgeLexicalIndex:
         if self.lexical_index is None:
-            self.lexical_index = BM25KnowledgeIndex.from_jsonl()
+            index_path = Path(settings.lexical_index_path)
+            if index_path.exists():
+                persisted_index = SQLiteFTS5KnowledgeIndex(index_path)
+                if DEFAULT_CHUNKS_PATH.exists():
+                    expected_digest = SQLiteFTS5KnowledgeIndex.digest_file(DEFAULT_CHUNKS_PATH)
+                    if persisted_index.manifest().get("source_digest") != expected_digest:
+                        raise ValueError(
+                            "Lexical index is stale. Run scripts/build_lexical_index.py."
+                        )
+                self.lexical_index = persisted_index
+            else:
+                self.lexical_index = SQLiteFTS5KnowledgeIndex(index_path)
         return self.lexical_index
+
+    def _embedding_provider(self) -> QueryEmbeddingProvider:
+        if self.embedding_provider is None:
+            self.embedding_provider = GeminiEmbeddingProvider()
+        return self.embedding_provider
+
+    def _vector_store(self) -> KnowledgeVectorStore:
+        if self.vector_store is None:
+            self.vector_store = ChromaVectorStore()
+        return self.vector_store
 
     def _combine_results(
         self,
@@ -427,26 +335,53 @@ class KnowledgeRetriever:
         chunks_by_id: Dict[str, RetrievedKnowledgeChunk] = {}
         scores: Dict[str, float] = {}
         for rank, chunk in enumerate(dense_chunks, start=1):
-            chunks_by_id.setdefault(chunk.chunk_id, chunk)
+            dense = chunk.model_copy(deep=True)
+            dense.dense_distance = chunk.dense_distance if chunk.dense_distance is not None else chunk.distance
+            dense.dense_rank = rank
+            chunks_by_id.setdefault(chunk.chunk_id, dense)
             scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (
                 dense_weight / (RRF_K + rank)
             )
         for rank, chunk in enumerate(bm25_chunks, start=1):
-            chunks_by_id.setdefault(chunk.chunk_id, chunk)
+            if chunk.chunk_id not in chunks_by_id:
+                chunks_by_id[chunk.chunk_id] = chunk.model_copy(deep=True)
+            combined = chunks_by_id[chunk.chunk_id]
+            combined.bm25_score = chunk.bm25_score
+            combined.bm25_rank = chunk.bm25_rank or rank
+            combined.metadata = {**combined.metadata, **chunk.metadata}
             scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (
                 bm25_weight / (RRF_K + rank)
             )
 
         ranked_ids = sorted(scores, key=lambda chunk_id: scores[chunk_id], reverse=True)
         fused_chunks = []
-        for chunk_id in ranked_ids:
+        for fusion_rank, chunk_id in enumerate(ranked_ids, start=1):
             chunk = chunks_by_id[chunk_id]
+            chunk.fusion_score = scores[chunk_id]
+            chunk.fusion_rank = fusion_rank
             chunk.metadata = {
                 **chunk.metadata,
                 "hybrid_score": f"{scores[chunk_id]:.6f}",
             }
             fused_chunks.append(chunk)
         return fused_chunks
+
+    def _annotate_dense(
+        self,
+        chunks: List[RetrievedKnowledgeChunk],
+    ) -> List[RetrievedKnowledgeChunk]:
+        for rank, chunk in enumerate(chunks, start=1):
+            chunk.dense_distance = chunk.distance
+            chunk.dense_rank = rank
+        return chunks
+
+    def _finalize_ranks(
+        self,
+        chunks: List[RetrievedKnowledgeChunk],
+    ) -> List[RetrievedKnowledgeChunk]:
+        for rank, chunk in enumerate(chunks, start=1):
+            chunk.final_rank = rank
+        return chunks
 
     def _candidate_top_k(self, requested_top_k: int) -> int:
         return max(requested_top_k, requested_top_k * self.candidate_multiplier)
@@ -512,32 +447,9 @@ class KnowledgeRetriever:
     ) -> List[RetrievedKnowledgeChunk]:
         if mode is RerankerMode.NONE:
             return chunks
-        if mode is RerankerMode.LEXICAL:
-            return self.lexical_reranker.rerank(query, chunks)
         return self._cross_encoder_reranker().rerank(query, chunks)
 
     def _cross_encoder_reranker(self) -> KnowledgeReranker:
         if self.cross_encoder_reranker is None:
             self.cross_encoder_reranker = CrossEncoderReranker()
         return self.cross_encoder_reranker
-
-
-def tokenize(text: str) -> List[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
-
-
-def lexical_overlap_score(query_terms: Set[str], content: str) -> float:
-    content_terms = set(tokenize(content))
-    if not query_terms:
-        return 0.0
-    return len(query_terms & content_terms) / len(query_terms)
-
-
-def matches_filters(chunk: KnowledgeChunk, filters: RetrievalFilters) -> bool:
-    if filters.source_ids and chunk.document.source_id not in filters.source_ids:
-        return False
-    if filters.source_types and chunk.document.source_type not in filters.source_types:
-        return False
-    if filters.versions and chunk.document.version not in filters.versions:
-        return False
-    return True

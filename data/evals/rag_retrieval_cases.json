@@ -1,0 +1,130 @@
+[
+  {
+    "case_id": "eylf-play-based-learning",
+    "split": "dev",
+    "query": "What does the EYLF say about play-based learning and intentionality?",
+    "scope": "eylf",
+    "tags": ["practice", "exact-term"],
+    "relevant_evidence": [
+      {"source_id": "eylf-v2", "page": 21, "section_contains": "Play-based learning and intentionality", "relevance": 3},
+      {"source_id": "eylf-v2", "page": 22, "section_contains": "Play-based learning and intentionality", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "eylf-secure-relationships",
+    "split": "dev",
+    "query": "How should educators build secure, respectful and reciprocal relationships?",
+    "scope": "eylf",
+    "tags": ["principle", "natural-language"],
+    "relevant_evidence": [
+      {"source_id": "eylf-v2", "page": 14, "section_contains": "PRINCIPLES", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "eylf-sustainability",
+    "split": "dev",
+    "query": "How is sustainability understood as an EYLF principle?",
+    "scope": "eylf",
+    "tags": ["principle", "semantic"],
+    "relevant_evidence": [
+      {"source_id": "eylf-v2", "page": 17, "section_contains": "Sustainability", "relevance": 3},
+      {"source_id": "eylf-v2", "page": 18, "section_contains": "Sustainability", "relevance": 2}
+    ]
+  },
+  {
+    "case_id": "eylf-outcome-one-identity",
+    "split": "dev",
+    "query": "What does Outcome 1 say about children developing a strong sense of identity?",
+    "scope": "eylf",
+    "tags": ["learning-outcome", "exact-term"],
+    "relevant_evidence": [
+      {"source_id": "eylf-v2", "page": 31, "section_contains": "OUTCOME 1", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "eylf-transitions",
+    "split": "test",
+    "query": "How can educators support continuity of learning and transitions?",
+    "scope": "eylf",
+    "tags": ["practice", "natural-language"],
+    "relevant_evidence": [
+      {"source_id": "eylf-v2", "page": 24, "section_contains": "Continuity of learning and transitions", "relevance": 3},
+      {"source_id": "eylf-v2", "page": 25, "section_contains": "Continuity of learning and transitions", "relevance": 2}
+    ]
+  },
+  {
+    "case_id": "eylf-critical-reflection",
+    "split": "test",
+    "query": "Why are critical reflection and ongoing professional learning important?",
+    "scope": "eylf",
+    "tags": ["principle", "semantic"],
+    "relevant_evidence": [
+      {"source_id": "eylf-v2", "page": 18, "section_contains": "Critical reflection and ongoing professional learning", "relevance": 3},
+      {"source_id": "eylf-v2", "page": 19, "section_contains": "Critical reflection and ongoing professional learning", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "nqs-family-program-information",
+    "split": "dev",
+    "query": "What information about the educational program must be available to parents and families?",
+    "scope": "nqs",
+    "tags": ["regulation", "family"],
+    "relevant_evidence": [
+      {"source_id": "nqs-guide-qa1", "page": 390, "section_contains": "Information about educational program to be given to parents", "relevance": 3},
+      {"source_id": "nqs-guide-qa1", "page": 390, "section_contains": "Information about educational program to be kept available", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "nqs-child-centred-program",
+    "split": "dev",
+    "query": "How does a child-centred educational program enhance each child's learning and development?",
+    "scope": "nqs",
+    "tags": ["standard-1.1", "semantic"],
+    "relevant_evidence": [
+      {"source_id": "nqs-guide-qa1", "page": 123, "section_contains": "educational program enhances each child", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "nqs-assessment-planning-cycle",
+    "split": "dev",
+    "query": "What is involved in the assessment and planning cycle?",
+    "scope": "nqs",
+    "tags": ["planning-cycle", "exact-term"],
+    "relevant_evidence": [
+      {"source_id": "nqs-guide-qa1", "page": 344, "section_contains": "Assessment and planning cycle", "relevance": 3},
+      {"source_id": "nqs-guide-qa1", "page": 345, "section_contains": "Assessment and planning cycle", "relevance": 2}
+    ]
+  },
+  {
+    "case_id": "nqs-educational-leader",
+    "split": "dev",
+    "query": "How should the educational leader support educators and the educational program?",
+    "scope": "nqs",
+    "tags": ["leadership", "natural-language"],
+    "relevant_evidence": [
+      {"source_id": "nqs-guide-qa1", "page": 342, "section_contains": "Selecting and supporting the educational leader", "relevance": 2},
+      {"source_id": "nqs-guide-qa1", "page": 343, "section_contains": "Leading, developing and implementing the program", "relevance": 3}
+    ]
+  },
+  {
+    "case_id": "nqs-critical-reflection",
+    "split": "test",
+    "query": "What does practice informed by critical reflection look like under the NQS?",
+    "scope": "nqs",
+    "tags": ["exceeding-theme", "semantic"],
+    "relevant_evidence": [
+      {"source_id": "nqs-guide-qa1", "page": 114, "section_contains": "Practice is informed by critical reflection", "relevance": 3},
+      {"source_id": "nqs-guide-qa1", "page": 270, "section_contains": "Practice is informed by critical reflection", "relevance": 2}
+    ]
+  },
+  {
+    "case_id": "nqs-planning-observation",
+    "split": "test",
+    "query": "What might assessors observe when educators plan and implement the educational program?",
+    "scope": "nqs",
+    "tags": ["assessment", "evidence"],
+    "relevant_evidence": [
+      {"source_id": "nqs-guide-qa1", "page": 156, "section_contains": "Assessors may observe educators", "relevance": 3}
+    ]
+  }
+]

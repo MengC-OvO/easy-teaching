@@ -141,6 +141,28 @@ def test_chroma_vector_store_can_report_existing_chunk_ids(tmp_path) -> None:
     assert existing_ids == {chunk.chunk_id}
 
 
+def test_chroma_vector_store_accepts_duplicate_ids_when_checking_existing_chunks(tmp_path) -> None:
+    store = ChromaVectorStore(make_settings(tmp_path))
+    chunk = make_chunk("Stable content.", "Policy")
+    store.upsert_chunks([chunk], [[1.0, 0.0, 0.0]])
+
+    existing_ids = store.existing_chunk_ids([chunk.chunk_id, chunk.chunk_id])
+
+    assert existing_ids == {chunk.chunk_id}
+
+
+def test_chroma_vector_store_prunes_stale_chunk_ids(tmp_path) -> None:
+    store = ChromaVectorStore(make_settings(tmp_path))
+    kept = make_chunk("Kept content.", "Policy")
+    stale = make_chunk("Stale content.", "Policy")
+    store.upsert_chunks([kept, stale], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+    removed = store.prune_to_chunk_ids({kept.chunk_id})
+
+    assert removed == 1
+    assert store.existing_chunk_ids([kept.chunk_id, stale.chunk_id]) == {kept.chunk_id}
+
+
 def test_chroma_vector_store_rejects_wrong_embedding_dimension(tmp_path) -> None:
     store = ChromaVectorStore(make_settings(tmp_path))
     chunk = make_chunk("Stable content.", "Policy")
@@ -175,7 +197,7 @@ def test_chroma_vector_store_exposes_index_metadata(tmp_path) -> None:
     assert metadata.distance_metric == "cosine"
     assert metadata.embedding_model_name == "test-embedding-model"
     assert metadata.embedding_dimension == 3
-    assert metadata.index_version == "easyteaching-knowledge-v1"
+    assert metadata.index_version == "easyteaching-knowledge-v2"
 
 
 def test_chroma_vector_store_rejects_existing_collection_with_different_model(
@@ -228,7 +250,7 @@ def test_chroma_vector_store_rejects_existing_collection_with_wrong_distance_met
             "distance_metric": "l2",
             "embedding_model_name": settings.embedding_model_name,
             "embedding_dimension": settings.embedding_dimension,
-            "index_version": "easyteaching-knowledge-v1",
+            "index_version": "easyteaching-knowledge-v2",
         },
     )
     chunk = make_chunk("Stable content.", "Policy")

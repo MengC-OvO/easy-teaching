@@ -23,6 +23,7 @@ from app.schemas import (
     MainDecision,
     ObservationStatus,
     RetrievalMode,
+    RetrievalRequest,
     RerankerMode,
     RiskLevel,
     ThreadContext,
@@ -30,12 +31,12 @@ from app.schemas import (
     WorkerName,
 )
 from app.services import (
-    BM25KnowledgeIndex,
     ChatCompletionsModelProvider,
     ContextManager,
+    KnowledgeIngestionService,
     KnowledgeRetriever,
     ObservationRedactor,
-    PolicyRAGService,
+    SQLiteFTS5KnowledgeIndex,
 )
 from evals.in_memory_store import InMemoryEvalStore
 from app.tools import (
@@ -67,6 +68,7 @@ from evals.schemas import (
     MemoryEvalTarget,
     ObservedToolCall,
     RagActual,
+    RagStatus,
     RoutingActual,
     SafetyActual,
     SafetyOutcome,
@@ -102,18 +104,28 @@ class EvalRunner:
                 input_cost_per_million=input_cost_per_million,
                 output_cost_per_million=output_cost_per_million,
             )
-        lexical_index = BM25KnowledgeIndex.from_jsonl(
-            KNOWLEDGE_PATH,
-            project_root=PROJECT_ROOT,
-        )
-        retriever = KnowledgeRetriever(lexical_index=lexical_index)
-        self.rag = PolicyRAGService(
-            retriever=retriever,
-            model_provider=self.meter,
-            top_k=3,
-            retrieval_mode=RetrievalMode.BM25,
-            reranker=RerankerMode.LEXICAL,
-        )
+        lexical_path = PROJECT_ROOT / "data" / "knowledge" / "index" / "knowledge_fts.sqlite3"
+        source_digest = SQLiteFTS5KnowledgeIndex.digest_file(KNOWLEDGE_PATH)
+        if not lexical_path.exists():
+            chunks = KnowledgeIngestionService(project_root=PROJECT_ROOT).read_chunks_jsonl(
+                KNOWLEDGE_PATH
+            )
+            SQLiteFTS5KnowledgeIndex.build(
+                lexical_path,
+                chunks,
+                source_digest=source_digest,
+            )
+        lexical_index = SQLiteFTS5KnowledgeIndex(lexical_path)
+        if lexical_index.manifest().get("source_digest") != source_digest:
+            chunks = KnowledgeIngestionService(project_root=PROJECT_ROOT).read_chunks_jsonl(
+                KNOWLEDGE_PATH
+            )
+            lexical_index = SQLiteFTS5KnowledgeIndex.build(
+                lexical_path,
+                chunks,
+                source_digest=source_digest,
+            )
+        self.rag_retriever = KnowledgeRetriever(lexical_index=lexical_index)
         self.graph = self._build_trajectory_graph()
 
     def close(self) -> None:
@@ -211,21 +223,29 @@ class EvalRunner:
         elif "safety" in message:
             calls.append(ObservedToolCall(tool_name="check_activity_safety"))
         elif "risk guidance" in message:
-            calls.append(ObservedToolCall(tool_name="retrieve_risk_guidance"))
+            calls.append(ObservedToolCall(tool_name="research_knowledge"))
         elif "eylf outcomes" in message:
-            calls.append(ObservedToolCall(tool_name="align_to_eylf_outcomes"))
+            calls.append(ObservedToolCall(tool_name="search_knowledge"))
         return ToolActual(calls=calls)
 
     def _rag_actual(self, case: EvalCase) -> RagActual:
-        result = self.rag.answer(
-            case.input.message,
-            conversation_context=case.input.conversation_context,
+        result = self.rag_retriever.retrieve(
+            RetrievalRequest(
+                query=case.input.message,
+                top_k=3,
+                mode=RetrievalMode.BM25,
+                reranker=RerankerMode.NONE,
+            )
         )
         sources = list(
             dict.fromkeys(item.source_id for item in result.citations)
         )
         return RagActual(
-            status=result.status,
+            status=(
+                RagStatus.ANSWERED
+                if result.chunks
+                else RagStatus.NEEDS_CLARIFICATION
+            ),
             sources=sources,
             citation_count=len(result.citations),
         )
