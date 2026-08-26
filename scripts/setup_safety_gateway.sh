@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   exit 1
 fi
 if [[ $# -ne 2 ]]; then
-  echo "Usage: $0 /path/to/Qwen2.5-1.5B-Instruct /path/to/best-adapter" >&2
+  echo "Usage: $0 /path/to/Qwen2.5-3B-Instruct /path/to/best-adapter" >&2
   exit 1
 fi
 
@@ -14,7 +14,10 @@ project_root="$(cd "$(dirname "$0")/.." && pwd)"
 model_dir="$(cd "$1" && pwd)"
 adapter_dir="$(cd "$2" && pwd)"
 
-[[ -f "$model_dir/model.safetensors" ]] || { echo "Missing model.safetensors" >&2; exit 1; }
+[[ -f "$model_dir/model.safetensors" || -f "$model_dir/model.safetensors.index.json" ]] || {
+  echo "Missing Qwen Safetensors weights" >&2
+  exit 1
+}
 [[ -f "$adapter_dir/adapter_model.safetensors" ]] || { echo "Missing adapter_model.safetensors" >&2; exit 1; }
 
 if [[ ! -x "$project_root/.venv-safety/bin/python" ]]; then

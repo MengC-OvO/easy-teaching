@@ -5,9 +5,10 @@ classification, deterministic redaction, and policy signals. Both processes can
 live in this monorepo while retaining different dependency and failure boundaries.
 
 > **Current status:** experimental. A direct 1,227-case raw-input evaluation of
-> the local adapter achieved injection Macro-F1 `95.2%` and PII F1 `96.1%`, but
-> failed the privacy release gate because `5.5%` of labelled PII entities were
-> missed and strict structured output was `98.9%`. The local development runtime
+> the Qwen2.5-3B 4-bit QLoRA adapter achieved injection Macro-F1 `95.9%`, block
+> recall `100%`, and PII F1 `96.3%`, but failed the privacy release gate because
+> labelled PII entity leakage remained `5.0%`. Strict structured output reached
+> `99.5%`. The local development runtime
 > may run in `enforce` mode, but real child or family data remains prohibited.
 
 ```text
@@ -92,8 +93,8 @@ Create the independent runtime without copying model weights:
 
 ```powershell
 .\scripts\setup_safety_gateway.ps1 `
-  -ModelDir "C:\path\to\Qwen2.5-1.5B-Instruct" `
-  -AdapterDir "C:\path\to\qlora-formal-v11\best-adapter"
+  -ModelDir "C:\path\to\Qwen2.5-3B-Instruct" `
+  -AdapterDir "C:\path\to\qlora-formal-v11-3b\best-adapter"
 ```
 
 Start the single-worker GPU service:
@@ -111,14 +112,14 @@ when port 8010 is not already serving a ready instance:
 
 ## Apple Silicon Mac setup and verification
 
-Use Python 3.10 or newer. A 16 GB Mac is recommended for Qwen2.5-1.5B FP16
+Use Python 3.10 or newer. A 16 GB Mac is recommended for Qwen2.5-3B FP16
 inference. This creates an independent environment without copying or uploading
 model assets:
 
 ```bash
 bash ./scripts/setup_safety_gateway.sh \
-  /path/to/Qwen2.5-1.5B-Instruct \
-  /path/to/qlora-formal-v11/best-adapter
+  /path/to/Qwen2.5-3B-Instruct \
+  /path/to/qlora-formal-v11-3b/best-adapter
 ```
 
 Start the gateway or run the complete synthetic verification:
@@ -148,22 +149,24 @@ Sixty-three already-premasked v11 inputs are explicitly excluded.
 | Metric | Result |
 | --- | ---: |
 | Cases | `1,227` |
-| Strict structured output | `98.9%` |
-| Injection accuracy / Macro-F1 | `95.2% / 95.2%` |
-| Injection block recall | `97.7%` |
-| PII precision / recall / F1 | `98.5% / 93.9% / 96.1%` |
-| Derived de-identification case pass | `89.8%` |
-| Labelled PII entity leakage after model-only redaction | `5.5%` |
-| Clean-text over-redaction case rate | `0%` |
-| Batch completion latency P50 / P95 | `3.56 s / 7.20 s` |
-| Peak allocated GPU memory | `1.39 GiB` |
+| Strict structured output | `99.5%` |
+| Injection accuracy / Macro-F1 | `97.0% / 95.9%` |
+| Injection block recall | `100%` |
+| Block-to-normal escape rate | `0%` |
+| PII precision / recall / F1 | `98.1% / 94.6% / 96.3%` |
+| Derived de-identification case pass | `96.7%` |
+| Labelled PII entity leakage after model-only redaction | `5.0%` |
+| Clean-text over-redaction case rate | `1.2%` |
+| Batch completion latency P50 / P95 | `4.86 s / 9.60 s` |
+| Peak allocated GPU memory | `2.33 GiB` |
 | Release gate | **Failed** |
 
-PHONE is the weakest entity class (`75.5%` recall); PERSON_NAME, EMAIL, ADDRESS,
-and DOB F1 are `97.5%`, `96.6%`, `95.2%`, and `100%` respectively. Three block
-examples were classified as normal (`1.37%` of block cases), narrowly missing the
-configured maximum of `1%`. The model therefore remains a useful local semantic
-detector, not a standalone privacy enforcement boundary.
+DOB is the weakest entity class (`88.5%` recall); PERSON_NAME, PHONE, ADDRESS,
+EMAIL, and DOB F1 are `97.0%`, `96.7%`, `95.2%`, `95.0%`, and `93.9%`
+respectively. All 219 high-risk block cases were blocked, producing a `0%`
+block-to-normal escape rate. The remaining `5.0%` labelled-entity leakage keeps
+the model below the configured privacy release threshold, so it remains a useful
+local semantic detector rather than a standalone enforcement boundary.
 
 Run the direct suite with:
 
@@ -184,7 +187,8 @@ committed.
 
 ### Deployed Gateway pipeline evaluation
 
-With the real local Qwen2.5-1.5B v11 adapter, deterministic premasking, HTTP
+The following legacy deployed-pipeline result used the Qwen2.5-1.5B v11 adapter,
+deterministic premasking, HTTP
 Gateway, mapping vault and one-time restoration, the independent challenge suite
 produced:
 

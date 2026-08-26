@@ -12,8 +12,11 @@ $ConfigPath = Join-Path $ProjectRoot ".safety-gateway.env"
 
 $ResolvedModel = (Resolve-Path -LiteralPath $ModelDir).Path
 $ResolvedAdapter = (Resolve-Path -LiteralPath $AdapterDir).Path
-if (-not (Test-Path -LiteralPath (Join-Path $ResolvedModel "model.safetensors"))) {
-    throw "Qwen model.safetensors was not found in: $ResolvedModel"
+if (
+    -not (Test-Path -LiteralPath (Join-Path $ResolvedModel "model.safetensors")) -and
+    -not (Test-Path -LiteralPath (Join-Path $ResolvedModel "model.safetensors.index.json"))
+) {
+    throw "Qwen Safetensors weights were not found in: $ResolvedModel"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $ResolvedAdapter "adapter_model.safetensors"))) {
     throw "LoRA adapter_model.safetensors was not found in: $ResolvedAdapter"

@@ -11,7 +11,7 @@ class GatewaySettings(BaseSettings):
         default="auto", validation_alias="SAFETY_MODEL_BACKEND"
     )
     model_dir: Path = Field(
-        default=Path("local_models/Qwen2.5-1.5B-Instruct"),
+        default=Path("local_models/Qwen2.5-3B-Instruct"),
         validation_alias="SAFETY_MODEL_DIR",
     )
     adapter_dir: Path = Field(
