@@ -331,7 +331,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "runtime": {
             "gateway_url": args.gateway_url,
             "ready": readiness,
-            "inference": "live local Qwen2.5-1.5B + v11 LoRA + deterministic gateway rules/vault",
+            "inference": "live local Qwen2.5-3B + v11 4-bit QLoRA + deterministic gateway rules/vault",
         },
         "thresholds": thresholds,
         "checks": checks,
