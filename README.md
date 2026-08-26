@@ -144,21 +144,15 @@ python scripts\run_final_agent_suite.py `
   --output reports\final_agent_evaluation_v2.json
 ```
 
-Latest frozen results:
-
-| Evaluation | Result |
-| --- | --- |
-| Regression suite | `331/331` passed |
-| Production-path Agent | `93/100` scenarios across `118` turns |
-| Required-Tool recall / Tool precision | `98.0% / 92.8%` |
-| Hybrid + Cross-encoder RAG, 40 questions | Recall@3 `97.5%`, MRR `0.869`, nDCG@10 `0.902` |
-| RAG citation correctness / scope violations | `100% / 0%` |
-| Direct Qwen2.5-3B, 1,227 raw-input cases | Injection accuracy `97.0%`, Macro-F1 `95.9%`, block recall `100%` |
-| Direct Qwen2.5-3B PII precision / recall / F1 | `98.1% / 94.6% / 96.3%` |
-| Direct Qwen2.5-3B structured output / de-identification pass | `99.5% / 96.7%` |
-| Direct Qwen2.5-3B labelled-entity leakage / release gate | `5.0% / failed` |
-
-The Agent evaluation uses synthetic scenarios and deterministic weather/Drive adapters. The RAG set uses one manually selected exact gold chunk per question. The direct-model benchmark excludes regex/rule assistance and measures the model rather than the deployed Gateway. Detailed methods and failures are in [Agent evaluation](docs/agent-evaluation.md), [RAG system](docs/rag-system.md) and [Local Safety Gateway](docs/local-safety-gateway.md).
+Evaluation reports are generated locally and intentionally excluded from version
+control so published documentation cannot drift from a newer benchmark run. The
+Agent evaluation uses synthetic scenarios and deterministic weather/Drive
+adapters. The RAG set uses one manually selected exact gold chunk per question.
+The direct-model benchmark excludes regex/rule assistance and measures the model
+rather than the deployed Gateway. Methods, metric definitions and known failure
+modes are documented in [Agent evaluation](docs/agent-evaluation.md),
+[RAG system](docs/rag-system.md) and
+[Local Safety Gateway](docs/local-safety-gateway.md).
 
 ## Current limitations
 
