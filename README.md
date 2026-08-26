@@ -161,16 +161,12 @@ modes are documented in [Agent evaluation](docs/agent-evaluation.md),
 - Multi-instance deployment still needs shared ephemeral state, rate limiting, background jobs, monitoring, backups and load testing.
 - All included child, family, teacher and centre examples are synthetic.
 
-See [Project status](docs/project-status.md) for implemented scope and remaining work.
-
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Tool and Worker architecture](docs/tool-architecture.md)
 - [RAG system](docs/rag-system.md)
 - [API and operations](docs/api-and-operations.md)
-- [Engineering decisions](docs/engineering-decisions.md)
-- [Project status](docs/project-status.md)
 
 ## License
 
