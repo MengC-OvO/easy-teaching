@@ -169,9 +169,18 @@ Run the direct suite with:
 
 ```powershell
 .\.venv-safety\Scripts\python.exe scripts\run_local_model_final_eval.py `
+  --v11-test C:\path\to\corpus_v11\test.jsonl `
+  --v11-manifest C:\path\to\corpus_v11\manifest.json `
+  --challenge C:\path\to\challenge_v3\challenge.jsonl `
+  --challenge-manifest C:\path\to\challenge_v3\manifest.json `
   --batch-size 8 `
   --output reports\local_model_direct_final_v2.json
 ```
+
+The path arguments are optional when the same files are placed under the ignored
+`data/local/safety-eval/` directory using the `corpus_v11/` and `challenge_v3/`
+subdirectories. Evaluation datasets and model assets are intentionally not
+committed.
 
 ### Deployed Gateway pipeline evaluation
 

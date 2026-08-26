@@ -2,6 +2,7 @@
 """Sanitized diagnosis for local-model versus deterministic premask failures."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import sys
@@ -20,8 +21,13 @@ from safety_gateway.redaction import (
 from safety_gateway.settings import GatewaySettings
 
 
-CHALLENGE = Path(
-    r"C:\Users\MEOW Computer\Desktop\微调模型\data\challenge_v3\challenge.jsonl"
+DEFAULT_CHALLENGE = (
+    PROJECT_ROOT
+    / "data"
+    / "local"
+    / "safety-eval"
+    / "challenge_v3"
+    / "challenge.jsonl"
 )
 CASE_IDS = {
     "challenge_v3_0001",  # failed multi-PII/email
@@ -32,6 +38,9 @@ CASE_IDS = {
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--challenge", type=Path, default=DEFAULT_CHALLENGE)
+    args = parser.parse_args()
     settings = GatewaySettings()
     annotator = LocalQwenAnnotator.load(
         model_dir=settings.model_dir,
@@ -44,7 +53,7 @@ def main() -> None:
         row["id"]: row
         for row in (
             json.loads(line)
-            for line in CHALLENGE.read_text(encoding="utf-8").splitlines()
+            for line in args.challenge.resolve().read_text(encoding="utf-8").splitlines()
         )
         if row["id"] in CASE_IDS
     }
