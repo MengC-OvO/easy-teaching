@@ -2,7 +2,7 @@
 """User-run live checks for the phase-one Agent and tool architecture.
 
 This script intentionally does not auto-approve writes. It calls the configured
-chat and embedding providers, so Codex must not run it during offline checks.
+chat and embedding providers, so it must not run during offline or zero-cost checks.
 """
 
 import argparse
