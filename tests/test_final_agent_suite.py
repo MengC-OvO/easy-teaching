@@ -11,11 +11,11 @@ from evals.final_agent_suite import (
 def test_final_suite_is_independent_and_bounded() -> None:
     cases = load_cases()
 
-    assert len(cases) == 40
-    assert sum(len(case.turns) for case in cases) == 46
+    assert len(cases) == 100
+    assert sum(len(case.turns) for case in cases) == 118
     assert sum(
         turn.expected.judge_quality for case in cases for turn in case.turns
-    ) == 19
+    ) == 58
     assert {case.category for case in cases} == {
         "activity_safety",
         "rag_grounding",

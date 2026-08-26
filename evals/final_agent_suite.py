@@ -249,7 +249,7 @@ class FinalSummary(Contract):
 
 
 class FinalReport(Contract):
-    suite: str = "easyteaching-final-agent-v1"
+    suite: str = "easyteaching-final-agent-v2"
     started_at: str
     finished_at: str
     cases_path: str

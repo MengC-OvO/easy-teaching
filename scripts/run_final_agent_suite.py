@@ -32,7 +32,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=PROJECT_ROOT / "reports" / "final_agent_evaluation.json",
+        default=PROJECT_ROOT / "reports" / "final_agent_evaluation_v2.json",
     )
     args = parser.parse_args()
     report = asyncio.run(

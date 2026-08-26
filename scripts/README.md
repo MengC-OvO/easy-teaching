@@ -14,7 +14,8 @@ Scripts are local entry points, not production API modules.
 | Google Drive MCP connectivity | `test_google_drive_mcp.py` |
 | Local safety setup/runtime | `setup_safety_gateway.ps1` / `.sh`, `start_safety_gateway.ps1` / `.sh` |
 | Synthetic privacy integration verification | `demo_privacy_flow.ps1` / `.sh` |
-| Final local safety evaluation | `run_local_safety_final_eval.py`, `diagnose_safety_premask_contract.py` |
+| Direct local-model evaluation | `run_local_model_final_eval.py` (raw input; PII and injection only) |
+| Final local safety Gateway evaluation | `run_local_safety_final_eval.py`, `diagnose_safety_premask_contract.py` |
 
 The phase-one smoke suite includes `draft_save_followup`, a two-turn live check
 that generates an activity and then asks the same Main ReAct thread to save the
@@ -117,11 +118,11 @@ Run the independent final Agent suite through the real production path:
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_final_agent_suite.py `
   --concurrency 3 `
-  --output reports\final_agent_evaluation.json
+  --output reports\final_agent_evaluation_v2.json
 ```
 
-This consumes configured model and embedding quota. It covers 40 scenarios and
-46 turns; generated reports remain ignored. The local safety evaluation must be
+This consumes configured model and embedding quota. It covers 100 scenarios and
+118 turns; generated reports remain ignored. The local safety evaluation must be
 run only while the separate Qwen Gateway is ready on port 8010. Its current
 release gate fails, so it is an evaluation command rather than a production
 enablement step.

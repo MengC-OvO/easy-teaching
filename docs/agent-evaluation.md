@@ -13,53 +13,62 @@ one aggregate score does not hide the source of a failure.
 | Offline Agent suite | `python scripts/run_evals.py` | deterministic routing and failure behavior without provider cost |
 | RAG retrieval | `python scripts/run_rag_evals.py` | Recall@K, MRR, nDCG, scope, citations and retrieval latency |
 | Final live Agent suite | `python scripts/run_final_agent_suite.py` | real HTTP, PostgreSQL, LangGraph, Gemini, Tools/Workers and local RAG |
-| Local privacy model | `python scripts/run_local_safety_final_eval.py` | independent Gateway, mapping, restoration, PII and injection evaluation |
+| Direct local privacy model | `python scripts/run_local_model_final_eval.py` | raw-input Qwen PII and injection evaluation without regex assistance |
+| Local privacy Gateway | `python scripts/run_local_safety_final_eval.py` | deployed premasking, HTTP, mapping and restoration evaluation |
 
-The final Agent suite contains 40 synthetic scenarios and 46 conversational
+The final Agent suite contains 100 synthetic scenarios and 118 conversational
 turns across activity safety, EYLF/NQS/policy RAG, records, frozen controlled
 writes, family communication, orchestration, security, multi-turn draft
 selection, idempotency and concurrency. Weather and Google Drive use
 deterministic adapters so external uptime and personal files cannot change the
 benchmark. Authentication and the local privacy model are evaluated separately.
 
-## Final result — 2026-08-25
+## Final result — 2026-08-26
 
 | Metric | Result |
 | --- | ---: |
-| Full-run scenario pass | `39/40 (97.5%)` |
-| Required-Tool recall | `100.0%` |
-| Tool precision (micro) | `95.8%` |
-| Derived Tool-selection F1 | `97.9%` |
+| Full-run scenario pass | `93/100 (93.0%)` |
+| Turn pass | `110/118 (93.2%)` |
+| Required-Tool recall | `98.0%` |
+| Tool precision (micro) | `92.8%` |
 | Tool parameter-contract accuracy | `100.0%` |
-| Forbidden-Tool violation rate | `0.0%` |
-| Average path efficiency | `91.1%` |
-| Approval integrity | `100.0%` |
+| Forbidden-Tool violation rate | `0.8%` |
+| Average path efficiency | `89.6%` |
+| Approval integrity | `87.5%` |
 | RAG grounding | `100.0%` |
 | Security / multi-turn / operational checks | `100% / 100% / 100%` |
-| LLM-judged answer quality | `19/19`, mean `98.9%` |
+| LLM-judged answer quality | `57/58 (98.3%)`, mean `98.6%` |
 | ReAct steps P50 / P95 / maximum | `2 / 4 / 4` |
 | Step-limit exhaustion / fallback | `0% / 0%` |
-| Decision-feedback rate | `2.4%` |
-| Latency P50 / P95 | `3.46 s / 11.68 s` |
-| Model calls | `118` |
-| Prompt / completion / total tokens | `561,496 / 22,805 / 584,301` |
+| Decision-feedback rate | `0.9%` |
+| Latency P50 / P95 | `3.16 s / 8.66 s` |
+| Model calls | `298` |
+| Prompt / completion / total tokens | `1,404,605 / 57,128 / 1,461,733` |
 | Offline regression at evaluation time | `329/329` passed |
 
-The only full-run failure was a bad assertion: one Chinese record-query case
-required the answer to expose an internal random marker. The Agent correctly
-retrieved the marker-scoped record and summarized its facts. The assertion was
-changed to test those facts, and the isolated rerun passed `1/1`. The original
-report is retained rather than rewritten.
+The raw result is retained without post-hoc score changes. Review of the seven
+failed scenarios found three evaluator false negatives (one narrow lexical
+assertion and two citation-attribution parser misses), three Agent behavior
+defects (save intent lost after prerequisite reads, incomplete export-to-Drive
+chaining, and missing send-capability disclosure), and one mixed isolation and
+grounding defect in the recent-record summary. One policy-aligned activity also
+revealed that a safety `needs_revision` observation was not fully reflected in
+the final answer even though the scenario's recorded failure was citation
+attribution. These findings remain tracked as defects rather than being hidden
+by weakening the suite.
 
 ## What the numbers mean
 
-- `100%` Tool recall means every required capability was selected.
-- `95.8%` Tool precision means a small number of valid but unnecessary calls
-  remained; this is an efficiency issue, not a permission violation.
-- `91.1%` path efficiency and a four-step maximum show the bounded ReAct loop
+- `98.0%` Tool recall shows capability selection is strong, but the missed save
+  and export actions are important because they occur on controlled writes.
+- `92.8%` Tool precision includes unnecessary record/Drive lookups in one
+  multi-stage request; most other trajectories selected only relevant Tools.
+- `89.6%` path efficiency and a four-step maximum show the bounded ReAct loop
   converges reliably on this dataset.
-- `0%` forbidden calls and `100%` approval integrity show deterministic code
-  boundaries held even when the model chose the trajectory.
+- `100%` parameter-contract accuracy, zero step-limit exhaustion and zero model
+  fallback show the execution contracts remained stable.
+- `100%` RAG, security, multi-turn and operational rates are the strongest
+  results; controlled writes and communication remain the priority fixes.
 - P95 latency and prompt tokens are the main optimization targets. Roughly 96%
   of measured tokens were prompt input, reflecting repeated context and Tool
   schemas rather than unusually long final answers.
@@ -80,7 +89,7 @@ tenant isolation, cost monitoring, and a larger adversarial set.
 # Uses configured Gemini and embedding quota
 .\.venv\Scripts\python.exe scripts\run_final_agent_suite.py `
   --concurrency 3 `
-  --output reports\final_agent_evaluation.json
+  --output reports\final_agent_evaluation_v2.json
 
 # Debug one scenario
 .\.venv\Scripts\python.exe scripts\run_final_agent_suite.py `
