@@ -1,3 +1,0 @@
-# Policy
-
-Stable content.

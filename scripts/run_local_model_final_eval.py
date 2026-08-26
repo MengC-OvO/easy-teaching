@@ -410,13 +410,23 @@ def main() -> int:
         "suite": "easyteaching-local-model-direct-final-v2",
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
         "evaluation_boundary": {
-            "input": "raw synthetic user text sent directly to Qwen2.5-1.5B + v11 LoRA",
+            "input": (
+                "raw synthetic user text sent directly to "
+                f"{settings.model_dir.name} + {settings.adapter_dir.name}"
+            ),
             "scored_tasks": ["PII entity detection/de-identification", "prompt-injection risk classification"],
             "excluded": ["regex premasking", "rule injection detection", "HTTP gateway policy", "education scope", "professional risk", "mapping vault"],
             "stores_source_text_or_entity_values": False,
         },
         "runtime": {
             "backend": annotator.backend,
+            "model_dir": str(settings.model_dir.resolve()),
+            "adapter_dir": str(settings.adapter_dir.resolve()),
+            "quantization": (
+                "bitsandbytes NF4 4-bit with double quantization"
+                if annotator.backend == "cuda"
+                else "FP16"
+            ),
             "batch_size": args.batch_size,
             "latency_definition": "wall time until the complete batch is available",
             "peak_allocated_gpu_memory_gb": peak_gpu_gb,

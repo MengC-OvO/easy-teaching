@@ -119,7 +119,7 @@ SSE streams persisted Agent lifecycle events rather than individual LLM tokens. 
 
 EasyTeaching must not **Diagnose children**, provide **medical advice** or **legal compliance conclusions**, or **Send real messages to families**. Human approval is required for every L2 controlled write.
 
-The optional local Gateway combines deterministic policy with a Qwen2.5-1.5B QLoRA annotation model. Python owns blocking, placeholders, one-time mappings and restoration. The current vault is memory-only and single-process; real personal data requires a passed Gateway release gate, durable encrypted mappings, multi-tenant identity, retention controls and formal privacy review.
+The optional local Gateway combines deterministic policy with a Qwen2.5-3B 4-bit QLoRA annotation model. Python owns blocking, placeholders, one-time mappings and restoration. The current vault is memory-only and single-process; real personal data requires a passed Gateway release gate, durable encrypted mappings, multi-tenant identity, retention controls and formal privacy review.
 
 See [Local Safety Gateway](docs/local-safety-gateway.md) for setup and detailed deployed-pipeline results.
 
@@ -153,9 +153,10 @@ Latest frozen results:
 | Required-Tool recall / Tool precision | `98.0% / 92.8%` |
 | Hybrid + Cross-encoder RAG, 40 questions | Recall@3 `97.5%`, MRR `0.869`, nDCG@10 `0.902` |
 | RAG citation correctness / scope violations | `100% / 0%` |
-| Direct Qwen model, 1,227 raw-input cases | Injection Macro-F1 `95.2%`, block recall `97.7%` |
-| Direct Qwen PII precision / recall / F1 | `98.5% / 93.9% / 96.1%` |
-| Direct Qwen labelled-entity leakage / release gate | `5.5% / failed` |
+| Direct Qwen2.5-3B, 1,227 raw-input cases | Injection accuracy `97.0%`, Macro-F1 `95.9%`, block recall `100%` |
+| Direct Qwen2.5-3B PII precision / recall / F1 | `98.1% / 94.6% / 96.3%` |
+| Direct Qwen2.5-3B structured output / de-identification pass | `99.5% / 96.7%` |
+| Direct Qwen2.5-3B labelled-entity leakage / release gate | `5.0% / failed` |
 
 The Agent evaluation uses synthetic scenarios and deterministic weather/Drive adapters. The RAG set uses one manually selected exact gold chunk per question. The direct-model benchmark excludes regex/rule assistance and measures the model rather than the deployed Gateway. Detailed methods and failures are in [Agent evaluation](docs/agent-evaluation.md), [RAG system](docs/rag-system.md) and [Local Safety Gateway](docs/local-safety-gateway.md).
 
