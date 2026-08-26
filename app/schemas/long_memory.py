@@ -1,6 +1,6 @@
 """Contracts for privacy-bounded, cross-thread long-term memory.
 
-Only stable teacher preferences, confirmed class facts, and durable workflow
+Only stable teacher preferences, confirmed class facts, and durable cross-session
 constraints may enter the long-term memory pipeline. Conversation transcripts,
 draft text, policy answers, tool payloads, and child/family personal data are
 intentionally outside this schema.

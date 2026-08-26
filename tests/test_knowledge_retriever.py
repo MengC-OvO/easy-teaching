@@ -58,6 +58,14 @@ class FakeVectorStore:
         return self.query(query_embedding, top_k=top_k, where=where)
 
 
+class SyncOnlyVectorStore:
+    def __init__(self, chunks: List[RetrievedKnowledgeChunk]) -> None:
+        self.chunks = chunks
+
+    def query(self, query_embedding, *, top_k=5, where=None):
+        return self.chunks[:top_k]
+
+
 class FakeCrossEncoderReranker:
     def __init__(self) -> None:
         self.calls = []
@@ -172,6 +180,23 @@ def test_knowledge_retriever_async_path_uses_async_dependencies() -> None:
     assert [chunk.chunk_id for chunk in result.chunks] == ["chunk-1"]
     assert embedding_provider.calls[0]["task_type"] == "RETRIEVAL_QUERY"
     assert vector_store.calls[0]["top_k"] == 1
+
+
+def test_knowledge_retriever_async_path_supports_sync_only_vector_store() -> None:
+    retriever = KnowledgeRetriever(
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_store=SyncOnlyVectorStore([make_retrieved_chunk("chunk-1", 0.1)]),
+        candidate_multiplier=1,
+    )
+
+    result = asyncio.run(
+        retriever.retrieve_async(
+            RetrievalRequest(query="play", top_k=1, mode=RetrievalMode.DENSE)
+        )
+    )
+
+    assert [chunk.chunk_id for chunk in result.chunks] == ["chunk-1"]
+    assert result.stats.dense_result_count == 1
 
 
 def test_knowledge_retriever_builds_chroma_where_filter() -> None:

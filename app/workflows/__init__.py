@@ -1,4 +1,4 @@
-"""LangGraph workflow definitions."""
+"""LangGraph execution graph and checkpoint wiring for the Main ReAct agent."""
 
 from app.workflows.checkpointing import (
     build_postgres_checkpointer,

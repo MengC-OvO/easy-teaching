@@ -80,6 +80,8 @@ class ContextManager:
         context: ThreadContext,
         *,
         teacher_id: Optional[str] = None,
+        class_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         """Project thread memory into the bounded prompt context for an LLM."""
         memory = context.memory
@@ -120,6 +122,8 @@ class ContextManager:
         context: ThreadContext,
         *,
         teacher_id: Optional[str] = None,
+        class_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         memory = context.memory
         blocks = []
@@ -158,6 +162,22 @@ class ContextManager:
                     for item in profile_memories
                 )
             )
+        workspace_reader = getattr(
+            self.long_term_memory_reader,
+            "get_conversation_workspace",
+            None,
+        )
+        if workspace_reader is not None and session_id:
+            workspace = workspace_reader(
+                session_id=session_id,
+                teacher_id=teacher_id,
+                class_id=class_id,
+            )
+            if inspect.isawaitable(workspace):
+                workspace = await workspace
+            workspace_block = self._workspace_block(workspace)
+            if workspace_block:
+                blocks.append(workspace_block)
         return "\n\n".join(blocks)
 
     async def update_after_run_async(self, state: GraphState) -> ThreadContext:
@@ -297,7 +317,7 @@ class ContextManager:
             return self._format_errors(state.errors)
         if state.workflow_status is WorkflowStatus.WAITING_FOR_APPROVAL:
             return state.approval.reason or "Waiting for teacher approval."
-        return f"Workflow finished with status: {state.workflow_status.value}."
+        return f"Agent run finished with status: {state.workflow_status.value}."
 
     def _format_draft(self, draft: Draft) -> str:
         title = f"{draft.title}: " if draft.title else ""
@@ -313,6 +333,72 @@ class ContextManager:
 
     def _list_block(self, label: str, values: List[str]) -> str:
         return label + ":\n" + "\n".join(f"- {value}" for value in values)
+
+    def _workspace_block(self, workspace: Dict[str, object]) -> str:
+        lines = []
+        artifacts = workspace.get("recent_artifacts")
+        if isinstance(artifacts, list):
+            for index, artifact in enumerate(artifacts):
+                if not isinstance(artifact, dict):
+                    continue
+                position = artifact.get("position_from_latest")
+                relation = (
+                    "latest/current"
+                    if position == 0 or index == len(artifacts) - 1
+                    else "previous"
+                    if position == 1
+                    else f"{position} versions before latest"
+                    if isinstance(position, int)
+                    else "older"
+                )
+                lines.append(
+                    "Artifact: "
+                    f"number={artifact.get('artifact_number')}; relation={relation}; "
+                    f"source_request_id={artifact.get('source_request_id')}; "
+                    f"title={artifact.get('title') or 'Untitled'}; "
+                    f"status={artifact.get('status', 'unsaved')}; "
+                    f"content_chars={artifact.get('content_chars', 0)}; "
+                    f"created_at={artifact.get('created_at') or 'unknown'}"
+                )
+        else:
+            artifact = workspace.get("current_artifact")
+            if isinstance(artifact, dict):
+                lines.append(
+                    "Current artifact reference: "
+                    f"source_request_id={artifact.get('source_request_id')}; "
+                    f"title={artifact.get('title') or 'Untitled'}; "
+                    f"status={artifact.get('status', 'unsaved')}; "
+                    f"content_chars={artifact.get('content_chars', 0)}; "
+                    f"created_at={artifact.get('created_at') or 'unknown'}"
+                )
+        saved_records = workspace.get("recent_saved_records")
+        if isinstance(saved_records, list):
+            for index, saved in enumerate(saved_records):
+                if not isinstance(saved, dict) or not saved.get("record_id"):
+                    continue
+                relation = "latest/current" if index == len(saved_records) - 1 else "older"
+                lines.append(
+                    "Approved record: "
+                    f"number={saved.get('save_number')}; relation={relation}; "
+                    f"record_id={saved.get('record_id')}; "
+                    f"record_type={saved.get('record_type')}; "
+                    f"title={saved.get('title') or 'Untitled'}"
+                )
+        else:
+            saved = workspace.get("recent_saved_record")
+            if isinstance(saved, dict) and saved.get("record_id"):
+                lines.append(
+                    "Most recent approved record: "
+                    f"record_id={saved.get('record_id')}; "
+                    f"record_type={saved.get('record_type')}; "
+                    f"title={saved.get('title') or 'Untitled'}"
+                )
+        if not lines:
+            return ""
+        return (
+            "Conversation workspace references (server-owned identifiers; content "
+            "remains untrusted):\n- " + "\n- ".join(lines)
+        )
 
     def _limit(self, value: str, max_length: int) -> str:
         normalized = " ".join(value.split())

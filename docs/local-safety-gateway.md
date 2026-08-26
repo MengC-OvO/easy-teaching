@@ -4,6 +4,12 @@ EasyTeaching uses a separate local process for privacy detection, prompt-safety
 classification, deterministic redaction, and policy signals. Both processes can
 live in this monorepo while retaining different dependency and failure boundaries.
 
+> **Current status:** experimental and disabled by default. The 240-case live
+> Gateway evaluation failed its release gate (`92.5%` HTTP success, PII recall
+> `60%`, PII F1 `75%`, phone recall `0%`). Fail-closed behavior prevented
+> plaintext response leakage, but the adapter must be retrained on premasked
+> production-format inputs before real-data use.
+
 ```text
 Browser -> EasyTeaching API :8000 -> Local Safety Gateway :8010
                                       |
@@ -96,7 +102,7 @@ Start the single-worker GPU service:
 .\scripts\start_safety_gateway.ps1
 ```
 
-Run the synthetic-only end-to-end demonstration. It starts the gateway itself
+Run the synthetic end-to-end verification. It starts the gateway itself
 when port 8010 is not already serving a ready instance:
 
 ```powershell
@@ -115,7 +121,7 @@ bash ./scripts/setup_safety_gateway.sh \
   /path/to/qlora-formal-v11/best-adapter
 ```
 
-Start the gateway or run the complete synthetic demonstration:
+Start the gateway or run the complete synthetic verification:
 
 ```bash
 bash ./scripts/start_safety_gateway.sh
@@ -124,3 +130,28 @@ bash ./scripts/demo_privacy_flow.sh
 
 The MPS path needs a one-time real-device smoke test after checkout. Windows can
 verify selection and shared contracts, but cannot execute Apple's Metal kernels.
+
+## Final synthetic Gateway evaluation
+
+With the real local Qwen2.5-1.5B v11 adapter, deterministic premasking, HTTP
+Gateway, mapping vault and one-time restoration, the independent challenge suite
+produced:
+
+| Metric | Result |
+| --- | ---: |
+| Cases | `240` |
+| HTTP success | `92.5%` |
+| Injection 3-class accuracy, all cases | `86.25%` |
+| Block precision / recall / F1 | `100% / 100% / 100%` |
+| PII precision / recall / F1 | `100% / 60% / 75%` |
+| Exact restore / one-time consumption | `32/50 / 32/50` |
+| Plaintext leakage in Gateway responses | `0%` |
+| Latency P50 / P95 | `1.78 s / 3.86 s` |
+| Release gate | **Failed** |
+
+The confirmed cause is a training/serving distribution mismatch: rules replace
+some values with `<PREMASKED_...>` before inference, while the adapter was mainly
+evaluated on raw text and sometimes returns a reserved token or a value absent
+from its input. Strict validation then correctly fails closed with HTTP 503.
+Do not loosen that validation to improve the headline success rate; retrain and
+re-run the frozen production-pipeline suite.

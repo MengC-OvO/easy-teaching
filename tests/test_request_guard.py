@@ -11,7 +11,16 @@ def test_guard_allows_early_childhood_teacher_work() -> None:
     )
 
     assert result.action is RequestGuardAction.ALLOW
-    assert result.code == "education_scope"
+    assert result.code == "deterministic_safety_passed"
+
+
+def test_guard_allows_sensory_play_activity_for_a_named_room() -> None:
+    result = EasyTeachingRequestGuard().evaluate(
+        "Create a short sensory play activity for the Kangaroo Room."
+    )
+
+    assert result.action is RequestGuardAction.ALLOW
+    assert result.code == "deterministic_safety_passed"
 
 
 def test_guard_blocks_user_prompt_injection_in_english_and_chinese() -> None:
@@ -27,14 +36,14 @@ def test_guard_blocks_user_prompt_injection_in_english_and_chinese() -> None:
     assert english.code == chinese.code == "prompt_injection"
 
 
-def test_guard_blocks_clear_off_topic_request() -> None:
+def test_guard_leaves_scope_classification_to_the_local_model() -> None:
     result = EasyTeachingRequestGuard().evaluate("Write Python code for cryptocurrency trading.")
 
-    assert result.action is RequestGuardAction.BLOCK
-    assert result.code == "outside_education_scope"
+    assert result.action is RequestGuardAction.ALLOW
+    assert result.code == "deterministic_safety_passed"
 
 
-def test_guard_clarifies_ambiguous_new_request_but_allows_follow_up() -> None:
+def test_guard_does_not_keyword_classify_ambiguous_requests() -> None:
     guard = EasyTeachingRequestGuard()
 
     initial = guard.evaluate("Make it shorter.")
@@ -43,7 +52,7 @@ def test_guard_clarifies_ambiguous_new_request_but_allows_follow_up() -> None:
         conversation_context="Teacher requested an EYLF activity draft.",
     )
 
-    assert initial.action is RequestGuardAction.CLARIFY
+    assert initial.action is RequestGuardAction.ALLOW
     assert follow_up.action is RequestGuardAction.ALLOW
 
 

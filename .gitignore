@@ -6,6 +6,7 @@ __pycache__/
 .env
 .DS_Store
 .pytest_cache/
+.test-cache/
 .pytest_tmp*/
 .pytest_*/
 .mypy_cache/
@@ -32,3 +33,4 @@ data/knowledge/index/
 /AGENTS.md
 /docs/react-refactor-plan.md
 /docs/project-refactor-notes.md
+/docs/agent-optimization-notes.md

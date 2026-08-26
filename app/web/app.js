@@ -10,6 +10,11 @@ const state = {
   conversations: JSON.parse(localStorage.getItem("easyteaching-conversations") || "[]"),
 };
 
+const LOCAL_DEMO_SCOPE = {
+  teacher_id: "teacher-001",
+  class_id: "kangaroo-room",
+};
+
 const ui = {
   composer: document.querySelector("#composer"),
   input: document.querySelector("#message-input"),
@@ -82,14 +87,20 @@ function renderConversationList() {
   ui.conversations.innerHTML = state.conversations.length
     ? state.conversations.map((item) => `
       <button class="conversation-item ${item.sessionId === state.sessionId ? "active" : ""}"
-        data-session-id="${escapeHtml(item.sessionId)}">${escapeHtml(item.title)}</button>`).join("")
+        data-session-id="${escapeHtml(item.sessionId)}"
+        data-request-id="${escapeHtml(item.requestId || "")}">${escapeHtml(item.title)}</button>`).join("")
     : '<div class="conversation-item">No conversations yet</div>';
 }
 
 function rememberConversation(prompt) {
   const title = prompt.length > 42 ? `${prompt.slice(0, 42)}…` : prompt;
   state.conversations = state.conversations.filter((item) => item.sessionId !== state.sessionId);
-  state.conversations.unshift({ sessionId: state.sessionId, title });
+  state.conversations.unshift({
+    sessionId: state.sessionId,
+    requestId: state.requestId,
+    prompt,
+    title,
+  });
   saveConversations();
 }
 
@@ -109,7 +120,7 @@ function addAssistantShell() {
     <div class="bubble">
       <div class="thinking"><span class="thinking-dots"><i></i><i></i><i></i></span><span>Understanding your request…</span></div>
       <details class="trace-panel">
-        <summary>View workflow activity</summary>
+        <summary>View agent activity</summary>
         <ol class="trace-list"></ol>
       </details>
       <div class="assistant-result"></div>
@@ -127,7 +138,7 @@ function addTrace(shell, event) {
   list.appendChild(item);
   const thinking = shell.querySelector(".thinking span:last-child");
   if (thinking) {
-    thinking.textContent = data.message || "Working through the educator workflow…";
+    thinking.textContent = data.message || "EasyTeaching is working…";
   }
 }
 
@@ -143,14 +154,69 @@ function citationsHtml(citations = []) {
   }).join("")}</div>`;
 }
 
+function fieldLabel(value = "") {
+  return String(value)
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function previewValue(value) {
+  if (value === null || value === undefined || value === "") return "Not provided";
+  if (Array.isArray(value)) return value.map((item) => escapeHtml(item)).join(", ");
+  if (typeof value === "object") {
+    return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+  }
+  return escapeHtml(value);
+}
+
+function approvalHtml(approval = {}) {
+  if (!approval || approval.status === "not_required") return "";
+  const status = approval.status || "required";
+  const rows = Object.entries(approval.preview || {}).map(([key, value]) => `
+    <div class="approval-field">
+      <dt>${escapeHtml(fieldLabel(key))}</dt>
+      <dd>${previewValue(value)}</dd>
+    </div>`).join("");
+
+  if (status === "required") {
+    return `
+      <section class="approval-card" aria-live="polite">
+        <div class="approval-heading">
+          <span class="approval-icon" aria-hidden="true">✓</span>
+          <div>
+            <p class="approval-eyebrow">YOUR APPROVAL IS REQUIRED</p>
+            <h3>Review before saving</h3>
+          </div>
+        </div>
+        <p class="approval-copy">Nothing has been written yet. Check every field, then approve or reject this action.</p>
+        <dl class="approval-preview">${rows || '<div class="approval-empty">No preview fields were supplied.</div>'}</dl>
+        <div class="approval-actions">
+          <button class="approval-button reject" type="button" data-approval-decision="reject">Reject</button>
+          <button class="approval-button approve" type="button" data-approval-decision="approve">Approve and save</button>
+        </div>
+        <p class="approval-progress" role="status"></p>
+      </section>`;
+  }
+
+  const labels = {
+    approved: "Approved and completed",
+    rejected: "Rejected — nothing was saved",
+    failed: "The approved action could not be completed",
+  };
+  return `<div class="approval-outcome ${escapeHtml(status)}">${escapeHtml(labels[status] || fieldLabel(status))}</div>`;
+}
+
 function renderDraft(shell, payload) {
   shell.querySelector(".thinking")?.remove();
+  shell.dataset.sessionId = payload.session_id;
+  shell.dataset.requestId = payload.request_id;
   const result = shell.querySelector(".assistant-result");
   result.innerHTML = `
     ${payload.draft.is_draft ? '<span class="draft-badge">DRAFT · REVIEW BEFORE USE</span>' : ""}
     <h2 class="message-title">${escapeHtml(payload.draft.title)}</h2>
     <div class="assistant-copy">${paragraphs(payload.draft.content)}</div>
-    ${citationsHtml(payload.citations)}`;
+    ${citationsHtml(payload.citations)}
+    ${approvalHtml(payload.approval)}`;
 
   scrollToBottom();
 }
@@ -257,15 +323,20 @@ async function logout() {
 
 async function ensureSession() {
   if (state.sessionId) return state.sessionId;
-  const session = await api("/sessions", { method: "POST", body: "{}" });
+  const sessionScope = state.authConfig?.enabled ? {} : LOCAL_DEMO_SCOPE;
+  const session = await api("/sessions", {
+    method: "POST",
+    body: JSON.stringify(sessionScope),
+  });
   state.sessionId = session.session_id;
   return state.sessionId;
 }
 
-async function getDraft(shell) {
+async function getDraft(shell, sessionId = state.sessionId, requestId = state.requestId) {
   try {
-    const payload = await api(`/sessions/${state.sessionId}/drafts/${state.requestId}`);
+    const payload = await api(`/sessions/${sessionId}/drafts/${requestId}`);
     renderDraft(shell, payload);
+    return payload;
   } catch (error) {
     const thinking = shell.querySelector(".thinking span:last-child");
     if (thinking) thinking.textContent = "The draft is still being prepared…";
@@ -276,6 +347,8 @@ function connectEvents(shell, afterSequence = state.lastSequence) {
   state.source?.close();
   const url = `/sessions/${state.sessionId}/events?request_id=${encodeURIComponent(state.requestId)}&after_sequence=${afterSequence}`;
   const source = new EventSource(url);
+  shell.dataset.sessionId = state.sessionId;
+  shell.dataset.requestId = state.requestId;
   state.source = source;
   let lastSequence = afterSequence;
 
@@ -284,16 +357,22 @@ function connectEvents(shell, afterSequence = state.lastSequence) {
     lastSequence = payload.sequence;
     state.lastSequence = payload.sequence;
     addTrace(shell, payload);
-    if (payload.event === "draft_ready") getDraft(shell);
+    if (payload.event === "draft_ready") getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
+    if (payload.event === "approval_required") {
+      source.close();
+      getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
+      setBusy(false);
+      setStatus("Review required", "review");
+    }
     if (["completed", "failed", "cancelled"].includes(payload.event)) {
       source.close();
-      if (payload.event === "completed") getDraft(shell);
+      if (payload.event === "completed") getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
       if (payload.event === "failed") showRunError(shell, "EasyTeaching could not complete this draft. Please try again.");
       setBusy(false);
     }
   };
 
-  ["run_started", "route_selected", "trace", "draft_ready", "completed", "failed", "cancelled"]
+  ["run_started", "route_selected", "trace", "draft_ready", "approval_required", "completed", "failed", "cancelled"]
     .forEach((name) => source.addEventListener(name, handle));
 
   source.onerror = () => {
@@ -302,6 +381,32 @@ function connectEvents(shell, afterSequence = state.lastSequence) {
       window.setTimeout(() => connectEvents(shell, lastSequence), 700);
     }
   };
+}
+
+async function submitApproval(shell, decision) {
+  const sessionId = shell.dataset.sessionId;
+  const requestId = shell.dataset.requestId;
+  const card = shell.querySelector(".approval-card");
+  const progress = card?.querySelector(".approval-progress");
+  const buttons = card?.querySelectorAll("[data-approval-decision]") || [];
+  if (!sessionId || !requestId || !card) return;
+
+  buttons.forEach((button) => { button.disabled = true; });
+  if (progress) progress.textContent = decision === "approve" ? "Saving approved fields…" : "Rejecting this action…";
+  setStatus(decision === "approve" ? "Saving" : "Rejecting", "busy");
+  try {
+    await api(`/sessions/${sessionId}/approvals`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId, decision }),
+    });
+    await getDraft(shell, sessionId, requestId);
+    showToast(decision === "approve" ? "Approved action completed." : "Action rejected. Nothing was saved.");
+    setStatus("Ready", "ready");
+  } catch (error) {
+    buttons.forEach((button) => { button.disabled = false; });
+    if (progress) progress.textContent = error.message;
+    setStatus("Needs attention", "error");
+  }
 }
 
 function showRunError(shell, message) {
@@ -384,14 +489,33 @@ ui.logout.addEventListener("click", logout);
 ui.conversations.addEventListener("click", (event) => {
   const sessionId = event.target.dataset.sessionId;
   if (!sessionId || sessionId === state.sessionId) return;
+  const remembered = state.conversations.find((item) => item.sessionId === sessionId);
   state.sessionId = sessionId;
-  state.requestId = null;
+  state.requestId = event.target.dataset.requestId || remembered?.requestId || null;
   state.lastSequence = -1;
   ui.messages.innerHTML = "";
-  ui.welcome.hidden = false;
+  ui.welcome.hidden = Boolean(state.requestId);
   renderConversationList();
-  showToast("Session restored. Send a message to continue its LangGraph thread.");
+  if (remembered?.prompt) addUserMessage(remembered.prompt);
+  if (state.requestId) {
+    const shell = addAssistantShell();
+    getDraft(shell, state.sessionId, state.requestId).then((payload) => {
+      if (payload?.approval?.status === "required") {
+        setStatus("Review required", "review");
+      }
+    });
+  } else {
+    showToast("Session restored. Send a message to continue its LangGraph thread.");
+  }
   ui.sidebar.classList.remove("open");
+});
+
+ui.messages.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-approval-decision]");
+  if (!button || button.disabled) return;
+  const shell = button.closest(".message.assistant");
+  if (!shell) return;
+  submitApproval(shell, button.dataset.approvalDecision);
 });
 
 renderConversationList();

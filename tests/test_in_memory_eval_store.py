@@ -54,6 +54,24 @@ def test_store_keeps_long_term_memories_scoped_to_their_owner(tmp_path) -> None:
     assert memories == []
 
 
+def test_record_text_search_returns_only_matching_records() -> None:
+    store = InMemoryEvalStore()
+
+    matching = store.query_records(
+        teacher_id="teacher-1",
+        class_id="kangaroo-room",
+        search_text="Garden storytelling",
+    )
+    missing = store.query_records(
+        teacher_id="teacher-1",
+        class_id="kangaroo-room",
+        search_text="Purple Unicorn Excursion",
+    )
+
+    assert len(matching) == 1
+    assert missing == []
+
+
 def test_store_applies_insert_update_and_delete_operations(tmp_path) -> None:
     store = InMemoryEvalStore()
     initial = LongTermMemoryCandidate(

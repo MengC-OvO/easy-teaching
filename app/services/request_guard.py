@@ -1,4 +1,4 @@
-"""Deterministic scope and prompt-injection guard for Main ReAct requests."""
+"""Small deterministic safety guard for Main ReAct requests."""
 
 import re
 from dataclasses import dataclass
@@ -38,21 +38,6 @@ _INJECTION_PATTERNS = (
     re.compile(r"\[\s*(?:system|developer)\s*\]", re.IGNORECASE),
 )
 
-_EDUCATION_SCOPE_PATTERN = re.compile(
-    r"(?:early\s+childhood|preschool|kindergarten|childcare|daycare|educator|teacher|"
-    r"classroom|children?|famil(?:y|ies)|learning\s+stor(?:y|ies)|EYLF|NQS|ACECQA|"
-    r"幼儿园|幼教|早教|托儿|教师|老师|班级|儿童|孩子|家长|家庭|教学|课程|学习故事|"
-    r"观察记录|活动计划|户外活动|游戏活动|欢迎语)",
-    re.IGNORECASE,
-)
-
-_OFF_TOPIC_PATTERN = re.compile(
-    r"(?:\bstock(?:s|\s+price)?\b|\bshare\s+price\b|\bcrypto(?:currency)?\b|\bbitcoin\b|"
-    r"\bforex\b|\btrading\b|\bpython\b|\bjavascript\b|\bprogramming\b|\bsource\s+code\b|"
-    r"股票|股价|炒股|加密货币|比特币|外汇交易|编程|程序代码|写代码|赌博|博彩)",
-    re.IGNORECASE,
-)
-
 _HIGH_RISK_PATTERN = re.compile(
     r"(?:diagnos(?:e|is).{0,24}(?:child|student)|prescribe.{0,20}(?:medicine|medication)|"
     r"guarantee.{0,20}(?:legal|compliance)|诊断.{0,12}(?:儿童|孩子|学生)|"
@@ -60,9 +45,22 @@ _HIGH_RISK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_APPROVAL_BYPASS_PATTERN = re.compile(
+    r"(?:pretend|assume).{0,24}approval.{0,24}(?:happened|complete|approved)|"
+    r"bypass.{0,16}approval|do\s+not\s+show.{0,20}approval\s+preview|"
+    r"directly\s+call\s+save_[a-z_]+.{0,40}invented\s+fields|"
+    r"(?:假装|假设).{0,12}(?:审批|批准).{0,12}(?:完成|通过)|"
+    r"绕过.{0,8}(?:审批|批准)|不要.{0,12}(?:审批|确认).{0,8}(?:预览|页面)",
+    re.IGNORECASE,
+)
+
 
 class EasyTeachingRequestGuard:
-    """Allow education work, clarify ambiguity, and block clear unsafe requests."""
+    """Block deterministic injection and narrow high-risk requests only.
+
+    Education-scope classification belongs to the local safety model. A keyword
+    allowlist here would reject valid teacher language and duplicate that model.
+    """
 
     def evaluate(
         self,
@@ -70,6 +68,7 @@ class EasyTeachingRequestGuard:
         *,
         conversation_context: str = "",
     ) -> RequestGuardResult:
+        del conversation_context
         normalized = " ".join(user_message.split())
         if contains_prompt_injection(normalized):
             return RequestGuardResult(
@@ -91,28 +90,19 @@ class EasyTeachingRequestGuard:
                     "conclusions. Please consult the appropriate qualified professional."
                 ),
             )
-        if _OFF_TOPIC_PATTERN.search(normalized):
+        if _APPROVAL_BYPASS_PATTERN.search(normalized):
             return RequestGuardResult(
-                action=RequestGuardAction.BLOCK,
-                code="outside_education_scope",
+                action=RequestGuardAction.CLARIFY,
+                code="approval_bypass_attempt",
                 response=(
-                    "EasyTeaching is limited to Australian early-childhood education work, such as "
-                    "activities, EYLF alignment, teacher drafts, class context, and safety "
-                    "guidance."
+                    "I cannot pretend approval occurred, invent record fields, or "
+                    "bypass the approval preview. Please provide the real observation "
+                    "details; any save will still require your review and approval."
                 ),
             )
-        if _EDUCATION_SCOPE_PATTERN.search(normalized) or conversation_context.strip():
-            return RequestGuardResult(
-                action=RequestGuardAction.ALLOW,
-                code="education_scope",
-            )
         return RequestGuardResult(
-            action=RequestGuardAction.CLARIFY,
-            code="ambiguous_scope",
-            response=(
-                "Could you relate this request to your early-childhood teaching, class, "
-                "children, families, EYLF, or activity-planning work?"
-            ),
+            action=RequestGuardAction.ALLOW,
+            code="deterministic_safety_passed",
         )
 
 

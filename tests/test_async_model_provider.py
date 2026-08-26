@@ -125,3 +125,32 @@ def test_async_provider_does_not_retry_nonrecoverable_error():
             await provider.client.aclose()
 
     asyncio.run(run())
+
+
+def test_async_provider_accepts_one_json_object_wrapped_in_provider_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": 'Here is the result:\n{"answer":"ok"}\nDone.'
+                        }
+                    }
+                ]
+            },
+        )
+
+    async def run():
+        provider = _provider(handler)
+        try:
+            response = await provider.generate_structured(
+                messages=[ModelMessage(role=ModelRole.USER, content="test")],
+                response_model=StructuredAnswer,
+            )
+            assert response.structured.answer == "ok"
+        finally:
+            await provider.client.aclose()
+
+    asyncio.run(run())

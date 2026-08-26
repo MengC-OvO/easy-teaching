@@ -5,6 +5,7 @@ from app.schemas import (
     CapabilityCall,
     CapabilityObservation,
     CapabilitySource,
+    CompletionAction,
     MainDecision,
     ObservationStatus,
     WorkerCall,
@@ -33,16 +34,26 @@ def test_main_decision_accepts_one_or_many_tool_calls() -> None:
     assert decision.current_calls[0].name == "get_weather"
 
 
+def test_main_decision_carries_a_typed_completion_contract() -> None:
+    decision = MainDecision(
+        reason="The teacher explicitly asked to save after the read.",
+        completion_actions=[CompletionAction.SAVE_EDUCATIONAL_RECORD],
+        tool_calls=[CapabilityCall(name="query_records", result_key="records")],
+    )
+
+    assert decision.completion_actions == [CompletionAction.SAVE_EDUCATIONAL_RECORD]
+
+
 def test_main_decision_accepts_parallel_worker_calls() -> None:
     decision = MainDecision(
         reason="三项深度研究互不依赖。",
         worker_calls=[
             WorkerCall(
-                name=WorkerName.INTERNAL_RESEARCH,
+                name=WorkerName.CURRICULUM_RESEARCH,
                 result_key="internal",
             ),
             WorkerCall(
-                name=WorkerName.LOCAL_CONTEXT,
+                name=WorkerName.RECORD_CONTEXT,
                 result_key="local",
             ),
         ],
@@ -76,16 +87,29 @@ def test_main_decision_rejects_invalid_combinations(payload) -> None:
         MainDecision.model_validate(payload)
 
 
-def test_call_deduplicates_needs_and_has_stable_signature() -> None:
+def test_call_has_stable_signature_independent_of_argument_order() -> None:
     call = CapabilityCall(
         name="search_eylf",
         arguments={"b": 2, "a": 1},
-        needs=["context", "context"],
         result_key="eylf",
     )
 
-    assert call.needs == ["context"]
     assert call.signature() == '{"arguments": {"a": 1, "b": 2}, "name": "search_eylf"}'
+
+
+def test_call_signature_normalizes_case_and_whitespace() -> None:
+    first = CapabilityCall(
+        name="query_records",
+        arguments={"query": "  Garden   Story  "},
+        result_key="first",
+    )
+    second = CapabilityCall(
+        name="query_records",
+        arguments={"query": "garden story"},
+        result_key="second",
+    )
+
+    assert first.signature() == second.signature()
 
 
 def test_observation_marks_completed_and_insufficient_as_available() -> None:

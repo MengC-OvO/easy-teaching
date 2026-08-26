@@ -1,10 +1,22 @@
+import hashlib
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.main import create_app
-from app.schemas import Draft, GraphState, RunStatus, WorkflowStatus
+from app.api.execution import _recovered_run_status
+from app.schemas import Draft, GraphState, RiskLevel, RunStatus, WorkflowStatus
+from app.tools import (
+    ToolCategory,
+    ToolDefinition,
+    ToolDomain,
+    ToolPermission,
+    ToolRegistry,
+    ToolResult,
+)
 from app.integrations.privacy_gateway_client import PrivacyGatewayUnavailableError
 from safety_gateway.contracts import (
     GatewayAction,
@@ -20,6 +32,7 @@ class MemoryStore:
         self.runs = {}
         self.results = {}
         self.events = {}
+        self.actions = {}
 
     async def close(self):
         return None
@@ -92,6 +105,22 @@ class MemoryStore:
             if item["sequence"] > after_sequence
         ]
 
+    async def get_tool_action_request(self, action_id):
+        return self.actions.get(action_id)
+
+    async def claim_tool_action_request(self, action_id):
+        action = self.actions[action_id]
+        if action["status"] != "pending":
+            raise ValueError("Tool action request has already been decided")
+        action["status"] = "executing"
+        return dict(action)
+
+    async def finish_tool_action_request(self, action_id, *, status, result=None):
+        action = self.actions[action_id]
+        action["status"] = status
+        action["result"] = result
+        return dict(action)
+
 
 class RecordingGraph:
     def __init__(self):
@@ -125,6 +154,7 @@ class FakeRuntime:
         self.graph = RecordingGraph()
         self.privacy_gateway_mode = "disabled"
         self.privacy_gateway_client = None
+        self.tool_registry = ToolRegistry()
         self.is_closed = False
 
     async def close(self):
@@ -139,7 +169,6 @@ class FakeGatewayClient:
         self.requests = []
         self.restore_requests = []
         self.discarded_mapping_ids = []
-
     async def inspect(self, request):
         self.requests.append(request)
         if self.error:
@@ -157,6 +186,23 @@ class FakeGatewayClient:
         return RestoreResponse(
             restored_text=request.text.replace("<PERSON_NAME_1>", "Maya Example")
         )
+
+
+def test_late_graph_failure_preserves_a_durable_completed_checkpoint() -> None:
+    completed = GraphState(
+        request_id="request-completed-checkpoint",
+        session_id="session-1",
+        user_message="Create a draft.",
+        workflow_status=WorkflowStatus.COMPLETED,
+        draft=Draft(title="Recovered", content="Durable teacher-facing result."),
+    )
+    incomplete = completed.model_copy(
+        update={"workflow_status": WorkflowStatus.DRAFTING, "draft": None}
+    )
+
+    assert _recovered_run_status(completed) is RunStatus.COMPLETED
+    assert _recovered_run_status(incomplete) is RunStatus.FAILED
+    assert _recovered_run_status(None) is RunStatus.FAILED
 
 
 class PlaceholderGraph(RecordingGraph):
@@ -179,6 +225,33 @@ class FailingGraph(RecordingGraph):
     async def ainvoke(self, state, config):
         self.calls.append((state, config))
         raise RuntimeError("synthetic graph failure")
+
+
+class ApprovedWriteInput(BaseModel):
+    text: str
+
+
+class ApprovedWriteOutput(BaseModel):
+    saved: str
+
+
+def register_approved_write(runtime: FakeRuntime) -> None:
+    runtime.tool_registry.register(
+        ToolDefinition(
+            name="save_synthetic",
+            description="Synthetic approval-gated write.",
+            category=ToolCategory.DRAFT,
+            input_model=ApprovedWriteInput,
+            output_model=ApprovedWriteOutput,
+            risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+            permission=ToolPermission.REQUIRE_APPROVAL,
+            domain=ToolDomain.LOCAL,
+            handler=lambda args: ToolResult.ok(
+                data={"saved": args.text},
+                risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+            ),
+        )
+    )
 
 
 def gateway_result(*, action="allow"):
@@ -355,3 +428,59 @@ def test_enforce_restore_failure_marks_run_failed_and_publishes_no_draft():
     assert "draft_ready" not in event_types
     assert "failed" in event_types
     assert gateway.discarded_mapping_ids == ["opaque-mapping-id-123456789"]
+
+
+def test_approval_executes_only_the_frozen_action_and_completes_run() -> None:
+    runtime = FakeRuntime()
+    register_approved_write(runtime)
+    app = create_app(runtime_factory=lambda: runtime)
+
+    with TestClient(app) as client:
+        session_id = client.post(
+            "/sessions",
+            json={"teacher_id": "teacher-1", "class_id": "kangaroo-room"},
+        ).json()["session_id"]
+        arguments = {"text": "teacher-reviewed value"}
+        serialized = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
+        runtime.store.runs["approval-request"] = {
+            "request_id": "approval-request",
+            "session_id": session_id,
+            "status": RunStatus.WAITING_FOR_APPROVAL.value,
+        }
+        runtime.store.actions["action-1"] = {
+            "action_id": "action-1",
+            "request_id": "approval-request",
+            "session_id": session_id,
+            "teacher_id": "teacher-1",
+            "class_id": "kangaroo-room",
+            "tool_name": "save_synthetic",
+            "arguments": arguments,
+            "arguments_hash": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+            "status": "pending",
+        }
+        runtime.store.results["approval-request"] = {
+            "request_id": "approval-request",
+            "session_id": session_id,
+            "draft": {"title": "Confirm", "content": "preview", "is_draft": True},
+            "approval": {
+                "status": "required",
+                "risk_level": "L2_controlled_write",
+                "action_id": "action-1",
+                "tool_name": "save_synthetic",
+                "preview": arguments,
+            },
+            "citations": [],
+        }
+
+        response = client.post(
+            f"/sessions/{session_id}/approvals",
+            json={"request_id": "approval-request", "decision": "approve"},
+        )
+
+    assert response.status_code == 200
+    assert runtime.store.actions["action-1"]["status"] == "executed"
+    assert runtime.store.results["approval-request"]["approval"]["result"] == {
+        "saved": "teacher-reviewed value"
+    }
+    assert runtime.store.runs["approval-request"]["status"] == RunStatus.COMPLETED.value
+    assert runtime.store.events["approval-request"][-1]["event"] == "completed"

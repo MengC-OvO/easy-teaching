@@ -5,7 +5,7 @@ def test_readme_documents_core_product_scope() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
 
     assert "Activity planning drafts" in readme
-    assert "Learning record drafts" in readme
+    assert "Observation and educational records" in readme
     assert "Policy question answering with citations" in readme
     assert "Family communication drafts" in readme
 

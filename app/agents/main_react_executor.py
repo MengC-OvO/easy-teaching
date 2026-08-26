@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.tools import (
     ToolDomain,
+    ToolErrorCode,
     ToolExecutionContext,
     ToolKind,
     ToolPermission,
@@ -28,6 +29,7 @@ class ExecutionRoute(str, Enum):
     SINGLE_TOOL = "single_tool"
     PARALLEL_TOOLS = "parallel_tools"
     PARALLEL_WORKERS = "parallel_workers"
+    APPROVAL = "prepare_approval"
     FEEDBACK = "decision_feedback"
     CLARIFICATION = "clarification"
     FINAL = "finalize_draft"
@@ -79,39 +81,21 @@ class MainDecisionValidator:
                     and call.name not in self.allowed_worker_names
                 ):
                     return self._feedback(f"Worker 未注册：{call.name.value}")
+                questions = call.arguments.get("research_questions")
                 if (
-                    call.name is WorkerName.EXTERNAL_RESEARCH
-                    and self._contains_private_keys(call.arguments)
+                    not isinstance(questions, list)
+                    or len(questions) < 2
+                    or not all(
+                        isinstance(question, str) and question.strip()
+                        for question in questions
+                    )
                 ):
-                    return self._feedback("外部 Worker 参数可能包含隐私信息。")
-                if call.name is WorkerName.EXTERNAL_RESEARCH:
-                    for dependency in call.needs:
-                        source = observations.get(dependency)
-                        tool = (
-                            self.registry.get(source.capability_name)
-                            if source is not None
-                            else None
-                        )
-                        if tool is not None and tool.domain is ToolDomain.LOCAL:
-                            return self._feedback(
-                                "外部 Worker 不能接收本地数据 Observation。"
-                            )
-            missing = self._missing_dependencies(
-                decision.worker_calls,
-                observations,
-            )
-            if missing:
-                return self._feedback(
-                    "Worker 依赖尚未满足：" + ", ".join(sorted(missing))
-                )
+                    return self._feedback(
+                        "Worker只用于需要多个研究步骤的深度任务。"
+                    )
             return DecisionValidation(ExecutionRoute.PARALLEL_WORKERS)
 
         calls = decision.tool_calls
-        missing = self._missing_dependencies(calls, observations)
-        if missing:
-            return self._feedback(
-                "工具依赖尚未满足：" + ", ".join(sorted(missing))
-            )
 
         for call in calls:
             tool = self.registry.get(call.name)
@@ -122,33 +106,39 @@ class MainDecisionValidator:
                 and call.name not in self.allowed_tool_names
             ):
                 return self._feedback(f"当前主流程不允许调用：{call.name}")
-            if tool.permission is not ToolPermission.AUTO_EXECUTE:
-                return self._feedback(f"草稿流程禁止受控或禁止工具：{call.name}")
-            if repeated_call_counts.get(call.signature(), 0) >= self.max_repeated_calls:
+            if tool.permission is ToolPermission.FORBIDDEN:
+                return self._feedback(f"当前流程禁止工具：{call.name}")
+            identical_limit = min(
+                self.max_repeated_calls,
+                tool.max_identical_calls_per_run,
+            )
+            if repeated_call_counts.get(call.signature(), 0) >= identical_limit:
                 return self._feedback(f"相同调用已经达到重复上限：{call.name}")
             if tool.domain is ToolDomain.EXTERNAL and self._contains_private_keys(
                 call.arguments
             ):
                 return self._feedback(f"外部能力参数可能包含隐私信息：{call.name}")
 
+        controlled_writes = [
+            call
+            for call in calls
+            if self.registry.get(call.name).permission
+            is ToolPermission.REQUIRE_APPROVAL
+        ]
+        if controlled_writes:
+            if len(calls) != 1:
+                return self._feedback("受控写操作必须单独请求并逐个确认。")
+            tool = self.registry.get(controlled_writes[0].name)
+            try:
+                tool.input_model.model_validate(controlled_writes[0].arguments)
+            except Exception:
+                return self._feedback("受控写操作参数不完整，请先整理或询问教师。")
+            return DecisionValidation(ExecutionRoute.APPROVAL)
         if len(calls) == 1:
             return DecisionValidation(ExecutionRoute.SINGLE_TOOL)
         if any(not self.registry.get(call.name).parallel_safe for call in calls):
             return self._feedback("当前批次包含不可并发工具，请顺序调用。")
         return DecisionValidation(ExecutionRoute.PARALLEL_TOOLS)
-
-    def _missing_dependencies(self, calls, observations) -> set:
-        available = {
-            key
-            for key, observation in observations.items()
-            if observation.is_available
-        }
-        return {
-            needed
-            for call in calls
-            for needed in call.needs
-            if needed not in available
-        }
 
     def _contains_private_keys(self, value) -> bool:
         private_markers = {
@@ -207,6 +197,8 @@ class MainToolExecutor:
         *,
         teacher_id: Optional[str],
         class_id: Optional[str],
+        session_id: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> CapabilityObservation:
         result = await self.registry.execute_async(
             call.name,
@@ -215,6 +207,8 @@ class MainToolExecutor:
             execution_context=ToolExecutionContext(
                 teacher_id=teacher_id,
                 class_id=class_id,
+                session_id=session_id,
+                request_id=request_id,
             ),
         )
         return self._to_observation(call, result)
@@ -225,6 +219,8 @@ class MainToolExecutor:
         *,
         teacher_id: Optional[str],
         class_id: Optional[str],
+        session_id: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> List[CapabilityObservation]:
         return list(
             await asyncio.gather(
@@ -233,6 +229,8 @@ class MainToolExecutor:
                         call,
                         teacher_id=teacher_id,
                         class_id=class_id,
+                        session_id=session_id,
+                        request_id=request_id,
                     )
                     for call in calls
                 ]
@@ -250,6 +248,13 @@ class MainToolExecutor:
             if tool is not None and tool.kind is ToolKind.MCP
             else CapabilitySource.TOOL
         )
+        error_payload = result.error.model_dump(mode="json") if result.error else None
+        if error_payload is not None:
+            error_payload["retryable"] = bool(result.error.recoverable)
+            error_payload["suggested_action"] = _suggested_tool_error_action(
+                result.error.code,
+                recoverable=result.error.recoverable,
+            )
         return CapabilityObservation(
             result_key=call.result_key,
             capability_name=call.name,
@@ -260,5 +265,20 @@ class MainToolExecutor:
                 else ObservationStatus.FAILED
             ),
             data=result.data,
-            error=(result.error.model_dump(mode="json") if result.error else None),
+            error=error_payload,
         )
+
+
+def _suggested_tool_error_action(
+    code: ToolErrorCode,
+    *,
+    recoverable: bool,
+) -> str:
+    if not recoverable or code in {
+        ToolErrorCode.PERMISSION_DENIED,
+        ToolErrorCode.TOOL_NOT_FOUND,
+    }:
+        return "stop_and_explain_limitation"
+    if code is ToolErrorCode.VALIDATION_ERROR:
+        return "correct_arguments_once"
+    return "retry_once_then_explain_limitation"

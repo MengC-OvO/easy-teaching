@@ -1,6 +1,6 @@
 """Small in-memory store used only by deterministic offline evals and unit tests."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -32,19 +32,149 @@ class InMemoryEvalStore:
 
     def __init__(self) -> None:
         self._memories: Dict[str, Dict[str, Any]] = {}
+        self._actions: Dict[str, Dict[str, Any]] = {}
+        self._records: List[Dict[str, Any]] = [
+            {
+                "record_type": "observation",
+                "class_id": "kangaroo-room",
+                "observation_id": "obs-eval-blocks",
+                "title": "Block construction observation",
+                "observed_at": "2026-08-20T10:00:00",
+                "setting": "Kangaroo Room indoor play",
+                "objective_text": (
+                    "A child stacked six wooden blocks, rebuilt the tower after it "
+                    "fell, and invited another child to add a bridge."
+                ),
+                "status": "draft",
+            },
+            {
+                "record_type": "educational_record",
+                "class_id": "kangaroo-room",
+                "record_id": "edu-eval-garden",
+                "educational_record_type": "learning_story",
+                "title": "Garden storytelling",
+                "analysis": "Children used natural materials to create and retell a story.",
+                "status": "draft",
+            },
+        ]
 
     def close(self) -> None:
         self._memories.clear()
+        self._actions.clear()
 
-    def get_class_profile(self, class_id: str) -> Optional[Dict[str, Any]]:
+
+    def get_class_context(
+        self,
+        *,
+        teacher_id: str,
+        class_id: str,
+        memory_query: Optional[str] = None,
+        memory_limit: int = 4,
+        include_children: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        if teacher_id != "teacher-1":
+            raise ValueError("Teacher cannot access the requested class")
         profile = SYNTHETIC_CLASS_PROFILES.get(class_id)
-        return None if profile is None else dict(profile)
+        if profile is None:
+            return None
+        return {
+            "centre_id": "demo-centre",
+            "class_id": class_id,
+            "name": profile["name"],
+            "age_group": profile["age_group"],
+            "child_count": profile["child_count"],
+            "current_focus": list(profile["interests"]),
+            "children": (
+                [
+                    {
+                        "child_id": f"{class_id}-child-{number:02d}",
+                        "display_code": f"Child {number:02d}",
+                    }
+                    for number in range(1, profile["child_count"] + 1)
+                ]
+                if include_children
+                else []
+            ),
+            "class_memories": [],
+        }
+
+    def get_centre_location(self, *, teacher_id: str, class_id: str) -> Dict[str, str]:
+        if teacher_id != "teacher-1" or class_id not in SYNTHETIC_CLASS_PROFILES:
+            raise ValueError("Teacher cannot access the requested class")
+        return {
+            "centre_id": "demo-centre",
+            "suburb": "Sydney",
+            "state": "NSW",
+            "timezone": "Australia/Sydney",
+            "latitude": -33.8688,
+            "longitude": 151.2093,
+        }
+
+    def query_records(
+        self,
+        *,
+        teacher_id: str,
+        class_id: str,
+        record_type: str = "all",
+        search_text: Optional[str] = None,
+        child_id: Optional[str] = None,
+        date_from=None,
+        date_to=None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        del child_id, date_from, date_to
+        if teacher_id != "teacher-1" or class_id not in SYNTHETIC_CLASS_PROFILES:
+            raise ValueError("Teacher cannot access the requested records")
+        records = [dict(record) for record in self._records]
+        if record_type != "all":
+            records = [record for record in records if record["record_type"] == record_type]
+        if status is not None:
+            records = [record for record in records if record.get("status") == status]
+        if search_text:
+            needle = search_text.casefold()
+            records = [
+                record
+                for record in records
+                if needle
+                in " ".join(
+                    str(record.get(key) or "")
+                    for key in ("title", "analysis", "setting", "objective_text")
+                ).casefold()
+            ]
+        return records[:limit]
+
+    async def create_tool_action_request(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        teacher_id: str,
+        class_id: Optional[str],
+        tool_name: str,
+        arguments: Dict[str, Any],
+        preview: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        action_id = str(uuid4())
+        action = {
+            "action_id": action_id,
+            "request_id": request_id,
+            "session_id": session_id,
+            "teacher_id": teacher_id,
+            "class_id": class_id,
+            "tool_name": tool_name,
+            "arguments": dict(arguments),
+            "preview": dict(preview),
+            "status": "required",
+        }
+        self._actions[action_id] = action
+        return dict(action)
 
     def save_long_term_memory(
         self,
         candidate: LongTermMemoryCandidate,
     ) -> Dict[str, str]:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         memory = {
             "memory_id": str(uuid4()),
             "scope": candidate.scope.value,
@@ -96,7 +226,7 @@ class InMemoryEvalStore:
         )
         if operation.action is LongTermMemoryAction.DELETE:
             memory["is_active"] = False
-            memory["updated_at"] = datetime.utcnow().isoformat()
+            memory["updated_at"] = datetime.now(timezone.utc).isoformat()
             return {
                 "action": operation.action.value,
                 "memory_id": operation.memory_id,
@@ -118,7 +248,7 @@ class InMemoryEvalStore:
                 "retrieval_mode": candidate.retrieval_mode.value,
                 "importance": candidate.importance,
                 "is_active": True,
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         )
         return {"action": operation.action.value, **self._public_memory(memory)}

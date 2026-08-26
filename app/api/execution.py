@@ -55,7 +55,7 @@ async def execute_message(
         final_status = _run_status(state.workflow_status)
     except Exception:
         state = await _state_from_checkpoint(runtime, thread_id)
-        final_status = RunStatus.FAILED
+        final_status = _recovered_run_status(state)
     await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
@@ -84,7 +84,7 @@ async def execute_checkpoint_resume(
         final_status = _run_status(state.workflow_status)
     except Exception:
         state = await _state_from_checkpoint(runtime, thread_id)
-        final_status = RunStatus.FAILED
+        final_status = _recovered_run_status(state)
     await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
@@ -288,10 +288,12 @@ _SAFE_TRACE_METADATA_KEYS = {
     "citation_count",
     "code",
     "confidence",
+    "conversation_context_chars",
     "created",
     "current_step",
     "decision",
     "evidence_count",
+    "feedback",
     "fallback",
     "generation_error_code",
     "generation_fallback",
@@ -303,6 +305,8 @@ _SAFE_TRACE_METADATA_KEYS = {
     "memory_ids",
     "needs_clarification",
     "open_tasks",
+    "observation_view_chars",
+    "observations",
     "record_id",
     "recoverable",
     "recent_turns",
@@ -318,6 +322,7 @@ _SAFE_TRACE_METADATA_KEYS = {
     "structured_max_attempts",
     "summary_chars",
     "thread_id",
+    "tool_schema_chars",
 }
 
 
@@ -347,15 +352,31 @@ def _safe_trace_metadata(trace: TraceEvent) -> Dict[str, Any]:
         }
     observations = trace.metadata.get("observations")
     if isinstance(observations, list):
-        safe["observations"] = [
-            {
+        safe_observations = []
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            safe_observation = {
                 key: _safe_json_value(value)
                 for key, value in observation.items()
                 if key in {"tool_name", "success", "error_code"}
             }
-            for observation in observations
-            if isinstance(observation, dict)
-        ]
+            contract = observation.get("contract")
+            if isinstance(contract, dict):
+                safe_observation["contract"] = {
+                    key: _safe_json_value(value)
+                    for key, value in contract.items()
+                    if key
+                    in {
+                        "knowledge_scope",
+                        "strategy",
+                        "returned_count",
+                        "source_request_id",
+                        "status",
+                    }
+                }
+            safe_observations.append(safe_observation)
+        safe["observations"] = safe_observations
     return safe
 
 
@@ -413,3 +434,24 @@ def _run_status(workflow_status: WorkflowStatus) -> RunStatus:
     if workflow_status is WorkflowStatus.FAILED:
         return RunStatus.FAILED
     return RunStatus.RUNNING
+
+
+def _recovered_run_status(state: Optional[GraphState]) -> RunStatus:
+    """Preserve a durable terminal checkpoint after a late graph failure.
+
+    A context, memory, or checkpoint-finalisation error may happen after the
+    teacher-facing draft or frozen approval was already committed. Marking that
+    durable result as failed makes retries unsafe and contradicts the stored
+    state. Non-terminal snapshots still fail closed.
+    """
+
+    if state is None:
+        return RunStatus.FAILED
+    recovered = _run_status(state.workflow_status)
+    if recovered in {
+        RunStatus.COMPLETED,
+        RunStatus.WAITING_FOR_APPROVAL,
+        RunStatus.FAILED,
+    }:
+        return recovered
+    return RunStatus.FAILED
