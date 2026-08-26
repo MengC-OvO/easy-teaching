@@ -40,7 +40,12 @@ MULTI_QUERY_RRF_K = 60
 
 class KnowledgeSearchInput(BaseModel):
     query: str = Field(min_length=2, max_length=2000)
-    top_k: int = Field(default=5, ge=1, le=10)
+    top_k: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Use 3 for standard retrieval and 5 for deep retrieval.",
+    )
     knowledge_scope: KnowledgeScope = Field(
         default=KnowledgeScope.ALL,
         description=(
@@ -49,6 +54,16 @@ class KnowledgeSearchInput(BaseModel):
         ),
     )
     source_type: Optional[KnowledgeSourceType] = None
+
+
+class RetrieveKnowledgeInput(KnowledgeSearchInput):
+    mode: Literal["standard", "deep"] = Field(
+        default="standard",
+        description=(
+            "Use standard for one focused retrieval. Use deep only for broad, "
+            "ambiguous, high-stakes, or explicitly multi-perspective research."
+        ),
+    )
 
 
 class KnowledgeEvidenceItem(BaseModel):
@@ -73,6 +88,108 @@ class KnowledgeSearchOutput(BaseModel):
     mode: RetrievalMode
     reranker: RerankerMode
     returned_count: int = Field(ge=0)
+
+
+def build_retrieve_knowledge_tool(
+    retriever: Optional["KnowledgeRetrieverProtocol"] = None,
+    query_rewriter: Optional["QueryRewriteModelProvider"] = None,
+    reranker: Optional["KnowledgeRerankerProtocol"] = None,
+) -> ToolDefinition:
+    """One cost-aware RAG boundary for standard and deep retrieval."""
+
+    resolved_retriever = retriever
+    resolved_rewriter = query_rewriter
+    resolved_reranker = reranker
+
+    def handler(input_data: BaseModel) -> ToolResult:
+        nonlocal resolved_retriever, resolved_rewriter, resolved_reranker
+        data = RetrieveKnowledgeInput.model_validate(input_data)
+        args = KnowledgeSearchInput.model_validate(
+            data.model_dump(exclude={"mode"})
+        )
+        resolved_retriever = resolved_retriever or KnowledgeRetriever()
+        if data.mode == "standard":
+            result = resolved_retriever.retrieve(_request(args, args.query, args.top_k))
+            return _tool_result(
+                args, "simple", [args.query], result.chunks, RerankerMode.NONE
+            )
+        resolved_rewriter = resolved_rewriter or ChatCompletionsModelProvider()
+        resolved_reranker = resolved_reranker or CrossEncoderReranker()
+        queries = _rewrite_queries(resolved_rewriter, args.query)
+        per_query_top_k = min(20, max(10, args.top_k * 2))
+        results = [
+            resolved_retriever.retrieve(_request(args, query, per_query_top_k))
+            for query in queries
+        ]
+        candidates = _multi_query_fusion(
+            results, top_k=min(20, max(10, args.top_k * 4))
+        )
+        chunks = _final_rerank(
+            resolved_reranker, args.query, candidates, args.top_k
+        )
+        return _tool_result(
+            args, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
+        )
+
+    async def async_handler(input_data: BaseModel) -> ToolResult:
+        nonlocal resolved_retriever, resolved_rewriter, resolved_reranker
+        data = RetrieveKnowledgeInput.model_validate(input_data)
+        args = KnowledgeSearchInput.model_validate(
+            data.model_dump(exclude={"mode"})
+        )
+        resolved_retriever = resolved_retriever or KnowledgeRetriever()
+        if data.mode == "standard":
+            result = await _retrieve_async(
+                resolved_retriever, _request(args, args.query, args.top_k)
+            )
+            return _tool_result(
+                args, "simple", [args.query], result.chunks, RerankerMode.NONE
+            )
+        resolved_rewriter = resolved_rewriter or ChatCompletionsModelProvider()
+        if resolved_reranker is None:
+            resolved_reranker = await asyncio.to_thread(CrossEncoderReranker)
+        queries = await _rewrite_queries_async(resolved_rewriter, args.query)
+        per_query_top_k = min(20, max(10, args.top_k * 2))
+        results = await asyncio.gather(
+            *[
+                _retrieve_async(
+                    resolved_retriever,
+                    _request(args, query, per_query_top_k),
+                )
+                for query in queries
+            ]
+        )
+        candidates = _multi_query_fusion(
+            results, top_k=min(20, max(10, args.top_k * 4))
+        )
+        chunks = await asyncio.to_thread(
+            _final_rerank,
+            resolved_reranker,
+            args.query,
+            candidates,
+            args.top_k,
+        )
+        return _tool_result(
+            args, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
+        )
+
+    return ToolDefinition(
+        name="retrieve_knowledge",
+        description=(
+            "Retrieve EYLF, NQS or centre-policy evidence only when the teacher asks "
+            "for framework/policy facts, citations or alignment. Standard uses top_k=3; "
+            "deep research uses top_k=5 plus query rewriting and local reranking."
+        ),
+        category=ToolCategory.POLICY,
+        input_model=RetrieveKnowledgeInput,
+        output_model=KnowledgeSearchOutput,
+        risk_level=RiskLevel.L0_READ_ONLY,
+        permission=ToolPermission.AUTO_EXECUTE,
+        domain=ToolDomain.INTERNAL,
+        parallel_safe=False,
+        handler=handler,
+        async_handler=async_handler,
+    )
 
 
 class QueryRewriteOutput(BaseModel):
@@ -102,132 +219,6 @@ class KnowledgeRerankerProtocol(Protocol):
         chunks: List[RetrievedKnowledgeChunk],
     ) -> List[RetrievedKnowledgeChunk]:
         ...
-
-
-def build_search_knowledge_tool(
-    retriever: Optional[KnowledgeRetrieverProtocol] = None,
-) -> ToolDefinition:
-    resolved_retriever = retriever
-
-    def handler(input_data: BaseModel) -> ToolResult:
-        nonlocal resolved_retriever
-        data = KnowledgeSearchInput.model_validate(input_data)
-        resolved_retriever = resolved_retriever or KnowledgeRetriever()
-        result = resolved_retriever.retrieve(_request(data, data.query, data.top_k))
-        return _tool_result(
-            data, "simple", [data.query], result.chunks, RerankerMode.NONE
-        )
-
-    async def async_handler(input_data: BaseModel) -> ToolResult:
-        nonlocal resolved_retriever
-        data = KnowledgeSearchInput.model_validate(input_data)
-        resolved_retriever = resolved_retriever or KnowledgeRetriever()
-        result = await _retrieve_async(
-            resolved_retriever,
-            _request(data, data.query, data.top_k),
-        )
-        return _tool_result(
-            data, "simple", [data.query], result.chunks, RerankerMode.NONE
-        )
-
-    return ToolDefinition(
-        name="search_knowledge",
-        description=(
-            "Fast default search over local EYLF, NQF and policy knowledge. "
-            "Use for focused questions that can be expressed with one query. "
-            "Always set knowledge_scope when the teacher limits the answer to EYLF, "
-            "NQS or centre policy."
-        ),
-        category=ToolCategory.POLICY,
-        input_model=KnowledgeSearchInput,
-        output_model=KnowledgeSearchOutput,
-        risk_level=RiskLevel.L0_READ_ONLY,
-        permission=ToolPermission.AUTO_EXECUTE,
-        domain=ToolDomain.INTERNAL,
-        parallel_safe=True,
-        handler=handler,
-        async_handler=async_handler,
-    )
-
-
-def build_research_knowledge_tool(
-    retriever: Optional[KnowledgeRetrieverProtocol] = None,
-    query_rewriter: Optional[QueryRewriteModelProvider] = None,
-    reranker: Optional[KnowledgeRerankerProtocol] = None,
-) -> ToolDefinition:
-    resolved_retriever = retriever
-    resolved_rewriter = query_rewriter
-    resolved_reranker = reranker
-
-    def handler(input_data: BaseModel) -> ToolResult:
-        nonlocal resolved_retriever, resolved_rewriter, resolved_reranker
-        data = KnowledgeSearchInput.model_validate(input_data)
-        resolved_retriever = resolved_retriever or KnowledgeRetriever()
-        resolved_rewriter = resolved_rewriter or ChatCompletionsModelProvider()
-        resolved_reranker = resolved_reranker or CrossEncoderReranker()
-        queries = _rewrite_queries(resolved_rewriter, data.query)
-        per_query_top_k = min(20, max(10, data.top_k * 2))
-        results = [
-            resolved_retriever.retrieve(_request(data, query, per_query_top_k))
-            for query in queries
-        ]
-        candidate_top_k = min(20, max(10, data.top_k * 4))
-        candidates = _multi_query_fusion(results, top_k=candidate_top_k)
-        chunks = _final_rerank(resolved_reranker, data.query, candidates, data.top_k)
-        return _tool_result(
-            data, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
-        )
-
-    async def async_handler(input_data: BaseModel) -> ToolResult:
-        nonlocal resolved_retriever, resolved_rewriter, resolved_reranker
-        data = KnowledgeSearchInput.model_validate(input_data)
-        resolved_retriever = resolved_retriever or KnowledgeRetriever()
-        resolved_rewriter = resolved_rewriter or ChatCompletionsModelProvider()
-        if resolved_reranker is None:
-            resolved_reranker = await asyncio.to_thread(CrossEncoderReranker)
-        queries = await _rewrite_queries_async(resolved_rewriter, data.query)
-        per_query_top_k = min(20, max(10, data.top_k * 2))
-        results = await asyncio.gather(
-            *[
-                _retrieve_async(
-                    resolved_retriever,
-                    _request(data, query, per_query_top_k),
-                )
-                for query in queries
-            ]
-        )
-        candidate_top_k = min(20, max(10, data.top_k * 4))
-        candidates = _multi_query_fusion(results, top_k=candidate_top_k)
-        chunks = await asyncio.to_thread(
-            _final_rerank,
-            resolved_reranker,
-            data.query,
-            candidates,
-            data.top_k,
-        )
-        return _tool_result(
-            data, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
-        )
-
-    return ToolDefinition(
-        name="research_knowledge",
-        description=(
-            "Enhanced local knowledge research for broad, ambiguous or high-stakes "
-            "questions. Rewrites the query into several perspectives, retrieves each "
-            "one, fuses and deduplicates the evidence, then applies Cross-encoder "
-            "semantic reranking. Always preserve an explicit teacher source restriction "
-            "with knowledge_scope. Slower and more expensive."
-        ),
-        category=ToolCategory.POLICY,
-        input_model=KnowledgeSearchInput,
-        output_model=KnowledgeSearchOutput,
-        risk_level=RiskLevel.L0_READ_ONLY,
-        permission=ToolPermission.AUTO_EXECUTE,
-        domain=ToolDomain.INTERNAL,
-        parallel_safe=False,
-        handler=handler,
-        async_handler=async_handler,
-    )
 
 
 def _request(

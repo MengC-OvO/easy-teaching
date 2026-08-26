@@ -17,7 +17,8 @@ from app.services.request_guard import sanitize_untrusted_prompt_value
 
 
 LONG_TERM_MEMORY_SYSTEM_PROMPT = """
-Maintain durable memory for a teacher-workflow agent after one completed turn.
+Maintain durable memory for an early-childhood education ReAct agent after one
+completed turn.
 
 Return zero or more memory operations. Prefer noop (an empty operations list)
 when the completed turn has no stable, cross-session value. Do not write a
@@ -25,7 +26,7 @@ second memory when an existing memory can be updated or deleted instead.
 
 Only retain information explicitly confirmed in the supplied conversation that
 will remain useful across future conversations. The only allowed categories are
-teacher preferences, confirmed class facts, and durable workflow constraints.
+teacher preferences, confirmed class facts, and durable cross-session constraints.
 For updates and deletes, use only a memory_id supplied in Existing memories.
 
 Set retrieval_mode=profile only for a teacher preference that should influence

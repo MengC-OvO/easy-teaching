@@ -10,6 +10,8 @@ from app.schemas import (
     TraceEvent,
     WorkflowStatus,
 )
+import asyncio
+
 from app.services import ContextManager
 
 
@@ -51,6 +53,41 @@ class StubLongTermMemoryReader:
                 "reason": "Explicit preference.",
             }
         ]
+
+    async def get_conversation_workspace(self, *, session_id, teacher_id, class_id):
+        assert session_id == "session-001"
+        assert teacher_id == "teacher-001"
+        assert class_id == "kangaroo-room"
+        return {
+            "recent_artifacts": [
+                {
+                    "artifact_number": 1,
+                    "position_from_latest": 1,
+                    "source_request_id": "request-draft-001",
+                    "title": "Leaf collage",
+                    "content_chars": 3240,
+                    "status": "unsaved",
+                    "created_at": "2026-08-24T09:00:00",
+                },
+                {
+                    "artifact_number": 2,
+                    "position_from_latest": 0,
+                    "source_request_id": "request-draft-002",
+                    "title": "Water investigation",
+                    "content_chars": 2410,
+                    "status": "saved",
+                    "created_at": "2026-08-25T09:00:00",
+                },
+            ],
+            "recent_saved_records": [
+                {
+                    "save_number": 1,
+                    "record_id": "record-001",
+                    "record_type": "educational_record",
+                    "title": "Nature sensory plan",
+                }
+            ],
+        }
 
 
 def test_context_manager_keeps_memory_unchanged_while_recent_turns_fit_budget() -> None:
@@ -156,6 +193,31 @@ def test_context_manager_adds_scoped_long_term_memory_to_model_context() -> None
 
     assert "Teacher profile preferences" in prompt_context
     assert "Prefers concise activity-plan steps." in prompt_context
+
+
+def test_context_manager_exposes_trusted_artifact_and_record_references() -> None:
+    manager = ContextManager(
+        memory_updater=StubMemoryUpdater(ConversationMemory()),
+        long_term_memory_reader=StubLongTermMemoryReader(),
+    )
+
+    prompt_context = asyncio.run(
+        manager.build_model_context_async(
+            ThreadContext(),
+            teacher_id="teacher-001",
+            class_id="kangaroo-room",
+            session_id="session-001",
+        )
+    )
+
+    assert "source_request_id=request-draft-001" in prompt_context
+    assert "source_request_id=request-draft-002" in prompt_context
+    assert "relation=previous" in prompt_context
+    assert "relation=latest/current" in prompt_context
+    assert "record_id=record-001" in prompt_context
+    assert "3240" in prompt_context
+    assert "status=unsaved" in prompt_context
+    assert "created_at=2026-08-25T09:00:00" in prompt_context
 
 
 def test_context_manager_archives_turns_when_recent_token_budget_is_exceeded() -> None:

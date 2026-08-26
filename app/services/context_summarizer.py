@@ -13,7 +13,8 @@ from app.services.request_guard import sanitize_untrusted_prompt_value
 
 
 MEMORY_SYSTEM_PROMPT = """
-You maintain structured conversation memory for a teacher-workflow agent.
+You maintain structured conversation memory for an early-childhood education
+ReAct agent.
 
 Return only valid JSON matching the requested schema. Update the memory using
 only the supplied previous memory and conversation data. Preserve the current

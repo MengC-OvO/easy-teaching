@@ -16,7 +16,7 @@ def test_reliability_manifest_covers_day4_failure_boundaries() -> None:
         "async-tool-timeout",
         "worker-permission-error",
         "main-react-model-fallback",
-        "invalid-dependency-feedback",
+        "unregistered-tool-feedback",
         "main-react-step-budget-stop",
         "safe-error-metadata",
         "async-session-busy-error",

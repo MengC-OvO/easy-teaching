@@ -2,7 +2,6 @@
 """Ask one question through the real EasyTeaching production execution path."""
 
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 from typing import Optional
@@ -15,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.api import build_api_runtime  # noqa: E402
 from app.api.execution import execute_message  # noqa: E402
+from app.asyncio_compat import run_async  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.schemas import StreamEventType  # noqa: E402
 
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("question", help="Teacher question to send to EasyTeaching.")
     parser.add_argument(
         "--teacher-id",
-        default="terminal-demo-teacher",
+        default="teacher-001",
         help="Synthetic teacher scope used by the demo.",
     )
     parser.add_argument(
@@ -149,7 +149,7 @@ async def ask_live(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    return asyncio.run(ask_live(parse_args()))
+    return run_async(ask_live(parse_args()))
 
 
 if __name__ == "__main__":

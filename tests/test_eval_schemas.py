@@ -41,25 +41,23 @@ def test_eval_case_rejects_an_expectation_for_another_category() -> None:
             id="route-wrong-contract",
             category="routing",
             input={"message": "Plan an activity."},
-            expected={"required_tool_names": ["get_class_profile"]},
+            expected={"required_tool_names": ["get_class_context"]},
         )
 
 
 def test_tool_expectation_validates_required_arguments_and_denied_tools() -> None:
     expectation = ToolExpectation(
-        required_tool_names=["get_class_profile"],
-        forbidden_tool_names=["save_draft"],
-        required_args={"get_class_profile": {"class_id": "kangaroo-room"}},
+        required_tool_names=["get_class_context"],
+        forbidden_tool_names=["save_observation"],
+        required_args={"get_class_context": {}},
     )
 
-    assert expectation.required_args["get_class_profile"] == {
-        "class_id": "kangaroo-room"
-    }
+    assert expectation.required_args["get_class_context"] == {}
 
     with pytest.raises(ValidationError, match="non-required tools"):
         ToolExpectation(
-            required_tool_names=["get_class_profile"],
-            required_args={"save_draft": {}},
+            required_tool_names=["get_class_context"],
+            required_args={"save_observation": {}},
         )
 
 

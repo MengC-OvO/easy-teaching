@@ -1,13 +1,33 @@
 # EasyTeaching
 
-EasyTeaching is a safety-aware teacher workflow assistant for Australian
-early childhood education. It combines FastAPI, LangGraph, controlled tools,
-local memory, retrieval-augmented generation (RAG), and a local Qwen privacy
-gateway to turn educator requests into de-identified, reviewable drafts and
-evidence-backed answers.
+EasyTeaching is a safety-aware AI agent for Australian early childhood
+educators. It answers questions, retrieves EYLF/NQS and centre-policy evidence,
+creates and revises teaching drafts, works with authorised records, and prepares
+controlled actions for teacher approval. The implementation combines FastAPI,
+LangGraph ReAct, validated Tools and Workers, PostgreSQL, hybrid RAG, memory, and
+an experimental local Qwen privacy gateway.
 
-The repository is both a working local application and a learning project. All
-example data must be synthetic, public, or thoroughly de-identified.
+The repository contains the complete local application, infrastructure
+configuration, migrations, evaluation suites, and operational documentation.
+Development and evaluation data must be synthetic, public, or thoroughly
+de-identified.
+
+## Project status
+
+The current release implements the complete local application path: browser UI,
+FastAPI, PostgreSQL, LangGraph ReAct, controlled Tools and Workers, hybrid RAG,
+approvals, record export, optional Google Drive MCP, evaluation, and an
+experimental local privacy gateway.
+
+The final live Agent evaluation passed `39/40` scenarios (`97.5%`); the only
+failed assertion was corrected and its isolated rerun passed. The independent
+local privacy-gateway evaluation did **not** pass its release gate because the
+fine-tuned model and deterministic premasking pipeline have a training/serving
+distribution mismatch. Keep `PRIVACY_GATEWAY_MODE=disabled` and use only
+synthetic or thoroughly de-identified data unless that model is retrained and
+re-evaluated. See [Agent evaluation](docs/agent-evaluation.md) and
+[Local Safety Gateway](docs/local-safety-gateway.md). The final completed versus
+out-of-scope boundary is listed in [Project status](docs/project-status.md).
 
 ## What it does
 
@@ -15,8 +35,8 @@ example data must be synthetic, public, or thoroughly de-identified.
   family-draft requests without routing into fixed top-level specialists.
 - **Activity planning drafts** — combines class context, EYLF evidence, safety
   checks and optional public context inside the same bounded loop.
-- **Learning record drafts** — creates reviewable text only; saving is disabled
-  in the current production graph.
+- **Observation and educational records** — organises incomplete notes, creates
+  reviewable drafts, and saves only a frozen teacher-approved payload.
 - **Policy question answering with citations** — reuses the existing hybrid RAG
   evidence and source metadata.
 - **Family communication drafts** — prepares reviewable wording without sending
@@ -24,11 +44,14 @@ example data must be synthetic, public, or thoroughly de-identified.
 - **Controlled research** — chooses one Tool, a concurrent Tool batch, or a
   bounded Worker batch for the current turn only.
 - **Evidence-backed drafts** — reuses EYLF/policy RAG, citations, safety checks,
-  scoped class context and public weather/resource tools.
+  scoped class context and date-aware weather/holiday context.
 - **Conversation continuity** — maintains LangGraph checkpoints, compact
   short-term context, and scoped long-term teacher/class memory.
 - **Web workspace** — offers a ChatGPT-style local interface for sessions,
-  messages, SSE progress events, draft display, and citations.
+  messages, SSE progress events, draft display, citations, and approve/reject
+  cards for frozen controlled writes.
+- **Optional Google Drive MCP** — searches the teacher's authorised Drive and
+  uploads only approved, locally managed record exports.
 - **Local privacy and safety gateway** — combines deterministic rules with a
   Qwen2.5-1.5B QLoRA adapter before ReAct, then restores approved output using
   one-time opaque mappings owned by local Python code.
@@ -50,6 +73,8 @@ flowchart LR
     Tools --> Main
     Workers --> Main
     Tools --> Knowledge["Hybrid RAG + citations"]
+    Validate --> Approval["Frozen write + teacher approval"]
+    Approval --> Store
     Graph --> Store[("Self-hosted PostgreSQL")]
     Graph -->|redacted final draft| Gateway
     Gateway -->|deterministically restored draft| API
@@ -72,11 +97,17 @@ generation, mapping storage, and final restoration.
 The Main assistant does not create a complete future plan. On each loop it
 chooses only the next executable action: one Tool/MCP call, a concurrent batch
 of independent Tools, a bounded fan-out of independent Workers, a clarification,
-or the final draft. Code validates every decision before anything executes.
+or the final draft. Each structured decision may report a semantic `task_type`
+for logs and evaluation, but the graph neither locks it nor uses it for routing.
+A separate narrow safety flag protects proposed activities; code validates Tool
+permissions, approvals, conflicts and budgets before anything executes.
 
 For a deeper walkthrough, see [Architecture](docs/architecture.md) and
 [API and local operation](docs/api-and-operations.md). Important corrected
 behaviors are recorded in [Engineering decisions](docs/engineering-decisions.md).
+The current Tool, Worker and database boundaries are summarised in
+[Tool and Worker architecture](docs/tool-architecture.md). Retrieval
+design and measurements are documented in [RAG system](docs/rag-system.md).
 
 ## Repository structure
 
@@ -98,7 +129,7 @@ data/
 
 docs/           stable architecture and operating documentation
 evals/          offline evaluation models, evaluators and runner
-scripts/        named setup, demo, ingestion, evaluation and maintenance commands
+scripts/        setup, verification, ingestion, evaluation and maintenance commands
 tests/          committed unit, contract and integration regression coverage
 ```
 
@@ -114,40 +145,46 @@ process boundary, fail-closed behavior, and staged rollout plan.
 
 ## Quick start
 
-Requires Python 3.9 or newer.
+Requires Python 3.10 or newer, Docker Desktop, and API credentials for the chat
+and embedding providers. Google Drive and the local privacy gateway are optional.
+
+### Windows PowerShell
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+docker compose up -d postgres
+.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\python.exe scripts\run_api.py
+```
+
+### macOS / Linux
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-```
-
-Add your local model and embedding credentials to `.env`. Never commit that
-file. Replace the PostgreSQL password placeholder in `POSTGRES_PASSWORD`,
-`DATABASE_URL`, and `CHECKPOINT_DATABASE_URL` with the same long random value.
-
-Start the self-hosted local PostgreSQL service and apply schema migrations:
-
-```bash
 docker compose up -d postgres
 alembic upgrade head
+python scripts/run_api.py
 ```
 
-Start the application:
-
-```bash
-uvicorn app.main:app --reload
-```
+Before starting the API, edit `.env`: use the same long local password in
+`POSTGRES_PASSWORD`, `DATABASE_URL`, and `CHECKPOINT_DATABASE_URL`, then add the
+chat and embedding credentials. Never commit `.env`. The `run_api.py` wrapper
+selects a psycopg-compatible event loop on Windows.
 
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). API documentation is
 available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs), and the
 health endpoint is `GET /health`.
 
-The browser page uses the existing API; it does not bypass LangGraph or return
+The browser page uses the same Agent API; it does not bypass LangGraph or return
 mock answers. It creates a durable session, submits a message, follows persisted
-SSE workflow events and fetches the resulting draft. The production graph is
-draft-only and exposes no approval, formal-write, or external-send route.
+SSE Agent-run events and fetches the resulting answer or draft. Controlled writes
+use the approval API; external sending remains unavailable.
 
 PostgreSQL is bound only to `127.0.0.1` in local development. SQLAlchemy owns
 EasyTeaching operational and business tables; LangGraph's official `PostgresSaver`
@@ -193,7 +230,7 @@ PRIVACY_GATEWAY_MODE=enforce
 PRIVACY_GATEWAY_URL=http://127.0.0.1:8010
 ```
 
-Run the synthetic-only one-command demonstration:
+Run the synthetic end-to-end verification:
 
 ```powershell
 .\scripts\demo_privacy_flow.ps1
@@ -212,7 +249,7 @@ bash ./scripts/setup_safety_gateway.sh \
 bash ./scripts/start_safety_gateway.sh
 ```
 
-In a separate terminal, run the synthetic-only full-flow demonstration:
+In a separate terminal, run the synthetic full-flow verification:
 
 ```bash
 bash ./scripts/demo_privacy_flow.sh
@@ -222,10 +259,10 @@ Training can remain on the Windows NVIDIA machine; only inference moves to MPS.
 Backend selection is covered by automated tests, but the MPS path still needs a
 one-time smoke test on the target Mac because Windows cannot execute Metal code.
 
-The demo starts or reuses the real local Qwen gateway and prints the original
+The verification command starts or reuses the real local Qwen gateway and prints the original
 synthetic sentence, Qwen/rule decision, redacted GraphState input, placeholder
 draft, restored FastAPI draft, and final run status. Its ReAct node is a
-deterministic local substitute so the privacy integration can be demonstrated
+deterministic local substitute so the privacy integration can be verified
 without PostgreSQL or an external model-provider credential.
 
 ### Optional Supabase login
@@ -288,17 +325,16 @@ matches. Gemini creates 768-dimensional embeddings and Chroma searches them
 with cosine distance. Building or querying the dense index consumes embedding
 API quota; ingestion and BM25 indexing do not.
 
-The Agent exposes two generic local-knowledge tools:
+The Agent exposes one knowledge boundary, `retrieve_knowledge`, with two modes:
 
-- `search_knowledge` performs one focused hybrid retrieval and is the default.
-- `research_knowledge` uses the chat model to rewrite a broad question into
-  several search queries, retrieves them in parallel, and applies a second RRF
-  pass across the query results followed by local Cross-encoder reranking. It
-  has higher latency and model cost.
+- `mode=standard` performs one focused hybrid retrieval and is the default.
+- `mode=deep` uses one chat-model call to rewrite a broad question, retrieves
+  several queries, applies a second RRF pass, then uses the local Cross-encoder.
+  It is reserved for genuinely complex research because it costs more.
 
-## API flow
+## API interaction
 
-The public workflow is deliberately small:
+The public API is deliberately small:
 
 1. `POST /sessions` creates a conversation and LangGraph thread.
 2. `POST /sessions/{session_id}/messages` accepts one idempotent request.
@@ -306,8 +342,11 @@ The public workflow is deliberately small:
    events using SSE.
 4. `GET /sessions/{session_id}/drafts/{request_id}` returns the public draft
    and citations.
+5. `POST /sessions/{session_id}/approvals` approves or rejects one frozen
+   controlled-write action. Approval never lets the model alter the reviewed
+   arguments.
 
-SSE currently streams workflow lifecycle events, not individual LLM tokens.
+SSE currently streams Agent-run lifecycle events, not individual LLM tokens.
 That distinction keeps replay and reconnect behavior deterministic: events are
 stored first, then delivered from a sequence cursor.
 
@@ -328,12 +367,13 @@ EasyTeaching is a teacher assistant. It **must not**:
 | L2 controlled write | Save or overwrite a record | Require scoped teacher approval |
 | L3 forbidden or handoff | Sending, diagnosis, medical/legal judgment, raw PII | Refuse or hand off |
 
-The current production graph never performs a controlled write or real-world
-side effect. A model never receives arbitrary Python functions: Tool and Worker
-names are registered in code with validated schemas, risk levels, allowlists,
-timeouts, dependency checks and trusted teacher/class execution scope.
-Human approval is required before any future controlled write is re-enabled;
-the current draft-only graph never reaches that boundary.
+The production graph can prepare observation, educational-record and export
+writes, but it never performs them during model generation. It freezes the
+validated arguments, pauses with an exact preview, and executes that frozen
+action only after teacher approval. Human approval is required for every L2
+controlled write. A model never receives arbitrary Python
+functions: Tool and Worker names are registered in code with validated schemas,
+risk levels, allowlists, timeouts and trusted teacher/class execution scope.
 
 ### Privacy gateway contract
 
@@ -352,16 +392,17 @@ Input modes are explicit:
 | `enforce` | Integrated local gateway | Fail closed; only allowed redacted text reaches ReAct |
 
 The current mapping vault is memory-only, single-process, one-time-use, and
-TTL-bound. That is appropriate for this local demonstration, but a gateway
+TTL-bound. That is appropriate for the current local runtime, but a gateway
 restart can invalidate an in-flight mapping. Encrypted durable mapping storage,
 deployment key management, retention controls, and a formal privacy review are
 required before any real-data deployment.
 
-The v11 adapter's frozen synthetic test set contained 1,050 records. It achieved
-PII F1 `0.947`, injection/scope/professional joint risk accuracy values reported
-separately (`0.910` / `0.957` / `0.907`), and strict JSON plus deterministic
-resolution validity `0.963`. These are synthetic benchmark results, not claims
-of production safety or performance on real children, families, or educators.
+The frozen direct-model v11 test reported PII F1 `0.947`, but the more important
+240-case deployed-pipeline test exposed the premasking mismatch: PII F1 `0.750`,
+Gateway success `92.5%`, phone recall `0%`, and release gate **failed**. The
+Gateway still failed closed and leaked no plaintext in responses. These are
+synthetic results and are not claims of safety on real children, families, or
+educators.
 
 ## Testing and evaluation
 
@@ -371,11 +412,27 @@ Run the complete automated suite:
 python -m pytest
 ```
 
-Run the 30-case agent evaluation:
+Run the zero-provider-cost structural suite:
 
 ```bash
 python scripts/run_evals.py
-python scripts/run_evals.py --live-model
+```
+
+Run the independent 40-scenario production-path Agent evaluation (uses Gemini
+and embedding quota):
+
+```bash
+python scripts/run_final_agent_suite.py \
+  --output reports/final_agent_evaluation.json
+```
+
+Run the frozen retrieval-only RAG evaluation:
+
+```bash
+python scripts/run_rag_evals.py \
+  --cases data/evals/rag_final_cases.json \
+  --split test --modes bm25 dense hybrid \
+  --report reports/rag_final_report.json
 ```
 
 Run deterministic reliability and failure-injection checks:
@@ -393,18 +450,21 @@ python scripts/ask_live.py \
   --trace
 ```
 
-This command persists a synthetic terminal-demo session in the local database
+This command persists a synthetic verification session in the local database
 and prints the final draft, citations, and optional execution trace.
 
-Latest checks relevant to the local privacy integration:
+Latest final checks:
 
 | Check | Result |
 | --- | --- |
-| Frozen synthetic v11 generation test | 1,050 records evaluated |
-| PII overall precision / recall / F1 | `0.991` / `0.906` / `0.947` |
-| Strict JSON + deterministic resolution validity | `0.963` |
-| Privacy/API targeted regression suite | 41 passed |
-| Real Qwen-to-FastAPI synthetic demo | Passed |
+| Repository regression suite | `329/329` passed |
+| Live Agent scenarios | `39/40 (97.5%)`; corrected isolated rerun `1/1` |
+| Required-Tool recall / Tool precision | `100.0%` / `95.8%` |
+| RAG, security, multi-turn, approval integrity | `100%` in the final suite |
+| ReAct steps P50 / P95 / max | `2 / 4 / 4` |
+| Agent latency P50 / P95 | `3.46 s / 11.68 s` |
+| Local privacy Gateway release gate | **Failed** |
+| Gateway PII precision / recall / F1 | `100% / 60% / 75%` |
 
 Automated tests are intentionally committed source code, not generated output.
 They document contracts and protect fail-closed behavior during refactoring.
@@ -413,36 +473,42 @@ adapters, and secrets are excluded through `.gitignore`.
 
 The evaluation suite retains component-level routing checks and now exercises
 the production Main ReAct trajectory for single Tool, concurrent Tool,
-dependency, parallel Worker and clarification paths. Reliability scenarios
+sequential dependent work, parallel Worker and clarification paths. Reliability scenarios
 exercise retryable model failures, non-retryable failures, structured-output
 repair, fallback responses, and observable API failure events. Evaluation data
 is development-only and is not part of the production API response path.
+
+The final production-path benchmark runs 40 synthetic scenarios and 46 turns
+through the production HTTP/PostgreSQL/LangGraph path. It reports Tool recall and
+precision, parameter contracts, forbidden calls, path efficiency, ReAct steps,
+approvals, RAG grounding, security, multi-turn behavior, answer quality, latency,
+and token use. Weather and Google Drive use deterministic adapters so external
+uptime and personal files cannot alter the score. See
+[Agent evaluation](docs/agent-evaluation.md) for methodology and limitations.
 
 ## Current status and known gaps
 
 Completed work includes the unified Main ReAct production graph, controlled
 single/concurrent tools, bounded Worker fan-out/fan-in, hybrid RAG, checkpointed
-context and memory, draft-only execution, idempotent FastAPI routes, SSE replay,
-offline evaluation, retries, fallbacks, and fault validation. The former
-Specialist, Skill and approval execution paths have been removed. Historical
-database columns remain until an explicit, data-safe Alembic migration removes
-them.
+context and memory, frozen-argument teacher approvals, scoped observation and
+educational-record storage, fixed-template exports, idempotent FastAPI routes,
+SSE replay, offline evaluation, retries, fallbacks, and fault validation. The
+former overlapping Tool and model-named dependency paths have been removed.
+Historical database tables remain physically present for data-safe compatibility
+but have no production ORM or Tool path.
 
-Known follow-up work:
+Known follow-up work, in priority order:
 
-- improve RAG recall and source-selection quality for the remaining evaluation
-  misses;
-- replace the single-process in-memory mapping vault with encrypted durable
-  storage before any real-data or multi-instance deployment;
-- evaluate the safety adapter on independently authored, governance-approved
-  de-identified data before making production claims;
-- run a real PostgreSQL migration and API smoke test when Docker is available;
-- remove historical database compatibility columns only through a backed-up,
-  reversible Alembic migration;
-- add true token streaming only if the model provider and product experience
-  justify the added complexity;
-- keep WebSocket support out until bidirectional real-time interaction is
-  actually needed.
+1. Retrain and re-evaluate the privacy adapter on premasked production-format
+   inputs; keep real child data out until its release gate passes.
+2. Add real multi-tenant identity, centre isolation, role-based permissions,
+   retention controls, encryption and security review.
+3. Add Redis-backed shared ephemeral state, rate limiting, and a background job
+   queue before running multiple API instances or expensive exports at scale.
+4. Add monitoring, backups, cost budgets, load tests, and independently authored
+   human-quality/adversarial evaluation before a production claim.
+5. Consider token streaming only if the product experience justifies the extra
+   recovery and moderation complexity.
 
 ## Design principles
 
@@ -450,8 +516,8 @@ Known follow-up work:
   Worker observation, Tool, and evaluation interfaces.
 - **Least privilege:** Main sees registered read-only capabilities; each Worker
   receives a smaller domain-specific allowlist and step budget.
-- **Draft-only boundary:** the production graph cannot save, send, approve or
-  perform another side effect.
+- **Controlled-write boundary:** generation cannot write; only an authenticated
+  approval can execute one frozen registered action. External sending is absent.
 - **Replayable execution:** checkpointed graph state and persisted SSE events
   support safe recovery and reconnection.
 - **Inspectable quality:** evaluations report per-capability results instead of

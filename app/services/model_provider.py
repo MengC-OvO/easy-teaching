@@ -338,10 +338,52 @@ class ChatCompletionsModelProvider:
 
     def _normalize_json_content(self, content: str) -> str:
         stripped = content.strip()
-        if not stripped.startswith("```"):
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            if (
+                len(lines) >= 3
+                and lines[0].startswith("```")
+                and lines[-1].strip() == "```"
+            ):
+                stripped = "\n".join(lines[1:-1]).strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
             return stripped
+        extracted = self._first_balanced_json_object(stripped)
+        return extracted or stripped
 
-        lines = stripped.splitlines()
-        if len(lines) >= 3 and lines[0].startswith("```") and lines[-1].strip() == "```":
-            return "\n".join(lines[1:-1]).strip()
-        return stripped
+    @staticmethod
+    def _first_balanced_json_object(content: str) -> Optional[str]:
+        """Extract one complete JSON object from harmless provider wrapper text."""
+
+        start = content.find("{")
+        while start >= 0:
+            depth = 0
+            in_string = False
+            escaped = False
+            for index in range(start, len(content)):
+                char = content[index]
+                if in_string:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+                if char == '"':
+                    in_string = True
+                elif char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = content[start : index + 1]
+                        try:
+                            parsed = json.loads(candidate)
+                        except json.JSONDecodeError:
+                            break
+                        if isinstance(parsed, dict):
+                            return candidate
+                        break
+            start = content.find("{", start + 1)
+        return None

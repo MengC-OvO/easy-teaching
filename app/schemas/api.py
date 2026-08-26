@@ -1,8 +1,8 @@
 """Validated HTTP and SSE contracts for the EasyTeaching public API.
 
 These models deliberately contain no FastAPI or LangGraph execution logic.
-They define the boundary between an API caller and the existing workflow
-domain models so later endpoint work can depend on one stable contract.
+They define the boundary between an API caller and the Agent runtime's domain
+models so endpoint code can depend on one stable contract.
 """
 
 from enum import Enum

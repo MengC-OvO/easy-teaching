@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.auth import router as auth_router
 from app.api.recovery import recover_incomplete_runs
 from app.api.routes import (
+    approvals_router,
     drafts_router,
     events_router,
     messages_router,
@@ -50,7 +51,7 @@ def create_app(runtime_factory: Optional[RuntimeFactory] = None) -> FastAPI:
     application = FastAPI(
         title="EasyTeaching",
         description=(
-            "Teacher workflow agent backend for synthetic Australian early "
+            "Safety-aware AI agent backend for synthetic Australian early "
             "childhood education scenarios."
         ),
         version="0.1.0",
@@ -61,6 +62,7 @@ def create_app(runtime_factory: Optional[RuntimeFactory] = None) -> FastAPI:
     application.include_router(messages_router)
     application.include_router(drafts_router)
     application.include_router(events_router)
+    application.include_router(approvals_router)
     application.mount(
         "/assets",
         StaticFiles(directory=WEB_DIRECTORY),

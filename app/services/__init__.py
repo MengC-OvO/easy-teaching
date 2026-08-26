@@ -11,6 +11,7 @@ from app.services.model_errors import (
 from app.services.model_provider import ChatCompletionsModelProvider
 from app.services.retry import RetryPolicy
 from app.services.observation_redactor import ObservationRedactor
+from app.services.observation_view import build_model_observation_view
 from app.services.request_guard import (
     EasyTeachingRequestGuard,
     RequestGuardAction,
@@ -73,6 +74,7 @@ __all__ = [
     "ModelTimeoutError",
     "ModelUsage",
     "ObservationRedactor",
+    "build_model_observation_view",
     "EasyTeachingRequestGuard",
     "RequestGuardAction",
     "RequestGuardResult",

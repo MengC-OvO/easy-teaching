@@ -29,6 +29,7 @@ class ApprovalStatus(str, Enum):
     REQUIRED = "required"
     APPROVED = "approved"
     REJECTED = "rejected"
+    FAILED = "failed"
 
 
 class RiskLevel(str, Enum):
@@ -56,6 +57,10 @@ class Approval(BaseModel):
     status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
     risk_level: RiskLevel = RiskLevel.L1_DRAFT
     reason: Optional[str] = None
+    action_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    preview: Dict[str, Any] = Field(default_factory=dict)
+    result: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TraceEvent(BaseModel):
@@ -191,6 +196,12 @@ class GraphState(BaseModel):
     tool_call_count: int = Field(default=0, ge=0)
     worker_batch_count: int = Field(default=0, ge=0)
     repeated_call_counts: Dict[str, int] = Field(default_factory=dict)
+    tool_attempt_counts: Dict[str, int] = Field(default_factory=dict)
+    required_completion_actions: List[str] = Field(default_factory=list)
+    # Deprecated checkpoint compatibility only. Runtime draft identity comes from
+    # the full loaded_draft_references mapping derived from read observations.
+    selected_draft_request_id: Optional[str] = None
+    available_tool_names: List[str] = Field(default_factory=list)
     run_trace_start: int = Field(default=0, ge=0)
     run_citation_start: int = Field(default=0, ge=0)
 

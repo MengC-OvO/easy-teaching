@@ -1,7 +1,7 @@
 """Validated command supplied when a teacher resumes an approval pause.
 
 This is intentionally separate from ``ApprovalStatus``.  A decision is the
-teacher's requested action; the status is the state recorded by the workflow
+teacher's requested action; the status is the state recorded by the Agent graph
 after it has checked and applied that action.
 """
 
@@ -25,10 +25,10 @@ class ApprovalDecision(str, Enum):
 
 
 class ApprovalResumeCommand(BaseModel):
-    """A generic, validated instruction for an approval-gated workflow.
+    """A generic, validated instruction for an approval-gated Agent action.
 
     ``request_id`` identifies the draft that the human intended to act on.
-    In the next D5 steps, the workflow will compare it with the paused graph
+    Before resuming, the API compares it with the paused graph
     state before changing approval status or saving anything.
     """
 

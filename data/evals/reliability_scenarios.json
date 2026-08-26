@@ -30,10 +30,10 @@
     "test_node": "tests/test_main_react_graph.py::test_main_react_model_error_returns_provider_limitation_draft"
   },
   {
-    "id": "invalid-dependency-feedback",
-    "fault": "Main requests a Tool before its declared dependency is available.",
-    "expected": "Code rejects the batch, records a recoverable Observation, and Main can finish safely.",
-    "test_node": "tests/test_main_react_graph.py::test_invalid_dependency_error_becomes_feedback_then_main_can_recover"
+    "id": "unregistered-tool-feedback",
+    "fault": "Main requests a Tool name that is not registered.",
+    "expected": "Code rejects the call, records a recoverable Observation, and Main can finish safely.",
+    "test_node": "tests/test_main_react_graph.py::test_unregistered_tool_error_becomes_feedback_then_main_can_recover"
   },
   {
     "id": "main-react-step-budget-stop",

@@ -44,7 +44,7 @@ def test_tool_evaluator_checks_names_arguments_denials_and_order() -> None:
                     tool_args={"skill_name": "activity_planning"},
                 ),
                 ObservedToolCall(
-                    tool_name="get_class_profile",
+                    tool_name="get_class_context",
                     tool_args={"class_id": "kangaroo-room", "unused": "allowed"},
                 ),
             ]

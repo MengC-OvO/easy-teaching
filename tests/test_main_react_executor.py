@@ -78,26 +78,23 @@ def test_validator_routes_single_and_parallel_tools() -> None:
     assert validator.validate(parallel, observations={}, repeated_call_counts={}).route is ExecutionRoute.PARALLEL_TOOLS
 
 
-def test_validator_rejects_missing_dependency_and_single_worker() -> None:
+def test_validator_rejects_single_worker() -> None:
     validator = MainDecisionValidator(make_registry())
-    missing = MainDecision(
-        reason="依赖不存在。",
-        tool_calls=[
-            CapabilityCall(name="echo", needs=["context"], result_key="one")
-        ],
-    )
     one_worker = MainDecision(
         reason="只有一个Worker。",
         worker_calls=[
-            WorkerCall(name=WorkerName.INTERNAL_RESEARCH, result_key="research")
+            WorkerCall(
+                name=WorkerName.CURRICULUM_RESEARCH,
+                arguments={"task": "research", "research_questions": ["a", "b"]},
+                result_key="research",
+            )
         ],
     )
 
-    assert validator.validate(missing, observations={}, repeated_call_counts={}).route is ExecutionRoute.FEEDBACK
     assert validator.validate(one_worker, observations={}, repeated_call_counts={}).route is ExecutionRoute.FEEDBACK
 
 
-def test_validator_accepts_two_workers_after_dependencies() -> None:
+def test_validator_accepts_two_independent_deep_workers() -> None:
     validator = MainDecisionValidator(make_registry())
     observations = {
         "context": CapabilityObservation(
@@ -111,13 +108,13 @@ def test_validator_accepts_two_workers_after_dependencies() -> None:
         reason="两个深度任务独立。",
         worker_calls=[
             WorkerCall(
-                name=WorkerName.INTERNAL_RESEARCH,
-                needs=["context"],
+                name=WorkerName.CURRICULUM_RESEARCH,
+                arguments={"task": "curriculum", "research_questions": ["a", "b"]},
                 result_key="internal",
             ),
             WorkerCall(
-                name=WorkerName.EXTERNAL_RESEARCH,
-                needs=["context"],
+                name=WorkerName.RECORD_CONTEXT,
+                arguments={"task": "records", "research_questions": ["c", "d"]},
                 result_key="external",
             ),
         ],
