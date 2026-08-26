@@ -1,4 +1,4 @@
-"""Validated manifest for the deterministic Day 4 fault-injection suite."""
+"""Validated manifest for the deterministic fault-injection suite."""
 
 import json
 from pathlib import Path

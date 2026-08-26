@@ -31,10 +31,3 @@ data/knowledge/index/
 .idea/
 /docs/.ef_ref.docx
 /local_models/
-
-# Internal development notes (not part of the public repository)
-/AGENTS.md
-/docs/react-refactor-plan.md
-/docs/project-refactor-notes.md
-/docs/agent-optimization-notes.md
-/docs/project-status.md
