@@ -1,4 +1,4 @@
-"""Validated contracts for the offline Week 4 evaluation harness."""
+"""Validated contracts for the offline evaluation harness."""
 
 from enum import Enum
 from datetime import datetime

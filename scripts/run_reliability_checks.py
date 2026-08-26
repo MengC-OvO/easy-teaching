@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the deterministic Week 4 Day 4 failure-injection matrix."""
+"""Run the deterministic failure-injection matrix."""
 
 import argparse
 import subprocess

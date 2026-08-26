@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Week 4 evaluation suite without starting the FastAPI server."""
+"""Run the offline evaluation suite without starting the FastAPI server."""
 
 import argparse
 import sys
