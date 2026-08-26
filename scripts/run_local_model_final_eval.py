@@ -30,11 +30,11 @@ from safety_gateway.prompt import SYSTEM_PROMPT
 from safety_gateway.settings import GatewaySettings
 
 
-LAB_ROOT = Path(r"C:\Users\MEOW Computer\Desktop\微调模型")
-DEFAULT_V11 = LAB_ROOT / "data" / "corpus_v11" / "test.jsonl"
-DEFAULT_V11_MANIFEST = LAB_ROOT / "data" / "corpus_v11" / "manifest.json"
-DEFAULT_CHALLENGE = LAB_ROOT / "data" / "challenge_v3" / "challenge.jsonl"
-DEFAULT_CHALLENGE_MANIFEST = LAB_ROOT / "data" / "challenge_v3" / "manifest.json"
+DEFAULT_DATASET_ROOT = PROJECT_ROOT / "data" / "local" / "safety-eval"
+DEFAULT_V11 = DEFAULT_DATASET_ROOT / "corpus_v11" / "test.jsonl"
+DEFAULT_V11_MANIFEST = DEFAULT_DATASET_ROOT / "corpus_v11" / "manifest.json"
+DEFAULT_CHALLENGE = DEFAULT_DATASET_ROOT / "challenge_v3" / "challenge.jsonl"
+DEFAULT_CHALLENGE_MANIFEST = DEFAULT_DATASET_ROOT / "challenge_v3" / "manifest.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / "reports" / "local_model_direct_final_v2.json"
 RAW_SOURCE_KINDS = {"user_message", "user_paste", "user_form", "voice_transcript"}
 RISK_LABELS = ("normal", "suspicious", "block")

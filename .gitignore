@@ -6,6 +6,7 @@ __pycache__/
 .env
 .DS_Store
 .pytest_cache/
+.test-tmp/
 .test-cache/
 .pytest_tmp*/
 .pytest_*/
@@ -19,6 +20,8 @@ build/
 *.log
 /artifacts/
 /reports/
+data/exports/*
+!data/exports/.gitkeep
 data/local/
 chroma/
 data/chroma/
@@ -29,7 +32,7 @@ data/knowledge/index/
 /docs/.ef_ref.docx
 /local_models/
 
-# Internal Codex/refactor working notes (not part of the public repository)
+# Internal development notes (not part of the public repository)
 /AGENTS.md
 /docs/react-refactor-plan.md
 /docs/project-refactor-notes.md

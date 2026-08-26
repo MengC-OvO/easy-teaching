@@ -19,13 +19,11 @@ from uuid import uuid4
 import httpx
 
 
-DEFAULT_CHALLENGE = Path(
-    r"C:\Users\MEOW Computer\Desktop\微调模型\data\challenge_v3\challenge.jsonl"
-)
-DEFAULT_REFERENCE = Path(
-    r"C:\Users\MEOW Computer\Desktop\微调模型\artifacts\qlora-formal-v11\test_generation_metrics.json"
-)
-DEFAULT_OUTPUT = Path("reports/local_safety_final_20260825.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DATASET_ROOT = PROJECT_ROOT / "data" / "local" / "safety-eval"
+DEFAULT_CHALLENGE = DEFAULT_DATASET_ROOT / "challenge_v3" / "challenge.jsonl"
+DEFAULT_REFERENCE = DEFAULT_DATASET_ROOT / "reference" / "test_generation_metrics.json"
+DEFAULT_OUTPUT = PROJECT_ROOT / "reports" / "local_safety_final.json"
 
 
 def percentile(values: list[float], fraction: float) -> float:

@@ -17,6 +17,10 @@ Scripts are local entry points, not production API modules.
 | Direct local-model evaluation | `run_local_model_final_eval.py` (raw input; PII and injection only) |
 | Final local safety Gateway evaluation | `run_local_safety_final_eval.py`, `diagnose_safety_premask_contract.py` |
 
+Local safety datasets default to the ignored `data/local/safety-eval/` tree.
+Every evaluation command also accepts explicit dataset paths, so no script
+depends on a developer-specific workstation directory.
+
 The phase-one smoke suite includes `draft_save_followup`, a two-turn live check
 that generates an activity and then asks the same Main ReAct thread to save the
 previous draft through a frozen `save_educational_record` approval.
