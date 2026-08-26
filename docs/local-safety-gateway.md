@@ -4,11 +4,11 @@ EasyTeaching uses a separate local process for privacy detection, prompt-safety
 classification, deterministic redaction, and policy signals. Both processes can
 live in this monorepo while retaining different dependency and failure boundaries.
 
-> **Current status:** experimental and disabled by default. The 240-case live
-> Gateway evaluation failed its release gate (`92.5%` HTTP success, PII recall
-> `60%`, PII F1 `75%`, phone recall `0%`). Fail-closed behavior prevented
-> plaintext response leakage, but the adapter must be retrained on premasked
-> production-format inputs before real-data use.
+> **Current status:** experimental. A direct 1,227-case raw-input evaluation of
+> the local adapter achieved injection Macro-F1 `95.2%` and PII F1 `96.1%`, but
+> failed the privacy release gate because `5.5%` of labelled PII entities were
+> missed and strict structured output was `98.9%`. The local development runtime
+> may run in `enforce` mode, but real child or family data remains prohibited.
 
 ```text
 Browser -> EasyTeaching API :8000 -> Local Safety Gateway :8010
@@ -132,6 +132,48 @@ The MPS path needs a one-time real-device smoke test after checkout. Windows can
 verify selection and shared contracts, but cannot execute Apple's Metal kernels.
 
 ## Final synthetic Gateway evaluation
+
+### Direct local-model evaluation
+
+`scripts/run_local_model_final_eval.py` evaluates only the two model-owned tasks:
+prompt-injection classification and exact PII entity detection. Raw synthetic
+text is sent directly to Qwen without regex premasking or rule-based injection
+classification. Education scope, professional risk, HTTP policy, vault behavior,
+and restoration are excluded from the score.
+
+The suite verifies the frozen file hashes and contains 987 raw-input records from
+the split-isolated v11 test set plus a 240-record secondary robustness challenge.
+Sixty-three already-premasked v11 inputs are explicitly excluded.
+
+| Metric | Result |
+| --- | ---: |
+| Cases | `1,227` |
+| Strict structured output | `98.9%` |
+| Injection accuracy / Macro-F1 | `95.2% / 95.2%` |
+| Injection block recall | `97.7%` |
+| PII precision / recall / F1 | `98.5% / 93.9% / 96.1%` |
+| Derived de-identification case pass | `89.8%` |
+| Labelled PII entity leakage after model-only redaction | `5.5%` |
+| Clean-text over-redaction case rate | `0%` |
+| Batch completion latency P50 / P95 | `3.56 s / 7.20 s` |
+| Peak allocated GPU memory | `1.39 GiB` |
+| Release gate | **Failed** |
+
+PHONE is the weakest entity class (`75.5%` recall); PERSON_NAME, EMAIL, ADDRESS,
+and DOB F1 are `97.5%`, `96.6%`, `95.2%`, and `100%` respectively. Three block
+examples were classified as normal (`1.37%` of block cases), narrowly missing the
+configured maximum of `1%`. The model therefore remains a useful local semantic
+detector, not a standalone privacy enforcement boundary.
+
+Run the direct suite with:
+
+```powershell
+.\.venv-safety\Scripts\python.exe scripts\run_local_model_final_eval.py `
+  --batch-size 8 `
+  --output reports\local_model_direct_final_v2.json
+```
+
+### Deployed Gateway pipeline evaluation
 
 With the real local Qwen2.5-1.5B v11 adapter, deterministic premasking, HTTP
 Gateway, mapping vault and one-time restoration, the independent challenge suite

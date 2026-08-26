@@ -19,13 +19,15 @@ FastAPI, PostgreSQL, LangGraph ReAct, controlled Tools and Workers, hybrid RAG,
 approvals, record export, optional Google Drive MCP, evaluation, and an
 experimental local privacy gateway.
 
-The final live Agent evaluation passed `39/40` scenarios (`97.5%`); the only
-failed assertion was corrected and its isolated rerun passed. The independent
-local privacy-gateway evaluation did **not** pass its release gate because the
-fine-tuned model and deterministic premasking pipeline have a training/serving
-distribution mismatch. Keep `PRIVACY_GATEWAY_MODE=disabled` and use only
-synthetic or thoroughly de-identified data unless that model is retrained and
-re-evaluated. See [Agent evaluation](docs/agent-evaluation.md) and
+The final live Agent evaluation passed `93/100` scenarios (`93.0%`) across 118
+turns and passed its release gate. RAG, security, multi-turn, and operational
+categories each passed `100%`; remaining failures are documented without
+post-hoc score changes. The independent
+local-model raw-input evaluation reached injection Macro-F1 `95.2%` and PII F1
+`96.1%`, but did **not** pass its privacy release gate because labelled-entity
+leakage remained `5.5%`. Use only synthetic or thoroughly de-identified data
+until both the direct-model and deployed-Gateway suites pass. See
+[Agent evaluation](docs/agent-evaluation.md) and
 [Local Safety Gateway](docs/local-safety-gateway.md). The final completed versus
 out-of-scope boundary is listed in [Project status](docs/project-status.md).
 
@@ -418,12 +420,12 @@ Run the zero-provider-cost structural suite:
 python scripts/run_evals.py
 ```
 
-Run the independent 40-scenario production-path Agent evaluation (uses Gemini
+Run the independent 100-scenario production-path Agent evaluation (uses Gemini
 and embedding quota):
 
 ```bash
 python scripts/run_final_agent_suite.py \
-  --output reports/final_agent_evaluation.json
+  --output reports/final_agent_evaluation_v2.json
 ```
 
 Run the frozen retrieval-only RAG evaluation:
@@ -457,14 +459,16 @@ Latest final checks:
 
 | Check | Result |
 | --- | --- |
-| Repository regression suite | `329/329` passed |
-| Live Agent scenarios | `39/40 (97.5%)`; corrected isolated rerun `1/1` |
-| Required-Tool recall / Tool precision | `100.0%` / `95.8%` |
-| RAG, security, multi-turn, approval integrity | `100%` in the final suite |
+| Repository regression suite | `331/331` passed |
+| Live Agent scenarios | `93/100 (93.0%)` across `118` turns |
+| Required-Tool recall / Tool precision | `98.0%` / `92.8%` |
+| RAG, security, multi-turn, operational checks | `100%` in the final suite |
 | ReAct steps P50 / P95 / max | `2 / 4 / 4` |
-| Agent latency P50 / P95 | `3.46 s / 11.68 s` |
-| Local privacy Gateway release gate | **Failed** |
-| Gateway PII precision / recall / F1 | `100% / 60% / 75%` |
+| Agent latency P50 / P95 | `3.16 s / 8.66 s` |
+| Direct local-model release gate | **Failed** |
+| Direct model injection accuracy / Macro-F1 | `95.2% / 95.2%` |
+| Direct model PII precision / recall / F1 | `98.5% / 93.9% / 96.1%` |
+| Model-only labelled-entity leakage | `5.5%` |
 
 Automated tests are intentionally committed source code, not generated output.
 They document contracts and protect fail-closed behavior during refactoring.
@@ -478,7 +482,7 @@ exercise retryable model failures, non-retryable failures, structured-output
 repair, fallback responses, and observable API failure events. Evaluation data
 is development-only and is not part of the production API response path.
 
-The final production-path benchmark runs 40 synthetic scenarios and 46 turns
+The final production-path benchmark runs 100 synthetic scenarios and 118 turns
 through the production HTTP/PostgreSQL/LangGraph path. It reports Tool recall and
 precision, parameter contracts, forbidden calls, path efficiency, ReAct steps,
 approvals, RAG grounding, security, multi-turn behavior, answer quality, latency,
