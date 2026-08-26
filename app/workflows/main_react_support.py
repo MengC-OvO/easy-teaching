@@ -4,11 +4,13 @@ import inspect
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Union
 
 from app.schemas import (
+    Approval,
     ConversationTurn,
     GraphState,
     LongTermMemoryOperation,
     ThreadContext,
     TraceEvent,
+    WorkflowStatus,
 )
 from app.services import ModelProviderError
 
@@ -22,6 +24,8 @@ class ContextManagerProtocol(Protocol):
         context: ThreadContext,
         *,
         teacher_id: Optional[str] = None,
+        class_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         ...
 
@@ -75,6 +79,11 @@ def initialize(state: GraphStateInput) -> Dict[str, Any]:
     return {
         "thread_id": thread_id,
         "context": current.context.model_copy(update={"thread_id": thread_id}),
+        "workflow_status": WorkflowStatus.CREATED,
+        "draft": None,
+        "approval": Approval(),
+        "needs_clarification": False,
+        "clarification_question": None,
         "decision": None,
         "execution_route": None,
         "validation_feedback": None,
@@ -84,6 +93,10 @@ def initialize(state: GraphStateInput) -> Dict[str, Any]:
         "tool_call_count": 0,
         "worker_batch_count": 0,
         "repeated_call_counts": {},
+        "tool_attempt_counts": {},
+        "required_completion_actions": [],
+        "selected_draft_request_id": None,
+        "available_tool_names": [],
         "run_trace_start": len(current.trace),
         "run_citation_start": len(current.citations),
         "trace": [
@@ -133,6 +146,16 @@ def build_long_memory_update_node(
 ):
     async def long_memory_update(state: GraphStateInput) -> Dict[str, Any]:
         current = _state(state)
+        if current.workflow_status.value == "waiting_for_approval":
+            return {
+                "trace": [
+                    TraceEvent(
+                        step="long_memory_update",
+                        message="Long-term memory update was skipped for an approval preview.",
+                        metadata={"applied_operations": 0},
+                    )
+                ]
+            }
         guarded = next(
             (
                 trace

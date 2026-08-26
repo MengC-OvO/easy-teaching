@@ -1,6 +1,6 @@
-# RAG final handoff and interview review
+# RAG system and retrieval evaluation
 
-Updated: 2026-08-23
+Updated: 2026-08-26
 
 ## Current decision
 
@@ -26,7 +26,8 @@ ablation unless a larger evaluation set later exposes a recall problem.
 7. Hybrid retrieval obtains Dense and BM25 candidates, deduplicates them, and
    combines their ranks with weighted reciprocal-rank fusion (Dense 0.60,
    BM25 0.40, RRF k=60).
-8. `search_knowledge` performs one-query Hybrid retrieval. `research_knowledge`
+8. `retrieve_knowledge(mode=standard)` performs one-query Hybrid retrieval.
+   `retrieve_knowledge(mode=deep)`
    rewrites the question into multiple queries, retrieves them separately, and
    applies a second RRF fusion followed by local Cross-encoder reranking.
    The final order blends the proven Hybrid/multi-query rank and Cross-encoder
@@ -73,19 +74,19 @@ ignored `data/local/`; rerunning the same suite should require zero API calls.
 Standard 1.1. Dense ranks the exact gold chunk third, but Hybrid misses it in
 the top 10 because broad BM25 matches to NQS headings, contents, and regulatory
 sections dominate the fused candidate list. This is one known failure out of
-40 and is accepted for the current milestone. Do not hide it in an interview;
-explain it as evidence that hybrid fusion improves average ranking but can hurt
-one semantic result when the lexical side is noisy.
+40 and is accepted for the current release. It remains documented because hybrid
+fusion improves average ranking but can still hurt an individual semantic result
+when the lexical side is noisy.
 
-## Not yet claimed as complete
+## Evaluation boundary
 
-- End-to-end answer faithfulness and answer quality evaluation
-- Full Agent tool-choice and orchestration evaluation
-- Formal evaluation of multi-query rewriting in `research_knowledge`
-- End-to-end evaluation of multi-query rewrite + retrieval + reranking as one
-  enhanced tool path (the retrieval-only Cross-encoder stage is evaluated)
+The retrieval ranking benchmark is complete for the frozen evaluation corpus.
+The separate final Agent suite covers end-to-end grounding, citations, Tool
+selection and answer quality. Formal ablation of multi-query rewriting and a
+larger independently authored human-faithfulness set remain future work; no
+production certification is claimed.
 
-## Next interview review session
+## System review guide
 
 Review the project from start to finish in this order:
 
@@ -99,7 +100,7 @@ Review the project from start to finish in this order:
 5. Tool layer: simple versus enhanced retrieval and how the Agent calls them.
 6. Evaluation: exact gold chunk labels, Recall@K, MRR, nDCG, scope violations,
    citation correctness, caching, P50/P95, and interpreting the final table.
-7. Interview trade-offs: why 768 dimensions, why 350/500/40 chunking, why local
+7. Design trade-offs: why 768 dimensions, why 350/500/40 chunking, why local
    Chroma and SQLite, why Hybrid is default, why Cross-encoder is enhanced, and
    how the system would scale beyond a single machine.
 8. Practise a two-minute architecture explanation, debugging questions, and

@@ -48,5 +48,5 @@ def _checkpoint_json_default(value: Any) -> Any:
     )
 
 
-def checkpoint_config(thread_id: str) -> Dict[str, Dict[str, Any]]:
-    return {"configurable": {"thread_id": thread_id}}
+def checkpoint_config(thread_id: str) -> Dict[str, Any]:
+    return {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}

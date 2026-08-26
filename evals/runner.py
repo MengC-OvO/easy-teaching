@@ -207,25 +207,31 @@ class EvalRunner:
 
     def _tool_actual(self, case: EvalCase) -> ToolActual:
         message = case.input.message.lower()
-        calls = [
-            ObservedToolCall(
-                tool_name="load_skill",
-                tool_args={"skill_name": "activity_planning"},
-            )
-        ]
+        calls = []
         if "profile" in message:
             calls.append(
                 ObservedToolCall(
-                    tool_name="get_class_profile",
-                    tool_args={"class_id": case.input.class_id or "kangaroo-room"},
+                    tool_name="get_class_context",
+                    tool_args={},
                 )
             )
         elif "safety" in message:
             calls.append(ObservedToolCall(tool_name="check_activity_safety"))
         elif "risk guidance" in message:
-            calls.append(ObservedToolCall(tool_name="research_knowledge"))
+            calls.append(
+                ObservedToolCall(
+                    tool_name="retrieve_knowledge", tool_args={"mode": "deep"}
+                )
+            )
         elif "eylf outcomes" in message:
-            calls.append(ObservedToolCall(tool_name="search_knowledge"))
+            calls.append(
+                ObservedToolCall(
+                    tool_name="retrieve_knowledge",
+                    tool_args={"mode": "standard", "knowledge_scope": "eylf"},
+                )
+            )
+        elif "plan" in message:
+            calls.append(ObservedToolCall(tool_name="get_class_context", tool_args={}))
         return ToolActual(calls=calls)
 
     def _rag_actual(self, case: EvalCase) -> RagActual:
@@ -258,18 +264,21 @@ class EvalRunner:
                 teacher_id=case.input.teacher_id,
             )
             return MemoryActual(success=True, output=output)
-        result = self.registry.execute(
-            "recall_long_term_memory",
-            {"query": case.input.message},
-            execution_context=ToolExecutionContext(
-                teacher_id=case.input.teacher_id,
-                class_id=case.input.class_id,
-            ),
+        if case.input.teacher_id is None and case.input.class_id is None:
+            return MemoryActual(
+                success=False,
+                output="",
+                error_code="validation_error",
+            )
+        memories = self.store.search_recall_memories(
+            teacher_id=case.input.teacher_id,
+            class_id=case.input.class_id,
+            query=case.input.message,
         )
         return MemoryActual(
-            success=result.success,
-            output=json.dumps(result.data, ensure_ascii=False),
-            error_code=result.error.code.value if result.error else None,
+            success=True,
+            output=json.dumps(memories, ensure_ascii=False),
+            error_code=None,
         )
 
     def _safety_actual(self, case: EvalCase) -> SafetyActual:
@@ -281,15 +290,20 @@ class EvalRunner:
             )
         if "without teacher approval" in message:
             result = self.registry.execute(
-                "save_draft",
+                "save_observation",
                 {
-                    "draft_id": "eval-draft",
-                    "idempotency_key": case.id,
-                    "draft_type": "activity",
-                    "title": "Eval draft",
-                    "content": "Synthetic content",
+                    "child_ids": [],
+                    "observed_at": "2026-08-25T09:00:00",
+                    "setting": "Synthetic classroom",
+                    "objective_text": "The child arranged four blocks in a line.",
+                    "status": "draft",
+                    "idempotency_key": f"eval-{case.id}",
                 },
                 approved=False,
+                execution_context=ToolExecutionContext(
+                    teacher_id="teacher-1",
+                    class_id="kangaroo-room",
+                ),
             )
             return SafetyActual(
                 outcome=SafetyOutcome.BLOCK,
@@ -453,13 +467,19 @@ class _TrajectoryMainAgent:
                 reason="Two independent deep tasks.",
                 worker_calls=[
                     WorkerCall(
-                        name=WorkerName.INTERNAL_RESEARCH,
-                        arguments={"task": "internal evidence"},
+                        name=WorkerName.CURRICULUM_RESEARCH,
+                        arguments={
+                            "task": "curriculum evidence",
+                            "research_questions": ["EYLF evidence", "NQS evidence"],
+                        },
                         result_key="internal",
                     ),
                     WorkerCall(
-                        name=WorkerName.EXTERNAL_RESEARCH,
-                        arguments={"task": "public evidence"},
+                        name=WorkerName.RECORD_CONTEXT,
+                        arguments={
+                            "task": "record evidence",
+                            "research_questions": ["class context", "prior records"],
+                        },
                         result_key="external",
                     ),
                 ],
@@ -498,7 +518,6 @@ class _TrajectoryMainAgent:
                     CapabilityCall(
                         name="eval_tool_b",
                         arguments={"value": "second"},
-                        needs=["first"],
                         result_key="second",
                     )
                 ],

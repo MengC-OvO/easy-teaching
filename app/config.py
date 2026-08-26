@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         validation_alias="MODEL_TOTAL_TIMEOUT_SECONDS",
     )
     model_structured_max_attempts: int = Field(
-        default=2,
+        default=3,
         ge=1,
         le=3,
         validation_alias="MODEL_STRUCTURED_MAX_ATTEMPTS",
@@ -109,6 +109,35 @@ class Settings(BaseSettings):
         ge=60,
         validation_alias="AUTH_COOKIE_MAX_AGE_SECONDS",
     )
+    google_drive_mcp_enabled: bool = Field(
+        default=False,
+        validation_alias="GOOGLE_DRIVE_MCP_ENABLED",
+    )
+    google_drive_mcp_command: str = Field(
+        default="workspace-mcp",
+        validation_alias="GOOGLE_DRIVE_MCP_COMMAND",
+    )
+    google_drive_user_email: str = Field(
+        default="",
+        validation_alias="GOOGLE_DRIVE_USER_EMAIL",
+    )
+    google_drive_mcp_timeout_seconds: float = Field(
+        default=45.0,
+        gt=0.0,
+        validation_alias="GOOGLE_DRIVE_MCP_TIMEOUT_SECONDS",
+    )
+    google_oauth_client_id: str = Field(
+        default="",
+        validation_alias="GOOGLE_OAUTH_CLIENT_ID",
+    )
+    google_oauth_client_secret: str = Field(
+        default="",
+        validation_alias="GOOGLE_OAUTH_CLIENT_SECRET",
+    )
+    google_workspace_mcp_credentials_dir: str = Field(
+        default="data/local/google_workspace_mcp",
+        validation_alias="WORKSPACE_MCP_CREDENTIALS_DIR",
+    )
 
     @model_validator(mode="after")
     def validate_privacy_gateway_boundary(self) -> "Settings":
@@ -126,6 +155,15 @@ class Settings(BaseSettings):
                 "::1",
             }:
                 raise ValueError("privacy gateway must use a loopback HTTP(S) URL")
+        if self.google_drive_mcp_enabled:
+            if not self.google_drive_user_email:
+                raise ValueError(
+                    "GOOGLE_DRIVE_USER_EMAIL is required when Drive MCP is enabled"
+                )
+            if not self.google_oauth_client_id or not self.google_oauth_client_secret:
+                raise ValueError(
+                    "Google OAuth client credentials are required when Drive MCP is enabled"
+                )
         return self
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

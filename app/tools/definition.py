@@ -110,12 +110,24 @@ class ToolExecutionContext(BaseModel):
 
     teacher_id: Optional[str] = None
     class_id: Optional[str] = None
+    session_id: Optional[str] = None
+    request_id: Optional[str] = None
+
+
+class PreparedToolAction(BaseModel):
+    """Frozen arguments and teacher-facing preview for an approved write."""
+
+    arguments: Dict[str, Any]
+    preview: Dict[str, Any]
 
 
 RuntimeToolHandler = Callable[[BaseModel, ToolExecutionContext], ToolResult]
 AsyncToolHandler = Callable[[BaseModel], Awaitable[ToolResult]]
 AsyncRuntimeToolHandler = Callable[
     [BaseModel, ToolExecutionContext], Awaitable[ToolResult]
+]
+ApprovalPreparationHandler = Callable[
+    [BaseModel, ToolExecutionContext], Awaitable[PreparedToolAction]
 ]
 
 
@@ -131,10 +143,14 @@ class ToolDefinition(BaseModel):
     domain: ToolDomain = ToolDomain.SYSTEM
     parallel_safe: bool = False
     timeout_seconds: float = Field(default=30.0, gt=0)
+    max_successful_calls_per_run: Optional[int] = Field(default=None, ge=1)
+    max_identical_calls_per_run: int = Field(default=2, ge=1)
+    completion_aliases: tuple[str, ...] = ()
     handler: Optional[ToolHandler] = None
     runtime_handler: Optional[RuntimeToolHandler] = None
     async_handler: Optional[AsyncToolHandler] = None
     async_runtime_handler: Optional[AsyncRuntimeToolHandler] = None
+    approval_preparation_handler: Optional[ApprovalPreparationHandler] = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -163,5 +179,64 @@ class ToolDefinition(BaseModel):
     def input_schema(self) -> Dict[str, Any]:
         return self.input_model.model_json_schema()
 
+    def model_input_schema(self) -> Dict[str, Any]:
+        """Compact schema for model selection; runtime validation keeps full Pydantic."""
+
+        schema = self.input_schema()
+        return _compact_model_schema(schema, schema.get("$defs", {}))
+
+    def model_spec(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "domain": self.domain.value,
+            "parallel_safe": self.parallel_safe,
+            "permission": self.permission.value,
+            "input_schema": self.model_input_schema(),
+        }
+
     def output_schema(self) -> Dict[str, Any]:
         return self.output_model.model_json_schema()
+
+
+def _compact_model_schema(
+    node: Dict[str, Any],
+    definitions: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Keep only structure the model needs; omit Pydantic/UI validation noise."""
+
+    if "$ref" in node:
+        name = str(node["$ref"]).rsplit("/", 1)[-1]
+        target = definitions.get(name)
+        if isinstance(target, dict):
+            return _compact_model_schema(target, definitions)
+
+    compact: Dict[str, Any] = {}
+    if "type" in node:
+        compact["type"] = node["type"]
+    if "enum" in node:
+        compact["enum"] = node["enum"]
+    if "const" in node:
+        compact["const"] = node["const"]
+    description = str(node.get("description") or "").strip()
+    if description:
+        compact["description"] = description[:180]
+    if isinstance(node.get("anyOf"), list):
+        compact["anyOf"] = [
+            _compact_model_schema(item, definitions)
+            for item in node["anyOf"]
+            if isinstance(item, dict)
+        ]
+    if isinstance(node.get("items"), dict):
+        compact["items"] = _compact_model_schema(node["items"], definitions)
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        compact["properties"] = {
+            str(name): _compact_model_schema(value, definitions)
+            for name, value in properties.items()
+            if isinstance(value, dict)
+        }
+    required = node.get("required")
+    if isinstance(required, list) and required:
+        compact["required"] = list(required)
+    return compact

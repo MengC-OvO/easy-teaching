@@ -60,7 +60,7 @@ def _runner(provider, *, allowed_names=frozenset({"internal_search"})):
     workers = WorkerRegistry(
         [
             WorkerProfile(
-                name=WorkerName.INTERNAL_RESEARCH,
+                name=WorkerName.CURRICULUM_RESEARCH,
                 description="Internal only.",
                 allowed_tool_names=allowed_names,
                 max_steps=3,
@@ -98,13 +98,12 @@ def test_worker_runs_bounded_tool_loop_and_returns_summary() -> None:
     observation = asyncio.run(
         runner.run(
             WorkerCall(
-                name=WorkerName.INTERNAL_RESEARCH,
-                arguments={"task": "Research play."},
+                name=WorkerName.CURRICULUM_RESEARCH,
+                arguments={"task": "Research play.", "research_questions": ["a", "b"]},
                 result_key="internal_result",
             ),
             teacher_id="teacher-1",
             class_id="class-1",
-            dependency_observations={},
         )
     )
 
@@ -138,13 +137,12 @@ def test_worker_permission_error_blocks_tool_outside_allowlist() -> None:
     observation = asyncio.run(
         runner.run(
             WorkerCall(
-                name=WorkerName.INTERNAL_RESEARCH,
-                arguments={"task": "Research play."},
+                name=WorkerName.CURRICULUM_RESEARCH,
+                arguments={"task": "Research play.", "research_questions": ["a", "b"]},
                 result_key="internal_result",
             ),
             teacher_id=None,
             class_id=None,
-            dependency_observations={},
         )
     )
 
@@ -158,13 +156,12 @@ def test_worker_rejects_missing_task_without_calling_model() -> None:
     observation = asyncio.run(
         runner.run(
             WorkerCall(
-                name=WorkerName.INTERNAL_RESEARCH,
+                name=WorkerName.CURRICULUM_RESEARCH,
                 arguments={},
                 result_key="internal_result",
             ),
             teacher_id=None,
             class_id=None,
-            dependency_observations={},
         )
     )
 

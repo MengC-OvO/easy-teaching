@@ -42,19 +42,19 @@ class MeteredModelProvider:
             + self._usage.completion_tokens * self.output_cost_per_million
         ) / 1_000_000
 
-    def generate(self, request: ModelRequest) -> ModelResponse:
-        response = self.provider.generate(request)
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        response = await self.provider.generate(request)
         self._record(response)
         return response
 
-    def generate_structured(
+    async def generate_structured(
         self,
         *,
         messages: List[ModelMessage],
         response_model: Type[BaseModel],
         temperature: float = 0.0,
     ) -> ModelResponse:
-        response = self.provider.generate_structured(
+        response = await self.provider.generate_structured(
             messages=messages,
             response_model=response_model,
             temperature=temperature,

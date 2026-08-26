@@ -1,7 +1,24 @@
 # Engineering decisions and resolved defects
 
-This file records behavior changes that are useful during later review and
-interview preparation. Git remains the detailed change history.
+This file records behavior changes and their engineering rationale. Git remains
+the detailed change history.
+
+## 2026-08-25 — Replace overlapping tools and model-named dependencies
+
+**Problem:** Class-profile and long-memory reads overlapped, public search had no
+trusted source boundary, and `needs=["model_generated_name"]` could fail only
+because two model-generated labels differed. Observation and educational-record
+writes also lacked a complete scoped approval path.
+
+**Decision:** Register eight domain tools with trusted teacher/class scope. Use
+one RAG tool with standard/deep modes, keep teacher preferences in automatic
+context, and handle dependent work as separate Main decisions. Only two
+independent multi-step research tasks may use bounded read-only Workers. Writes
+freeze validated arguments in PostgreSQL and require an atomic teacher approval.
+
+**Why:** Tool names now describe non-overlapping business capabilities. Code
+enforces identity, schema, permission, concurrency and approval invariants while
+the model decides only which valid action is useful next.
 
 ## 2026-08-08 — Replace fixed specialists with one bounded Main ReAct loop
 
@@ -13,7 +30,23 @@ interview preparation. Git remains the detailed change history.
 Worker 只返回 Observation，最后草稿只能由 Main 生成。
 
 **Why:** 保留 ReAct 的观察后再决定能力，同时让真正独立的 I/O 获得并发收益。
-代码注册表、依赖校验和预算保证安全，不把正确性寄托在 Prompt。
+代码注册表、参数校验、权限、冲突规则和预算保证安全，不把正确性寄托在 Prompt。
+
+## 2026-08-25 — Replace semantic regex routing with a structured task contract
+
+**Problem:** 用 `activity` / `save` 等关键词决定安全检查或写入意图，会漏掉
+同义表达、多语言表达和否定句。
+
+**Decision:** Main 的结构化决策显式返回 `task_type`，但它只作为日志和测评元数据，
+不在运行内锁定，也不用于 Tool 授权或执行路由。Validator 仅使用 Tool 权限、
+Observation、冲突规则和预算来验证执行。
+
+活动方案的安全检查从任务分类中拆出，使用专门的
+`requires_activity_safety` 信号保护最终输出，不扩散成通用任务路由。
+显式写入请求不再由正则强制，真正的写操作仍受冻结参数和人工审批保护。
+
+**Why:** 这将语义理解和逐步决策留给 Main，同时保留低成本的任务分布观测；
+确定性代码只负责权限、审批和运行预算。
 
 ## 2026-08-09 — Migrate the production path to PostgreSQL-only async I/O
 
@@ -36,7 +69,7 @@ Chroma PersistentClient、BM25 和可选 Cross-Encoder 只提供同步本地接�
 
 **Observed behavior:** the Planning model loaded `activity_planning` and then
 returned a final answer before calling the Skill's required
-`get_class_profile` and `search_knowledge` tools. The code-level guard
+the class-context and knowledge-retrieval tools. The code-level guard
 correctly rejected the unsupported answer, but it ended the whole request with
 `skill_requirements_missing`.
 
@@ -63,4 +96,4 @@ a public non-draft assistant response, allowing API and web clients to display
 the question normally.
 
 **Why:** greetings contain no task evidence. The system should ask what the
-teacher wants rather than spend model/tool calls on a guessed workflow.
+teacher wants rather than spend model/tool calls on a guessed execution path.

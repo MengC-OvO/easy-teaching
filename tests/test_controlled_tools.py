@@ -1,3 +1,5 @@
+import asyncio
+
 from app.schemas import (
     CitationMetadata,
     KnowledgeSourceType,
@@ -100,43 +102,55 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
     assert [tool.name for tool in registry.list_tools()] == [
-        "get_class_profile",
-        "search_knowledge",
-        "research_knowledge",
+        "get_class_context",
+        "retrieve_knowledge",
+        "query_records",
+        "read_draft_artifact",
+        "get_daily_context",
         "check_activity_safety",
-        "recall_long_term_memory",
-        "search_public_resources",
-        "get_public_weather",
+        "save_observation",
+        "save_educational_record",
+        "export_records",
     ]
 
 
-def test_get_class_profile_tool_reads_synthetic_data(tmp_path) -> None:
+def test_get_class_context_tool_reads_trusted_synthetic_data(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
-    result = registry.execute("get_class_profile", {"class_id": "kangaroo-room"})
+    result = asyncio.run(
+        registry.execute_async(
+            "get_class_context",
+            {},
+            execution_context=ToolExecutionContext(
+                teacher_id="teacher-1", class_id="kangaroo-room"
+            ),
+        )
+    )
 
     assert result.success is True
     assert result.risk_level is RiskLevel.L0_READ_ONLY
     assert result.data["name"] == "Kangaroo Room"
-    assert "synthetic data only" in result.data["safety_notes"]
+    assert result.data["child_count"] == 18
     assert result.trace is not None
-    assert result.trace.tool_name == "get_class_profile"
+    assert result.trace.tool_name == "get_class_context"
 
 
-def test_get_class_profile_rejects_another_session_class(tmp_path) -> None:
+def test_get_class_context_rejects_missing_trusted_teacher(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
-    result = registry.execute(
-        "get_class_profile",
-        {"class_id": "kangaroo-room"},
-        execution_context=ToolExecutionContext(class_id="another-room"),
+    result = asyncio.run(
+        registry.execute_async(
+            "get_class_context",
+            {},
+            execution_context=ToolExecutionContext(class_id="kangaroo-room"),
+        )
     )
 
     assert result.success is False
     assert result.error.code is ToolErrorCode.PERMISSION_DENIED
 
 
-def test_search_knowledge_tool_returns_citable_chunks_without_query_rewrite(tmp_path) -> None:
+def test_retrieve_knowledge_standard_mode_returns_citable_chunks_without_rewrite(tmp_path) -> None:
     retriever = StubPolicyRetriever()
     registry = build_default_tool_registry(
         make_store(tmp_path),
@@ -144,9 +158,10 @@ def test_search_knowledge_tool_returns_citable_chunks_without_query_rewrite(tmp_
     )
 
     result = registry.execute(
-        "search_knowledge",
+        "retrieve_knowledge",
         {
             "query": "play based learning",
+            "mode": "standard",
             "top_k": 4,
             "knowledge_scope": "eylf",
             "source_type": "official",
@@ -190,7 +205,32 @@ def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
     }
 
 
-def test_research_knowledge_tool_rewrites_and_fuses_queries(tmp_path) -> None:
+def test_check_activity_safety_flags_small_and_scented_sensory_materials(tmp_path) -> None:
+    registry = build_default_tool_registry(make_store(tmp_path))
+
+    result = registry.execute(
+        "check_activity_safety",
+        {
+                "activity_text": (
+                    "Use dried chickpeas, lavender-scented rice, and small animal "
+                    "figurines with pinecones in an outdoor storytelling station."
+                ),
+            "age_group": "3-5",
+            "class_size": 18,
+        },
+    )
+
+    assert result.success is True
+    assert result.data["status"] == "needs_revision"
+    assert {issue["code"] for issue in result.data["issues"]} >= {
+        "small_loose_parts",
+        "scented_materials",
+        "natural_loose_materials",
+        "activity_contains_outdoor",
+    }
+
+
+def test_retrieve_knowledge_deep_mode_rewrites_and_fuses_queries(tmp_path) -> None:
     retriever = StubPolicyRetriever()
     rewriter = StubQueryRewriter()
     reranker = StubCrossEncoderReranker()
@@ -202,13 +242,14 @@ def test_research_knowledge_tool_rewrites_and_fuses_queries(tmp_path) -> None:
     )
 
     result = registry.execute(
-        "research_knowledge",
+        "retrieve_knowledge",
         {
             "query": (
                 "Children explore outdoor natural materials through play, "
                 "describe textures, and solve problems together."
             ),
             "top_k": 3,
+            "mode": "deep",
             "knowledge_scope": "nqs",
         },
     )
@@ -240,12 +281,19 @@ def test_research_knowledge_tool_rewrites_and_fuses_queries(tmp_path) -> None:
     ]
 
 
-def test_get_class_profile_tool_reports_missing_profile(tmp_path) -> None:
+def test_get_class_context_tool_reports_missing_profile(tmp_path) -> None:
     registry = build_default_tool_registry(make_store(tmp_path))
 
-    result = registry.execute("get_class_profile", {"class_id": "missing-room"})
+    result = asyncio.run(
+        registry.execute_async(
+            "get_class_context",
+            {},
+            execution_context=ToolExecutionContext(
+                teacher_id="teacher-1", class_id="missing-room"
+            ),
+        )
+    )
 
     assert result.success is False
     assert result.error is not None
     assert result.error.code is ToolErrorCode.EXECUTION_ERROR
-    assert result.error.details == {"class_id": "missing-room"}

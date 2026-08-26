@@ -1,3 +1,4 @@
+import hashlib
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -30,6 +31,14 @@ class CheckActivitySafetyOutput(BaseModel):
     status: str
     issues: List[SafetyCheckItem]
     checked_risk_terms: List[str]
+    content_fingerprint: str = Field(min_length=64, max_length=64)
+    recovery_content: str = Field(
+        min_length=1,
+        description=(
+            "Exact activity draft inspected by this Tool. Kept out of the normal "
+            "compact observation view and used only for failure recovery."
+        ),
+    )
 
 
 SAFETY_RISK_RULES: Dict[str, Tuple[str, str, str]] = {
@@ -66,6 +75,33 @@ SAFETY_RISK_RULES: Dict[str, Tuple[str, str, str]] = {
 }
 
 
+ADDITIONAL_SAFETY_PATTERNS: Dict[str, Tuple[str, str, str, str]] = {
+    "small_loose_parts": (
+        r"\b(?:chickpeas?|dried beans?|lentils?|uncooked rice|dry rice|beads?|"
+        r"small figurines?|small stones?|pebbles?)\b",
+        "high",
+        "Small loose materials can create choking, mouthing, or ingestion risks.",
+        "Replace them with large non-food pieces that cannot fit through a choke tube, "
+        "and document active supervision and pack-away controls.",
+    ),
+    "scented_materials": (
+        r"\b(?:scented|fragranced?|lavender|essential oils?)\b",
+        "medium",
+        "Scented materials may trigger allergy, asthma, or sensory sensitivities.",
+        "Check individual health plans and permissions, avoid essential oils, and offer "
+        "an unscented alternative.",
+    ),
+    "natural_loose_materials": (
+        r"\b(?:smooth stones?|pinecones?|pine cones?|twigs?|pieces? of bark|"
+        r"textured bark)\b",
+        "medium",
+        "Natural loose materials need size, condition, toxicity, and mouthing checks.",
+        "Use clean non-toxic pieces too large to swallow, remove sharp or splintered "
+        "items, and inspect materials before and after use.",
+    ),
+}
+
+
 def build_check_activity_safety_tool() -> ToolDefinition:
     def handler(input_data: BaseModel) -> ToolResult:
         data = CheckActivitySafetyInput.model_validate(input_data)
@@ -80,13 +116,19 @@ def build_check_activity_safety_tool() -> ToolDefinition:
                 "status": status,
                 "issues": issues,
                 "checked_risk_terms": sorted(SAFETY_RISK_RULES),
+                "content_fingerprint": activity_content_fingerprint(data.activity_text),
+                "recovery_content": data.activity_text,
             },
             risk_level=RiskLevel.L0_READ_ONLY,
         )
 
     return ToolDefinition(
         name="check_activity_safety",
-        description="Check an activity draft for common early childhood safety risks.",
+        description=(
+            "Check a proposed future activity/learning-experience draft for common "
+            "early-childhood safety risks. Do not use for completed observations, "
+            "family updates, policy Q&A, saved records, or Drive/export work."
+        ),
         category=ToolCategory.SAFETY,
         input_model=CheckActivitySafetyInput,
         output_model=CheckActivitySafetyOutput,
@@ -94,8 +136,17 @@ def build_check_activity_safety_tool() -> ToolDefinition:
         permission=ToolPermission.AUTO_EXECUTE,
         domain=ToolDomain.INTERNAL,
         parallel_safe=True,
+        max_successful_calls_per_run=2,
+        max_identical_calls_per_run=1,
         handler=handler,
     )
+
+
+def activity_content_fingerprint(text: str) -> str:
+    """Stable identity for one exact teacher-facing activity version."""
+
+    normalized = "\n".join(line.rstrip() for line in text.strip().splitlines())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def check_activity_safety(
@@ -111,6 +162,19 @@ def check_activity_safety(
             issues.append(
                 {
                     "code": f"activity_contains_{term}",
+                    "severity": severity,
+                    "message": message,
+                    "suggestion": suggestion,
+                }
+            )
+
+    for code, (pattern, severity, message, suggestion) in (
+        ADDITIONAL_SAFETY_PATTERNS.items()
+    ):
+        if re.search(pattern, normalized):
+            issues.append(
+                {
+                    "code": code,
                     "severity": severity,
                     "message": message,
                     "suggestion": suggestion,

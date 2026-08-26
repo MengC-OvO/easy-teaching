@@ -232,6 +232,7 @@ class KnowledgeRetriever:
             top_k=candidate_top_k,
             where=self._build_where_filter(request.filters),
         )
+        return self._annotate_dense(chunks)
 
     async def _bm25_search_async(
         self,

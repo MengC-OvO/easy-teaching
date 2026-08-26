@@ -53,7 +53,7 @@ class ToolRegistry:
         if not self._is_allowed(name, allowed_tool_names):
             return ToolResult.fail(
                 code=ToolErrorCode.PERMISSION_DENIED,
-                message=f"Tool is not allowed in this workflow: {name}",
+                message=f"Tool is not allowed for this Agent execution: {name}",
                 risk_level=RiskLevel.L3_FORBIDDEN,
                 recoverable=False,
                 details={"tool_name": name},
@@ -201,7 +201,7 @@ class ToolRegistry:
         if not self._is_allowed(name, allowed_tool_names):
             return ToolResult.fail(
                 code=ToolErrorCode.PERMISSION_DENIED,
-                message=f"Tool is not allowed in this workflow: {name}",
+                message=f"Tool is not allowed for this Agent execution: {name}",
                 risk_level=RiskLevel.L3_FORBIDDEN,
                 recoverable=False,
                 details={"tool_name": name},

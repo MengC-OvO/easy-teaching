@@ -1,4 +1,4 @@
-"""Agent modules for EasyTeaching workflows."""
+"""Main ReAct and bounded Worker agents for EasyTeaching."""
 
 from app.agents.main_react_agent import (
     MAIN_REACT_SYSTEM_PROMPT,
