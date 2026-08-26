@@ -25,15 +25,20 @@ Updated: 2026-08-26
 
 ## Evidence
 
-- Repository regression at final evaluation: `329/329` passed.
-- Final Agent: `39/40` scenarios (`97.5%`), corrected isolated rerun `1/1`.
-- Required-Tool recall `100%`, Tool precision `95.8%`, forbidden calls `0%`,
-  approval integrity `100%`, path efficiency `91.1%`.
+- Repository regression at current evaluation: `331/331` passed.
+- Final Agent: `93/100` scenarios (`93.0%`) across `118` turns; release gate
+  passed, with the raw report retained for failure analysis.
+- Required-Tool recall `98.0%`, Tool precision `92.8%`, parameter-contract
+  accuracy `100%`, path efficiency `89.6%`.
+- RAG, security, multi-turn and operational category checks each passed `100%`;
+  controlled-write chaining and capability disclosure remain tracked defects.
 - RAG Hybrid + Cross-encoder: Recall@3 `0.975`, MRR `0.869`, nDCG@10 `0.902`,
   scope violations `0`, citation correctness `1.0` on the frozen 40-case set.
-- Local privacy Gateway release gate: **failed**; PII recall `60%`, PII F1
-  `75%`, phone recall `0%`, with fail-closed behavior and no plaintext response
-  leakage.
+- Direct local-model raw-input suite: `1,227` cases, injection Macro-F1 `95.2%`,
+  PII precision/recall/F1 `98.5% / 93.9% / 96.1%`; release gate **failed** on
+  strict output (`98.9%`), PII entity leakage (`5.5%`) and block escape (`1.37%`).
+- The separate deployed-Gateway suite also remains failed; malformed model output
+  fails closed and no plaintext is returned in Gateway error responses.
 
 ## Deliberately out of scope
 
@@ -46,8 +51,9 @@ Updated: 2026-08-26
 
 ## Recommended next production phase
 
-1. Retrain the local adapter using the exact premasked serving distribution and
-   pass the frozen Gateway suite plus independent human/adversarial review.
+1. Improve PHONE/entity recall and strict JSON reliability, then pass both the
+   raw-input direct-model suite and deployed Gateway suite plus independent
+   human/adversarial review.
 2. Implement authenticated centre tenancy and role-based authorization at every
    database and Tool boundary.
 3. Add Redis for shared cache/ephemeral coordination and a queue worker for
