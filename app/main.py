@@ -15,6 +15,7 @@ from app.api.routes import (
     events_router,
     messages_router,
     sessions_router,
+    uploads_router,
 )
 from app.config import settings
 
@@ -63,6 +64,7 @@ def create_app(runtime_factory: Optional[RuntimeFactory] = None) -> FastAPI:
     application.include_router(drafts_router)
     application.include_router(events_router)
     application.include_router(approvals_router)
+    application.include_router(uploads_router)
     application.mount(
         "/assets",
         StaticFiles(directory=WEB_DIRECTORY),

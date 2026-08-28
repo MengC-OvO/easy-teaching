@@ -19,6 +19,8 @@ const ui = {
   composer: document.querySelector("#composer"),
   input: document.querySelector("#message-input"),
   send: document.querySelector("#send-button"),
+  attach: document.querySelector("#attach-button"),
+  fileInput: document.querySelector("#file-input"),
   messages: document.querySelector("#messages"),
   welcome: document.querySelector("#welcome"),
   chatScroll: document.querySelector("#chat-scroll"),
@@ -62,6 +64,7 @@ function setStatus(label, kind = "ready") {
 function setBusy(busy) {
   state.busy = busy;
   ui.input.disabled = busy;
+  ui.attach.disabled = busy;
   ui.send.disabled = busy || !ui.input.value.trim();
   setStatus(busy ? "Working" : "Ready", busy ? "busy" : "ready");
 }
@@ -332,6 +335,16 @@ async function ensureSession() {
   return state.sessionId;
 }
 
+async function uploadFile(file) {
+  const sessionId = await ensureSession();
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(`/sessions/${sessionId}/uploads`, { method: "POST", body });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error?.message || `Upload failed (${response.status})`);
+  return payload;
+}
+
 async function getDraft(shell, sessionId = state.sessionId, requestId = state.requestId) {
   try {
     const payload = await api(`/sessions/${sessionId}/drafts/${requestId}`);
@@ -508,6 +521,30 @@ ui.conversations.addEventListener("click", (event) => {
     showToast("Session restored. Send a message to continue its LangGraph thread.");
   }
   ui.sidebar.classList.remove("open");
+});
+
+ui.attach.addEventListener("click", () => {
+  if (!state.busy) ui.fileInput.click();
+});
+
+ui.fileInput.addEventListener("change", async () => {
+  const file = ui.fileInput.files?.[0];
+  if (!file) return;
+  ui.attach.disabled = true;
+  setStatus("Uploading", "busy");
+  try {
+    const uploaded = await uploadFile(file);
+    const reference = `[Uploaded ${uploaded.category}: ${uploaded.filename}; file_id: ${uploaded.file_id}]`;
+    ui.input.value = `${ui.input.value.trim()}${ui.input.value.trim() ? "\n" : ""}${reference}`;
+    ui.input.dispatchEvent(new Event("input"));
+    showToast(`${uploaded.filename} is ready for this conversation.`);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    ui.fileInput.value = "";
+    ui.attach.disabled = state.busy;
+    setStatus(state.busy ? "Working" : "Ready", state.busy ? "busy" : "ready");
+  }
 });
 
 ui.messages.addEventListener("click", (event) => {

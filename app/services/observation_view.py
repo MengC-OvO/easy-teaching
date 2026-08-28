@@ -60,6 +60,33 @@ def _compact_capability_data(name: str, data: Mapping[str, Any]) -> Dict[str, An
                 if isinstance(item, dict)
             ],
         }
+    if name == "read_uploaded_document":
+        return {
+            "file_id": data.get("file_id"),
+            "filename": data.get("filename"),
+            "sections": _compact_generic(data.get("sections", []), max_string_chars=1_200),
+            "extracted_chars": data.get("extracted_chars", 0),
+            "truncated": data.get("truncated", False),
+        }
+    if name == "search_official_web":
+        return {
+            "query": _truncate(data.get("query", ""), 500),
+            "returned_count": data.get("returned_count", 0),
+            "results": _compact_generic(data.get("results", []), max_string_chars=700),
+        }
+    if name == "analyse_learning_records":
+        return {
+            key: _compact_generic(data.get(key))
+            for key in ("total_records", "group_by", "groups", "date_from", "date_to", "truncated")
+        }
+    if name == "transcribe_voice_note":
+        return {
+            "file_id": data.get("file_id"),
+            "filename": data.get("filename"),
+            "text": _truncate(data.get("text", ""), 4_000),
+            "language": data.get("language"),
+            "duration_seconds": data.get("duration_seconds"),
+        }
     if name == "read_draft_artifact":
         content = str(data.get("content") or "")
         return {

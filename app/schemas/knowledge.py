@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 class KnowledgeSourceType(str, Enum):
     OFFICIAL = "official"
     SYNTHETIC = "synthetic"
+    CENTRE = "centre"
 
 
 class KnowledgeScope(str, Enum):

@@ -15,6 +15,7 @@ from app.schemas.api import (
     SessionStatus,
     StreamEvent,
     StreamEventType,
+    UploadResponse,
 )
 from app.schemas.graph_state import (
     Approval,
@@ -151,6 +152,7 @@ __all__ = [
     "ThreadContext",
     "StreamEvent",
     "StreamEventType",
+    "UploadResponse",
     "TraceEvent",
     "RetrievedKnowledgeChunk",
     "RerankerMode",

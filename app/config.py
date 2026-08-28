@@ -138,6 +138,38 @@ class Settings(BaseSettings):
         default="data/local/google_workspace_mcp",
         validation_alias="WORKSPACE_MCP_CREDENTIALS_DIR",
     )
+    upload_root: str = Field(
+        default="data/local/uploads", validation_alias="UPLOAD_ROOT"
+    )
+    upload_max_bytes: int = Field(
+        default=15 * 1024 * 1024, ge=1, validation_alias="UPLOAD_MAX_BYTES"
+    )
+    scoped_knowledge_root: str = Field(
+        default="data/local/knowledge/tenants",
+        validation_alias="SCOPED_KNOWLEDGE_ROOT",
+    )
+    official_web_search_enabled: bool = Field(
+        default=False, validation_alias="OFFICIAL_WEB_SEARCH_ENABLED"
+    )
+    official_web_search_api_key: str = Field(
+        default="", validation_alias="OFFICIAL_WEB_SEARCH_API_KEY"
+    )
+    official_web_search_engine_id: str = Field(
+        default="", validation_alias="OFFICIAL_WEB_SEARCH_ENGINE_ID"
+    )
+    official_web_search_timeout_seconds: float = Field(
+        default=12.0, gt=0, validation_alias="OFFICIAL_WEB_SEARCH_TIMEOUT_SECONDS"
+    )
+    voice_transcription_enabled: bool = Field(
+        default=False, validation_alias="VOICE_TRANSCRIPTION_ENABLED"
+    )
+    whisper_model_name: str = Field(
+        default="small.en", validation_alias="WHISPER_MODEL_NAME"
+    )
+    whisper_device: str = Field(default="auto", validation_alias="WHISPER_DEVICE")
+    whisper_compute_type: str = Field(
+        default="int8_float16", validation_alias="WHISPER_COMPUTE_TYPE"
+    )
 
     @model_validator(mode="after")
     def validate_privacy_gateway_boundary(self) -> "Settings":
@@ -164,6 +196,13 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Google OAuth client credentials are required when Drive MCP is enabled"
                 )
+        if self.official_web_search_enabled and (
+            not self.official_web_search_api_key
+            or not self.official_web_search_engine_id
+        ):
+            raise ValueError(
+                "Official web search requires its API key and engine ID when enabled"
+            )
         return self
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

@@ -813,7 +813,7 @@ def build_prepare_approval_node(store, registry: ToolRegistry):
                     prepared.arguments
                 ).model_dump(mode="json")
                 preview = prepared.preview
-        except (TypeError, ValueError) as error:
+        except (PermissionError, TypeError, ValueError) as error:
             return {
                 "workflow_status": WorkflowStatus.FAILED,
                 "draft": Draft(
