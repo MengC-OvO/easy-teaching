@@ -130,6 +130,19 @@ class KnowledgeIngestionService:
             chunks=chunks,
         )
 
+    def ingest_blocks(
+        self,
+        document: KnowledgeDocument,
+        blocks: Iterable[ParsedTextBlock],
+    ) -> IngestionResult:
+        """Chunk already-parsed content without exposing private parser internals."""
+        chunks = self._blocks_to_chunks(document, blocks)
+        return IngestionResult(
+            source_id=document.source_id,
+            chunk_count=len(chunks),
+            chunks=chunks,
+        )
+
     def _parse_source(
         self,
         source: KnowledgeSourceSpec,

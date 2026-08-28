@@ -111,6 +111,7 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
         "save_observation",
         "save_educational_record",
         "export_records",
+        "analyse_learning_records",
     ]
 
 

@@ -69,6 +69,28 @@ curl -X POST \
 
 Approval cannot replace the frozen arguments. External sending is not exposed.
 
+## Uploaded documents and voice notes
+
+The web composer accepts PDF, DOCX, TXT, Markdown, CSV and common audio formats.
+The equivalent HTTP request is:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/sessions/SESSION_ID/uploads" \
+  -F "file=@centre-policy.pdf"
+```
+
+The response contains an opaque `file_id`. Include that ID in the teacher
+message so Main can call `read_uploaded_document`, request approval for
+`ingest_uploaded_document`, or call `transcribe_voice_note`. Files remain bound
+to their originating teacher, class and session. Approved centre knowledge uses
+an isolated local BM25 index and does not send document text to the embedding
+provider.
+
+Official web search and local transcription are optional. Configure
+`OFFICIAL_WEB_SEARCH_*` to register the allowlisted search Tool. Install
+`requirements-transcription.txt` and enable `VOICE_TRANSCRIPTION_ENABLED` to
+register local faster-whisper transcription.
+
 ## Google Drive MCP (optional)
 
 The project integrates the open-source

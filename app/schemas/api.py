@@ -6,7 +6,7 @@ models so endpoint code can depend on one stable contract.
 """
 
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -75,6 +75,15 @@ class SessionCreateResponse(ApiContractModel):
     session_id: ApiIdentifier
     thread_id: ApiIdentifier
     status: SessionStatus = SessionStatus.ACTIVE
+
+
+class UploadResponse(ApiContractModel):
+    file_id: ApiIdentifier
+    filename: str
+    category: Literal["document", "audio"]
+    content_type: str
+    size_bytes: int = Field(ge=1)
+    sha256: str
 
 
 class MessageCreateRequest(ApiContractModel):

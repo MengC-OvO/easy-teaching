@@ -12,6 +12,7 @@ The repository contains the application, migrations, synthetic/public evaluation
 - **Conversation continuity:** combines recent turns, compressed context, draft metadata and scoped teacher/class long-term memory.
 - **Operational recovery:** persists sessions, LangGraph checkpoints and replayable SSE lifecycle events in PostgreSQL.
 - **Optional integrations:** supports a local Qwen privacy Gateway and authorised Google Drive search/upload through MCP.
+- **Scoped teacher inputs:** reads uploaded documents, locally indexes approved centre material, aggregates authorised learning records, searches allowlisted official sites and optionally transcribes local voice notes.
 
 Core product scope includes **Activity planning drafts**, **Observation and educational records**, **Policy question answering with citations**, and **Family communication drafts**.
 
@@ -102,11 +103,14 @@ The knowledge Tool enforces `eylf`, `nqs`, `centre_policy` or `all` scopes:
 
 1. `POST /sessions` creates a durable conversation.
 2. `POST /sessions/{session_id}/messages` accepts an idempotent request.
-3. `GET /sessions/{session_id}/events` replays ordered SSE progress events.
-4. `GET /sessions/{session_id}/drafts/{request_id}` returns a draft and citations.
-5. `POST /sessions/{session_id}/approvals` approves or rejects one frozen action.
+3. `POST /sessions/{session_id}/uploads` stores a scoped document or audio note and returns an opaque `file_id`.
+4. `GET /sessions/{session_id}/events` replays ordered SSE progress events.
+5. `GET /sessions/{session_id}/drafts/{request_id}` returns a draft and citations.
+6. `POST /sessions/{session_id}/approvals` approves or rejects one frozen action.
 
 SSE streams persisted Agent lifecycle events rather than individual LLM tokens. Saving records, exporting files and Google Drive uploads cannot execute during model generation: reviewed arguments are frozen and run only after approval. External message sending is not implemented.
+
+Uploaded centre documents are read within the originating teacher/class/session scope. Adding one to knowledge is a separate approval-gated action and builds a tenant-specific local BM25 index; private text is not sent to the embedding provider. Official web search requires Google Programmable Search credentials and filters both requested and returned domains. Voice transcription is disabled by default and uses the optional local `faster-whisper` dependency from `requirements-transcription.txt`.
 
 ## Safety boundary
 

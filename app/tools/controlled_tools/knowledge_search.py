@@ -32,6 +32,7 @@ from app.tools.definition import (
     ToolDomain,
     ToolPermission,
     ToolResult,
+    ToolExecutionContext,
 )
 
 
@@ -94,6 +95,7 @@ def build_retrieve_knowledge_tool(
     retriever: Optional["KnowledgeRetrieverProtocol"] = None,
     query_rewriter: Optional["QueryRewriteModelProvider"] = None,
     reranker: Optional["KnowledgeRerankerProtocol"] = None,
+    scoped_knowledge: Optional[object] = None,
 ) -> ToolDefinition:
     """One cost-aware RAG boundary for standard and deep retrieval."""
 
@@ -173,6 +175,53 @@ def build_retrieve_knowledge_tool(
             args, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
         )
 
+    async def async_runtime_handler(
+        input_data: BaseModel,
+        context: ToolExecutionContext,
+    ) -> ToolResult:
+        result = await async_handler(input_data)
+        data = RetrieveKnowledgeInput.model_validate(input_data)
+        if (
+            scoped_knowledge is None
+            or not context.teacher_id
+            or not context.class_id
+            or data.knowledge_scope not in {KnowledgeScope.ALL, KnowledgeScope.CENTRE_POLICY}
+        ):
+            return result
+        local_chunks = await scoped_knowledge.search(
+            query=data.query,
+            top_k=data.top_k,
+            teacher_id=context.teacher_id,
+            class_id=context.class_id,
+        )
+        if not local_chunks:
+            return result
+        current = KnowledgeSearchOutput.model_validate(result.data)
+        current_items = [
+            RetrievedKnowledgeChunk(
+                chunk_id=item.evidence_id,
+                content=item.content,
+                citation=item.citation,
+                content_hash=item.content_hash,
+                distance=item.dense_distance or 0.0,
+                dense_distance=item.dense_distance,
+                bm25_score=item.bm25_score,
+                fusion_score=item.fusion_score,
+                reranker_score=item.reranker_score,
+                final_rank=item.final_rank,
+                metadata=item.metadata,
+            )
+            for item in current.evidence
+        ]
+        merged = _deduplicate_scoped([*local_chunks, *current_items])[: data.top_k]
+        return _tool_result(
+            KnowledgeSearchInput.model_validate(data.model_dump(exclude={"mode"})),
+            current.strategy,
+            current.search_queries,
+            merged,
+            current.reranker,
+        )
+
     return ToolDefinition(
         name="retrieve_knowledge",
         description=(
@@ -189,7 +238,20 @@ def build_retrieve_knowledge_tool(
         parallel_safe=False,
         handler=handler,
         async_handler=async_handler,
+        async_runtime_handler=async_runtime_handler,
     )
+
+
+def _deduplicate_scoped(chunks: List[RetrievedKnowledgeChunk]) -> List[RetrievedKnowledgeChunk]:
+    selected: List[RetrievedKnowledgeChunk] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        if chunk.chunk_id in seen:
+            continue
+        seen.add(chunk.chunk_id)
+        chunk.final_rank = len(selected) + 1
+        selected.append(chunk)
+    return selected
 
 
 class QueryRewriteOutput(BaseModel):
@@ -227,6 +289,12 @@ def _request(
     top_k: int,
 ) -> RetrievalRequest:
     filters = RetrievalFilters(source_ids=source_ids_for_scope(data.knowledge_scope))
+    if data.knowledge_scope is KnowledgeScope.CENTRE_POLICY:
+        filters.source_ids = []
+        filters.source_types = [
+            KnowledgeSourceType.SYNTHETIC,
+            KnowledgeSourceType.CENTRE,
+        ]
     if data.source_type is not None:
         filters.source_types = [data.source_type]
     return RetrievalRequest(

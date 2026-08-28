@@ -262,6 +262,9 @@ button { cursor: pointer; }
 .composer:focus-within { border-color: #b7aae9; box-shadow: 0 12px 40px rgba(40,34,68,.10), 0 0 0 3px rgba(115,87,232,.07); }
 .composer textarea { flex: 1; max-height: 180px; resize: none; border: 0; outline: 0; padding: 8px 0; color: var(--ink); background: transparent; line-height: 1.45; }
 .composer textarea::placeholder { color: #a3a1a8; }
+.attach-button { width: 34px; height: 34px; flex: 0 0 auto; border: 0; border-radius: 10px; color: #665b8f; background: #efecf8; font-size: 20px; }
+.attach-button:hover { background: #e5dff8; }
+.attach-button:disabled { opacity: .4; }
 .send-button { width: 37px; height: 37px; flex: 0 0 auto; border: 0; border-radius: 12px; color: white; background: var(--purple); font-size: 19px; transition: 160ms ease; }
 .send-button:hover { background: var(--purple-dark); }
 .send-button:disabled { cursor: default; opacity: .38; }
