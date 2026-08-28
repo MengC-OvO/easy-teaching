@@ -14,7 +14,14 @@ from app.tools.definition import ToolDefinition, ToolPermission
 
 
 MAX_RETRIEVAL_ATTEMPTS = 2
-RETRIEVAL_TOOLS = {"retrieve_knowledge", "query_records", "search_google_drive"}
+RETRIEVAL_TOOLS = {
+    "retrieve_knowledge",
+    "query_records",
+    "search_google_drive",
+    "read_uploaded_document",
+    "search_official_web",
+    "analyse_learning_records",
+}
 ONE_SHOT_READ_TOOLS = {
     "get_class_context",
     "get_daily_context",

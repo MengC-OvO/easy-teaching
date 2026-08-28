@@ -57,6 +57,23 @@ from app.tools.controlled_tools.google_drive import (
     UploadExportToGoogleDriveOutput,
     build_google_drive_tools,
 )
+from app.tools.controlled_tools.extended_capabilities import (
+    AnalyseLearningRecordsInput,
+    AnalyseLearningRecordsOutput,
+    IngestUploadedDocumentInput,
+    IngestUploadedDocumentOutput,
+    OfficialWebSearchInput,
+    OfficialWebSearchOutput,
+    ReadUploadedDocumentInput,
+    ReadUploadedDocumentOutput,
+    TranscribeVoiceNoteInput,
+    TranscribeVoiceNoteOutput,
+    build_analyse_learning_records_tool,
+    build_ingest_uploaded_document_tool,
+    build_official_web_search_tool,
+    build_read_uploaded_document_tool,
+    build_transcribe_voice_note_tool,
+)
 
 
 __all__ = [
@@ -89,6 +106,16 @@ __all__ = [
     "SearchGoogleDriveOutput",
     "UploadExportToGoogleDriveInput",
     "UploadExportToGoogleDriveOutput",
+    "AnalyseLearningRecordsInput",
+    "AnalyseLearningRecordsOutput",
+    "IngestUploadedDocumentInput",
+    "IngestUploadedDocumentOutput",
+    "OfficialWebSearchInput",
+    "OfficialWebSearchOutput",
+    "ReadUploadedDocumentInput",
+    "ReadUploadedDocumentOutput",
+    "TranscribeVoiceNoteInput",
+    "TranscribeVoiceNoteOutput",
     "build_check_activity_safety_tool",
     "build_default_tool_definitions",
     "build_default_tool_registry",
@@ -101,4 +128,9 @@ __all__ = [
     "build_save_educational_record_tool",
     "build_save_observation_tool",
     "build_google_drive_tools",
+    "build_analyse_learning_records_tool",
+    "build_ingest_uploaded_document_tool",
+    "build_official_web_search_tool",
+    "build_read_uploaded_document_tool",
+    "build_transcribe_voice_note_tool",
 ]

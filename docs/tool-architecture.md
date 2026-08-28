@@ -26,6 +26,11 @@ each need multiple research steps and can run without one another's result.
 | `export_records` | Produce DOCX/PDF from already saved records | PostgreSQL + fixed local templates | Controlled write, approval required |
 | `search_google_drive` | Search the authorised teacher's Drive | Optional Google Workspace MCP | External read, auto |
 | `upload_export_to_google_drive` | Upload one managed approved export, never an arbitrary path | Optional Google Workspace MCP | Controlled write, approval required |
+| `read_uploaded_document` | Extract bounded text from a document uploaded in the current session | Scoped local file store | Local read, auto |
+| `ingest_uploaded_document` | Add an uploaded centre document to an isolated teacher/class knowledge index | Tenant-local JSONL + SQLite FTS5 | Controlled write, approval required; no embedding egress |
+| `search_official_web` | Search current government/ACECQA guidance on an allowlist | Optional Google Programmable Search | External read, auto |
+| `analyse_learning_records` | Return bounded counts and trends without exposing raw record prose | Authorised PostgreSQL records | Local read, auto |
+| `transcribe_voice_note` | Convert a current-session audio note to text without saving a record | Optional local faster-whisper | Local read, auto |
 
 Teacher preferences are injected by the context manager on every model turn;
 they are not a tool. A new observation does not trigger knowledge or prior-record
@@ -35,9 +40,10 @@ request rather than repeating a geocoding request.
 
 ## Workers
 
-- `curriculum_research_worker`: only `retrieve_knowledge` and
-  `check_activity_safety`.
-- `record_context_worker`: only `get_class_context` and `query_records`.
+- `curriculum_research_worker`: only `retrieve_knowledge`,
+  `search_official_web` and `check_activity_safety`.
+- `record_context_worker`: only `get_class_context`, `query_records` and
+  `analyse_learning_records`.
 
 Workers cannot write, approve, export, send externally or produce the final
 teacher response. Each has a three-step bounded ReAct loop and receives a task

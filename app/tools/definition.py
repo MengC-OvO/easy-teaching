@@ -32,6 +32,10 @@ class ToolCategory(str, Enum):
     SAFETY = "safety"
     MEMORY = "memory"
     SYSTEM = "system"
+    FILE = "file"
+    WEB = "web"
+    ANALYTICS = "analytics"
+    MEDIA = "media"
 
 
 class ToolErrorCode(str, Enum):
