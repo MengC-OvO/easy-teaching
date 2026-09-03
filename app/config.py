@@ -9,6 +9,54 @@ class Settings(BaseSettings):
     app_name: str = Field(default="easy-teaching", validation_alias="APP_NAME")
     app_env: str = Field(default="local", validation_alias="APP_ENV")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    task_execution_mode: Literal["inline", "celery"] = Field(
+        default="celery", validation_alias="TASK_EXECUTION_MODE"
+    )
+    redis_url: str = Field(
+        default="redis://127.0.0.1:6379/0", validation_alias="REDIS_URL"
+    )
+    redis_progress_url: str = Field(
+        default="", validation_alias="REDIS_PROGRESS_URL"
+    )
+    redis_progress_stream_maxlen: int = Field(
+        default=500, ge=10, validation_alias="REDIS_PROGRESS_STREAM_MAXLEN"
+    )
+    redis_progress_ttl_seconds: int = Field(
+        default=3600, ge=60, validation_alias="REDIS_PROGRESS_TTL_SECONDS"
+    )
+    redis_progress_block_ms: int = Field(
+        default=15000, ge=1000, le=30000, validation_alias="REDIS_PROGRESS_BLOCK_MS"
+    )
+    celery_broker_url: str = Field(
+        default="", validation_alias="CELERY_BROKER_URL"
+    )
+    celery_queue_name: str = Field(
+        default="easyteaching.agent", validation_alias="CELERY_QUEUE_NAME"
+    )
+    celery_task_soft_time_limit_seconds: int = Field(
+        default=840, ge=30, validation_alias="CELERY_TASK_SOFT_TIME_LIMIT_SECONDS"
+    )
+    celery_task_time_limit_seconds: int = Field(
+        default=900, ge=60, validation_alias="CELERY_TASK_TIME_LIMIT_SECONDS"
+    )
+    celery_task_max_retries: int = Field(
+        default=3, ge=0, le=10, validation_alias="CELERY_TASK_MAX_RETRIES"
+    )
+    celery_worker_prefetch_multiplier: int = Field(
+        default=1, ge=1, le=16, validation_alias="CELERY_WORKER_PREFETCH_MULTIPLIER"
+    )
+    outbox_poll_interval_seconds: float = Field(
+        default=2.0, ge=0.1, validation_alias="OUTBOX_POLL_INTERVAL_SECONDS"
+    )
+    api_rate_limit_enabled: bool = Field(
+        default=True, validation_alias="API_RATE_LIMIT_ENABLED"
+    )
+    api_rate_limit_requests: int = Field(
+        default=20, ge=1, validation_alias="API_RATE_LIMIT_REQUESTS"
+    )
+    api_rate_limit_window_seconds: int = Field(
+        default=60, ge=1, validation_alias="API_RATE_LIMIT_WINDOW_SECONDS"
+    )
     privacy_gateway_mode: Literal["disabled", "shadow", "enforce"] = Field(
         default="disabled",
         validation_alias="PRIVACY_GATEWAY_MODE",
@@ -148,6 +196,15 @@ class Settings(BaseSettings):
         default="data/local/knowledge/tenants",
         validation_alias="SCOPED_KNOWLEDGE_ROOT",
     )
+    scoped_embedding_model_name: str = Field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        validation_alias="SCOPED_EMBEDDING_MODEL_NAME",
+    )
+    scoped_embedding_dimension: int = Field(
+        default=384,
+        ge=1,
+        validation_alias="SCOPED_EMBEDDING_DIMENSION",
+    )
     official_web_search_enabled: bool = Field(
         default=False, validation_alias="OFFICIAL_WEB_SEARCH_ENABLED"
     )
@@ -173,6 +230,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_privacy_gateway_boundary(self) -> "Settings":
+        if self.celery_task_soft_time_limit_seconds >= self.celery_task_time_limit_seconds:
+            raise ValueError("Celery soft time limit must be lower than the hard time limit")
         if self.privacy_gateway_mode == "shadow" and self.app_env.lower() not in {
             "local",
             "test",

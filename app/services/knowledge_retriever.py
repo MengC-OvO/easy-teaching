@@ -145,7 +145,12 @@ class KnowledgeRetriever:
             deduplicated_chunks,
             mode=request.reranker,
         )
-        returned_chunks = self._finalize_ranks(reranked_chunks[: request.top_k])
+        selected_chunks = (
+            reranked_chunks
+            if request.return_candidate_pool
+            else reranked_chunks[: request.top_k]
+        )
+        returned_chunks = self._finalize_ranks(selected_chunks)
         return RetrievalResult(
             query=request.query,
             chunks=returned_chunks,
@@ -177,7 +182,12 @@ class KnowledgeRetriever:
             deduplicated_chunks,
             mode=request.reranker,
         )
-        returned_chunks = self._finalize_ranks(reranked_chunks[: request.top_k])
+        selected_chunks = (
+            reranked_chunks
+            if request.return_candidate_pool
+            else reranked_chunks[: request.top_k]
+        )
+        returned_chunks = self._finalize_ranks(selected_chunks)
         return RetrievalResult(
             query=request.query,
             chunks=returned_chunks,

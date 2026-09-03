@@ -69,28 +69,30 @@ class ToolRegistry:
                 details={"tool_name": name},
             )
 
+        permission = tool.permission_for(raw_args)
+        risk_level = tool.risk_for(raw_args)
         trace = ToolTrace(
             tool_name=tool.name,
-            risk_level=tool.risk_level,
-            permission=tool.permission,
+            risk_level=risk_level,
+            permission=permission,
             message="Tool execution requested.",
         )
 
-        if tool.permission is ToolPermission.FORBIDDEN:
+        if permission is ToolPermission.FORBIDDEN:
             return ToolResult.fail(
                 code=ToolErrorCode.PERMISSION_DENIED,
                 message=f"Tool is forbidden: {tool.name}",
-                risk_level=tool.risk_level,
+                risk_level=risk_level,
                 recoverable=False,
                 details={"tool_name": tool.name},
                 trace=trace,
             )
 
-        if tool.requires_approval and not approved:
+        if permission is ToolPermission.REQUIRE_APPROVAL and not approved:
             return ToolResult.fail(
                 code=ToolErrorCode.PERMISSION_DENIED,
                 message=f"Tool requires approval before execution: {tool.name}",
-                risk_level=tool.risk_level,
+                risk_level=risk_level,
                 recoverable=True,
                 details={"tool_name": tool.name},
                 trace=trace,
@@ -102,7 +104,7 @@ class ToolRegistry:
             return ToolResult.fail(
                 code=ToolErrorCode.VALIDATION_ERROR,
                 message=f"Invalid arguments for tool: {tool.name}",
-                risk_level=tool.risk_level,
+                risk_level=risk_level,
                 recoverable=True,
                 details={"errors": error.errors()},
                 trace=trace,
@@ -121,7 +123,7 @@ class ToolRegistry:
             return ToolResult.fail(
                 code=ToolErrorCode.EXECUTION_ERROR,
                 message=f"Tool execution failed: {tool.name}",
-                risk_level=tool.risk_level,
+                risk_level=risk_level,
                 recoverable=True,
                 details={"error": str(error)},
                 trace=trace,
@@ -134,7 +136,7 @@ class ToolRegistry:
                 return ToolResult.fail(
                     code=ToolErrorCode.EXECUTION_ERROR,
                     message=f"Tool returned an invalid output: {tool.name}",
-                    risk_level=tool.risk_level,
+                    risk_level=risk_level,
                     recoverable=True,
                     details={
                         "errors": [
@@ -183,7 +185,9 @@ class ToolRegistry:
                 code=ToolErrorCode.TIMEOUT,
                 message=f"Tool execution timed out: {name}",
                 risk_level=(
-                    tool.risk_level if tool is not None else RiskLevel.L3_FORBIDDEN
+                    tool.risk_for(raw_args)
+                    if tool is not None
+                    else RiskLevel.L3_FORBIDDEN
                 ),
                 recoverable=True,
                 details={"tool_name": name, "timeout_seconds": timeout_seconds},
@@ -215,20 +219,22 @@ class ToolRegistry:
                 recoverable=False,
                 details={"tool_name": name},
             )
+        permission = tool.permission_for(raw_args)
+        risk_level = tool.risk_for(raw_args)
         trace = ToolTrace(
             tool_name=tool.name,
-            risk_level=tool.risk_level,
-            permission=tool.permission,
+            risk_level=risk_level,
+            permission=permission,
             message="Tool execution requested.",
         )
-        if tool.permission is ToolPermission.FORBIDDEN or (
-            tool.requires_approval and not approved
+        if permission is ToolPermission.FORBIDDEN or (
+            permission is ToolPermission.REQUIRE_APPROVAL and not approved
         ):
             return ToolResult.fail(
                 code=ToolErrorCode.PERMISSION_DENIED,
                 message=f"Tool is not permitted: {tool.name}",
-                risk_level=tool.risk_level,
-                recoverable=tool.requires_approval,
+                risk_level=risk_level,
+                recoverable=permission is ToolPermission.REQUIRE_APPROVAL,
                 details={"tool_name": tool.name},
                 trace=trace,
             )
@@ -238,7 +244,7 @@ class ToolRegistry:
             return ToolResult.fail(
                 code=ToolErrorCode.VALIDATION_ERROR,
                 message=f"Invalid arguments for tool: {tool.name}",
-                risk_level=tool.risk_level,
+                risk_level=risk_level,
                 details={"errors": error.errors()},
                 trace=trace,
             )
@@ -264,7 +270,7 @@ class ToolRegistry:
             return ToolResult.fail(
                 code=ToolErrorCode.EXECUTION_ERROR,
                 message=f"Tool execution failed: {tool.name}",
-                risk_level=tool.risk_level,
+                risk_level=risk_level,
                 details={"error": str(error)},
                 trace=trace,
             )
@@ -275,7 +281,7 @@ class ToolRegistry:
                 return ToolResult.fail(
                     code=ToolErrorCode.EXECUTION_ERROR,
                     message=f"Tool returned an invalid output: {tool.name}",
-                    risk_level=tool.risk_level,
+                    risk_level=risk_level,
                     details={"errors": error.errors()},
                     trace=trace,
                 )

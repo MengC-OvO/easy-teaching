@@ -2,6 +2,7 @@ const state = {
   sessionId: null,
   requestId: null,
   lastSequence: -1,
+  lastEventId: null,
   source: null,
   busy: false,
   authConfig: null,
@@ -356,18 +357,20 @@ async function getDraft(shell, sessionId = state.sessionId, requestId = state.re
   }
 }
 
-function connectEvents(shell, afterSequence = state.lastSequence) {
+function connectEvents(shell, afterEventId = state.lastEventId) {
   state.source?.close();
-  const url = `/sessions/${state.sessionId}/events?request_id=${encodeURIComponent(state.requestId)}&after_sequence=${afterSequence}`;
+  const cursor = afterEventId ? `&after_event_id=${encodeURIComponent(afterEventId)}` : "";
+  const url = `/sessions/${state.sessionId}/events?request_id=${encodeURIComponent(state.requestId)}${cursor}`;
   const source = new EventSource(url);
   shell.dataset.sessionId = state.sessionId;
   shell.dataset.requestId = state.requestId;
   state.source = source;
-  let lastSequence = afterSequence;
+  let lastEventId = afterEventId;
 
   const handle = (event) => {
     const payload = JSON.parse(event.data);
-    lastSequence = payload.sequence;
+    lastEventId = event.lastEventId || payload.event_id || lastEventId;
+    state.lastEventId = lastEventId;
     state.lastSequence = payload.sequence;
     addTrace(shell, payload);
     if (payload.event === "draft_ready") getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
@@ -391,7 +394,7 @@ function connectEvents(shell, afterSequence = state.lastSequence) {
   source.onerror = () => {
     source.close();
     if (state.busy) {
-      window.setTimeout(() => connectEvents(shell, lastSequence), 700);
+      window.setTimeout(() => connectEvents(shell, lastEventId), 700);
     }
   };
 }
@@ -438,12 +441,13 @@ async function submitMessage(message) {
     await ensureSession();
     state.requestId = crypto.randomUUID();
     state.lastSequence = -1;
+    state.lastEventId = null;
     rememberConversation(message);
     await api(`/sessions/${state.sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify({ message, request_id: state.requestId }),
     });
-    connectEvents(shell, state.lastSequence);
+    connectEvents(shell, state.lastEventId);
   } catch (error) {
     showRunError(shell, error.message);
   }
@@ -454,6 +458,7 @@ function resetConversation() {
   state.sessionId = null;
   state.requestId = null;
   state.lastSequence = -1;
+  state.lastEventId = null;
   ui.messages.innerHTML = "";
   ui.welcome.hidden = false;
   ui.input.value = "";
@@ -506,6 +511,7 @@ ui.conversations.addEventListener("click", (event) => {
   state.sessionId = sessionId;
   state.requestId = event.target.dataset.requestId || remembered?.requestId || null;
   state.lastSequence = -1;
+  state.lastEventId = null;
   ui.messages.innerHTML = "";
   ui.welcome.hidden = Boolean(state.requestId);
   renderConversationList();

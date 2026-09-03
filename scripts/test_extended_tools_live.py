@@ -33,8 +33,10 @@ from app.services.official_web_search import (  # noqa: E402
     OfficialWebSearchResponse,
 )
 from app.services.transcription import TranscriptSegment, TranscriptionResult  # noqa: E402
-from app.tools.controlled_tools.extended_capabilities import (  # noqa: E402
+from app.tools.controlled_tools.official_web import (  # noqa: E402
     build_official_web_search_tool,
+)
+from app.tools.controlled_tools.voice_note import (  # noqa: E402
     build_transcribe_voice_note_tool,
 )
 from app.tools import build_default_tool_registry  # noqa: E402

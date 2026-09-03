@@ -164,3 +164,57 @@ def test_tool_executor_runs_one_and_many() -> None:
     assert one.data == {"text": "one"}
     assert [item.result_key for item in many] == ["a", "b"]
 
+
+def test_validator_resolves_permission_from_current_tool_arguments() -> None:
+    registry = make_registry()
+    registry.register(
+        ToolDefinition(
+            name="gateway",
+            description="Discover or execute a dynamic tool.",
+            category=ToolCategory.SYSTEM,
+            input_model=EchoInput,
+            output_model=EchoOutput,
+            risk_level=RiskLevel.L0_READ_ONLY,
+            permission=ToolPermission.AUTO_EXECUTE,
+            permission_resolver=lambda arguments: (
+                ToolPermission.REQUIRE_APPROVAL
+                if arguments.get("text") == "write"
+                else ToolPermission.AUTO_EXECUTE
+            ),
+            risk_resolver=lambda arguments: (
+                RiskLevel.L2_CONTROLLED_WRITE
+                if arguments.get("text") == "write"
+                else RiskLevel.L0_READ_ONLY
+            ),
+            handler=lambda data: ToolResult.ok(
+                data={"text": data.text},
+                risk_level=RiskLevel.L0_READ_ONLY,
+            ),
+        )
+    )
+    validator = MainDecisionValidator(registry)
+
+    discover = MainDecision(
+        reason="discover",
+        tool_calls=[
+            CapabilityCall(
+                name="gateway", arguments={"text": "discover"}, result_key="d"
+            )
+        ],
+    )
+    write = MainDecision(
+        reason="write",
+        tool_calls=[
+            CapabilityCall(
+                name="gateway", arguments={"text": "write"}, result_key="w"
+            )
+        ],
+    )
+
+    assert validator.validate(
+        discover, observations={}, repeated_call_counts={}
+    ).route is ExecutionRoute.SINGLE_TOOL
+    assert validator.validate(
+        write, observations={}, repeated_call_counts={}
+    ).route is ExecutionRoute.APPROVAL
+

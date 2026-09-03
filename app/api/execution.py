@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
 from app.api.checkpoint_config import checkpoint_config
@@ -10,6 +11,9 @@ from app.schemas import GraphState, RunStatus, StreamEventType, TraceEvent, Work
 from safety_gateway.contracts import RestoreRequest
 if TYPE_CHECKING:
     from app.api.runtime import ApiRuntime
+
+
+logger = logging.getLogger(__name__)
 
 
 async def execute_message(
@@ -22,7 +26,8 @@ async def execute_message(
     class_id: Optional[str] = None,
     message: str,
     privacy_mapping_id: Optional[str] = None,
-) -> None:
+    propagate_incomplete_error: bool = False,
+) -> RunStatus:
     """Run one accepted message and persist its API-facing lifecycle status."""
     await runtime.store.update_conversation_run_status(request_id, RunStatus.RUNNING.value)
     state: Optional[GraphState] = None
@@ -47,16 +52,21 @@ async def execute_message(
         # LangGraph thread. Without this assignment, checkpoint merge semantics
         # could retain a stale mapping id on a later message with no PII.
         incremental_state["privacy_mapping_id"] = privacy_mapping_id
-        result = await runtime.graph.ainvoke(
-            incremental_state,
+        result = await _invoke_graph_with_progress(
+            runtime=runtime,
+            graph_input=incremental_state,
             config=checkpoint_config(thread_id),
+            request_id=request_id,
+            session_id=session_id,
         )
         state = GraphState.model_validate(result)
         final_status = _run_status(state.workflow_status)
     except Exception:
         state = await _state_from_checkpoint(runtime, thread_id)
+        if propagate_incomplete_error and _checkpoint_is_incomplete(state):
+            raise
         final_status = _recovered_run_status(state)
-    await persist_run_outcome(
+    return await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
         session_id=session_id,
@@ -72,20 +82,26 @@ async def execute_checkpoint_resume(
     request_id: str,
     session_id: str,
     thread_id: str,
-) -> None:
+    propagate_incomplete_error: bool = False,
+) -> RunStatus:
     """Continue a non-interrupted run from its latest durable checkpoint."""
     state: Optional[GraphState] = None
     try:
-        result = await runtime.graph.ainvoke(
-            None,
+        result = await _invoke_graph_with_progress(
+            runtime=runtime,
+            graph_input=None,
             config=checkpoint_config(thread_id),
+            request_id=request_id,
+            session_id=session_id,
         )
         state = GraphState.model_validate(result)
         final_status = _run_status(state.workflow_status)
     except Exception:
         state = await _state_from_checkpoint(runtime, thread_id)
+        if propagate_incomplete_error and _checkpoint_is_incomplete(state):
+            raise
         final_status = _recovered_run_status(state)
-    await persist_run_outcome(
+    return await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
         session_id=session_id,
@@ -102,7 +118,7 @@ async def persist_run_outcome(
     state: Optional[GraphState],
     final_status: RunStatus,
     fallback_mapping_id: Optional[str] = None,
-) -> None:
+) -> RunStatus:
     """Persist one terminal or paused state and publish replay-safe events."""
     mapping_id = state.privacy_mapping_id if state is not None else fallback_mapping_id
     public_result_saved = False
@@ -125,7 +141,7 @@ async def persist_run_outcome(
             final_status,
             public_result_saved=public_result_saved,
         )
-        return
+        return final_status
     await _append_event_once(
         runtime,
         request_id=request_id,
@@ -133,6 +149,7 @@ async def persist_run_outcome(
         event=StreamEventType.FAILED,
         data={"status": final_status.value},
     )
+    return final_status
 
 
 async def _save_public_result(runtime: ApiRuntime, state: GraphState) -> None:
@@ -251,6 +268,10 @@ async def _publish_state_events(
 
 
 async def _publish_graph_trace(runtime: ApiRuntime, state: GraphState) -> None:
+    # Production progress is already emitted node-by-node to Redis Streams.
+    # Inline/test mode keeps the durable trace path for backwards compatibility.
+    if getattr(runtime, "event_bus", None) is not None:
+        return
     existing_indexes: Set[int] = {
         event["data"]["trace_index"]
         for event in await runtime.store.list_conversation_events(
@@ -404,6 +425,100 @@ async def _append_event(
         event=event.value,
         data=data,
     )
+    await publish_progress_best_effort(
+        runtime,
+        request_id=request_id,
+        session_id=session_id,
+        event=event.value,
+        data=data,
+    )
+
+
+_NODE_PROGRESS_MESSAGES = {
+    "initialize": "Preparing your request…",
+    "main_react": "Working out the next step…",
+    "validate_decision": "Checking the planned action…",
+    "single_tool": "Using the selected teaching tool…",
+    "parallel_tools": "Checking several sources…",
+    "run_worker": "Researching the request…",
+    "decision_feedback": "Adjusting the approach…",
+    "merge_observations": "Organising the evidence…",
+    "finalize_evidence_refusal": "Checking whether the evidence is sufficient…",
+    "finalize_draft": "Preparing the draft…",
+    "clarification": "Preparing a clarification question…",
+    "prepare_approval": "Preparing the review step…",
+    "context_update": "Updating conversation context…",
+    "long_memory_update": "Finishing the request…",
+}
+
+
+async def _invoke_graph_with_progress(
+    *,
+    runtime: ApiRuntime,
+    graph_input: Optional[Dict[str, Any]],
+    config: Dict[str, Any],
+    request_id: str,
+    session_id: str,
+) -> Dict[str, Any]:
+    event_bus = getattr(runtime, "event_bus", None)
+    if event_bus is None or not hasattr(runtime.graph, "astream"):
+        return await runtime.graph.ainvoke(graph_input, config=config)
+
+    async for update in runtime.graph.astream(
+        graph_input,
+        config=config,
+        stream_mode="updates",
+    ):
+        if not isinstance(update, dict):
+            continue
+        for node_name in update:
+            message = _NODE_PROGRESS_MESSAGES.get(str(node_name))
+            if message is None:
+                continue
+            await publish_progress_best_effort(
+                runtime,
+                request_id=request_id,
+                session_id=session_id,
+                event=StreamEventType.TRACE.value,
+                data={
+                    "origin": "graph",
+                    "step": str(node_name),
+                    "message": message,
+                },
+            )
+
+    snapshot = await runtime.graph.aget_state(config)
+    if not snapshot.values:
+        raise RuntimeError("Graph stream completed without a durable checkpoint")
+    return dict(snapshot.values)
+
+
+async def publish_progress_best_effort(
+    runtime: ApiRuntime,
+    *,
+    request_id: str,
+    session_id: str,
+    event: str,
+    data: Dict[str, Any],
+) -> None:
+    event_bus = getattr(runtime, "event_bus", None)
+    if event_bus is None:
+        return
+    try:
+        await event_bus.publish(
+            request_id=request_id,
+            session_id=session_id,
+            event=event,
+            data=data,
+        )
+    except Exception:
+        # Progress is deliberately best-effort. A Redis outage must never turn
+        # a successfully checkpointed Agent run into a failed business run.
+        logger.warning(
+            "progress event publish failed",
+            extra={"request_id": request_id, "event": event},
+            exc_info=True,
+        )
 
 
 async def _append_event_once(
@@ -455,3 +570,11 @@ def _recovered_run_status(state: Optional[GraphState]) -> RunStatus:
     }:
         return recovered
     return RunStatus.FAILED
+
+
+def _checkpoint_is_incomplete(state: Optional[GraphState]) -> bool:
+    return state is None or state.workflow_status not in {
+        WorkflowStatus.COMPLETED,
+        WorkflowStatus.WAITING_FOR_APPROVAL,
+        WorkflowStatus.FAILED,
+    }

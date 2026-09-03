@@ -24,12 +24,12 @@ from app.services import (
     build_model_observation_view,
 )
 from app.services.request_guard import sanitize_untrusted_prompt_value
-from app.tools import ToolRegistry
+from app.tools import MCPToolInfo, ToolRegistry
 from app.tools.controlled_tools.check_activity_safety import build_check_activity_safety_tool
 from app.tools.controlled_tools.class_context import build_get_class_context_tool
 from app.tools.controlled_tools.daily_context import build_get_daily_context_tool
 from app.tools.controlled_tools.export_records import build_export_records_tool
-from app.tools.controlled_tools.google_drive import build_google_drive_tools
+from app.tools.controlled_tools.google_drive import build_google_drive_tool
 from app.tools.controlled_tools.knowledge_search import build_retrieve_knowledge_tool
 from app.tools.controlled_tools.records import (
     build_query_records_tool,
@@ -246,6 +246,29 @@ class _FakeWeatherClient:
 
 
 class _FakeDriveClient:
+    async def list_tools(self, **_: Any) -> List[MCPToolInfo]:
+        return [
+            MCPToolInfo(
+                name="search_drive_files",
+                description="Search Google Drive files.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "user_google_email": {"type": "string"},
+                        "query": {"type": "string"},
+                    },
+                    "required": ["user_google_email", "query"],
+                },
+                annotations={"readOnlyHint": True, "destructiveHint": False},
+            ),
+            MCPToolInfo(
+                name="create_drive_file",
+                description="Create a Google Drive file.",
+                input_schema={"type": "object"},
+                annotations={"readOnlyHint": False, "destructiveHint": False},
+            ),
+        ]
+
     async def call_tool(
         self,
         *,
@@ -326,8 +349,8 @@ class AgentE2ERunner:
             build_save_educational_record_tool(self.store),
             build_export_records_tool(self.store),
         ]
-        definitions.extend(
-            build_google_drive_tools(
+        definitions.append(
+            build_google_drive_tool(
                 self.store,
                 client=_FakeDriveClient(),
                 user_google_email="synthetic-eval@example.invalid",
@@ -796,7 +819,7 @@ def _summarize(
         for result in results
         for count in result.conversation_context_chars_per_turn
     ]
-    retrieval_names = {"retrieve_knowledge", "query_records", "search_google_drive"}
+    retrieval_names = {"retrieve_knowledge", "query_records", "drive_operation"}
     retrieval_budget_violations = sum(
         any(result.tool_attempt_counts.get(name, 0) > 2 for name in retrieval_names)
         for result in results

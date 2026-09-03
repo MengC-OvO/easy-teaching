@@ -74,11 +74,6 @@ def _compact_capability_data(name: str, data: Mapping[str, Any]) -> Dict[str, An
             "returned_count": data.get("returned_count", 0),
             "results": _compact_generic(data.get("results", []), max_string_chars=700),
         }
-    if name == "analyse_learning_records":
-        return {
-            key: _compact_generic(data.get(key))
-            for key in ("total_records", "group_by", "groups", "date_from", "date_to", "truncated")
-        }
     if name == "transcribe_voice_note":
         return {
             "file_id": data.get("file_id"),
@@ -110,11 +105,30 @@ def _compact_capability_data(name: str, data: Mapping[str, Any]) -> Dict[str, An
             ),
             "content_fingerprint": data.get("content_fingerprint"),
         }
-    if name in {"search_google_drive", "upload_export_to_google_drive"}:
+    if name == "drive_operation":
+        tools = data.get("tools")
         return {
-            key: _compact_generic(value, max_string_chars=1_200)
-            for key, value in data.items()
-            if key in {"results_text", "result_text", "provider"}
+            "action": data.get("action"),
+            "provider": data.get("provider"),
+            "selected_tool": data.get("selected_tool"),
+            "result_text": _truncate(data.get("result_text", ""), 2_000),
+            "structured_content": _compact_generic(
+                data.get("structured_content"), max_string_chars=1_200
+            ),
+            # These schemas are execution contracts for the model's next step,
+            # not ordinary result prose. Preserve them instead of applying the
+            # generic five-item/nesting truncation.
+            "tools": [
+                {
+                    "name": item.get("name"),
+                    "description": _truncate(item.get("description", ""), 600),
+                    "input_schema": item.get("input_schema", {}),
+                    "risk_level": item.get("risk_level"),
+                    "permission": item.get("permission"),
+                }
+                for item in (tools if isinstance(tools, list) else [])[:20]
+                if isinstance(item, dict)
+            ],
         }
     if name.endswith("_worker"):
         return {
@@ -144,6 +158,12 @@ def _compact_knowledge(data: Mapping[str, Any]) -> Dict[str, Any]:
         "query": _truncate(data.get("query", ""), 500),
         "strategy": data.get("strategy"),
         "knowledge_scope": data.get("knowledge_scope"),
+        "answerability": data.get("answerability"),
+        "answerability_reason": data.get("answerability_reason"),
+        "supported_evidence_ids": _compact_generic(
+            data.get("supported_evidence_ids", [])
+        ),
+        "retrieved_count": data.get("retrieved_count", len(compact_evidence)),
         "returned_count": data.get("returned_count", len(compact_evidence)),
         "evidence": compact_evidence,
     }

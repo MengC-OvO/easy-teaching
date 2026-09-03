@@ -43,6 +43,14 @@ class TextOutput(BaseModel):
     value: str
 
 
+class RagGateOutput(BaseModel):
+    answerability: str
+    answerability_reason: str
+    retrieved_count: int
+    returned_count: int
+    evidence: list
+
+
 class SequenceMainAgent:
     def __init__(self, decisions):
         self.decisions = iter(decisions)
@@ -236,6 +244,57 @@ def test_main_react_graph_runs_one_tool_then_finalizes_draft() -> None:
     assert state.draft.content == "Draft from one result."
     assert state.observations["first"].data["value"] == "tool_a:one"
     assert state.tool_call_count == 1
+
+
+def test_insufficient_rag_gate_finalizes_without_another_main_call() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="retrieve_knowledge",
+            description="Synthetic gated RAG result.",
+            category=ToolCategory.POLICY,
+            domain=ToolDomain.INTERNAL,
+            parallel_safe=False,
+            input_model=TextInput,
+            output_model=RagGateOutput,
+            risk_level=RiskLevel.L0_READ_ONLY,
+            permission=ToolPermission.AUTO_EXECUTE,
+            handler=lambda args: ToolResult.ok(
+                data={
+                    "answerability": "insufficient",
+                    "answerability_reason": "evidence_below_relevance_threshold",
+                    "retrieved_count": 3,
+                    "returned_count": 0,
+                    "evidence": [],
+                },
+                risk_level=RiskLevel.L0_READ_ONLY,
+            ),
+        )
+    )
+    graph = _graph(
+        [
+            MainDecision(
+                reason="Retrieve policy evidence.",
+                tool_calls=[
+                    CapabilityCall(
+                        name="retrieve_knowledge",
+                        arguments={"text": "fabricated policy"},
+                        result_key="rag_result",
+                    )
+                ],
+            )
+        ],
+        registry=registry,
+    )
+
+    state = _invoke(graph, user_message="What does the fabricated policy require?")
+
+    assert state.workflow_status is WorkflowStatus.COMPLETED
+    assert state.draft.title == "Insufficient evidence"
+    assert "does not contain sufficiently reliable evidence" in state.draft.content
+    assert state.tool_call_count == 1
+    assert state.citations == []
+    assert any(item.step == "finalize_evidence_refusal" for item in state.trace)
 
 
 def test_task_type_is_observability_only_and_can_change_between_react_turns() -> None:

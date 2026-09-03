@@ -91,22 +91,33 @@ def test_record_view_keeps_only_fields_needed_for_reasoning() -> None:
     assert "internal_audit_blob" not in record
 
 
-def test_drive_search_view_preserves_the_results_text_field() -> None:
+def test_drive_gateway_view_preserves_dynamic_schema_for_next_model_step() -> None:
     observation = _observation(
         "drive",
-        "search_google_drive",
+        "drive_operation",
         {
-            "results_text": "EasyTeaching evaluation export.docx",
+            "action": "discover",
             "provider": "google_drive",
+            "tools": [
+                {
+                    "name": "search_drive_files",
+                    "description": "Search Drive",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                    "risk_level": "L0_read_only",
+                    "permission": "auto_execute",
+                }
+            ],
         },
     )
 
     view = build_model_observation_view({"drive": observation})
 
-    assert (
-        view["drive"]["data"]["results_text"]
-        == "EasyTeaching evaluation export.docx"
-    )
+    schema = view["drive"]["data"]["tools"][0]["input_schema"]
+    assert schema["properties"]["query"]["type"] == "string"
 
 
 def test_standard_rag_view_keeps_only_top_three_model_evidence_items() -> None:

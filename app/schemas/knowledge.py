@@ -178,6 +178,7 @@ class RetrievalFilters(BaseModel):
 class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
+    return_candidate_pool: bool = False
     filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
     mode: RetrievalMode = RetrievalMode.DENSE
     reranker: RerankerMode = RerankerMode.NONE

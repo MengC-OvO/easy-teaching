@@ -24,6 +24,8 @@ from app.services.file_assets import LocalUploadedFileStore
 from app.services.official_web_search import GoogleOfficialWebSearchClient
 from app.services.scoped_knowledge import ScopedKnowledgeStore
 from app.services.transcription import FasterWhisperTranscriber
+from app.services.redis_rate_limit import RedisRateLimiter
+from app.services.redis_event_bus import RedisEventBus
 from app.workflows import (
     build_main_react_graph,
     build_postgres_checkpointer,
@@ -46,6 +48,10 @@ class ApiRuntime:
     official_web_search_client: Optional[GoogleOfficialWebSearchClient] = None
     embedding_provider: Optional[GeminiEmbeddingProvider] = None
     model_provider: Optional[ChatCompletionsModelProvider] = None
+    redis_client: Optional[Any] = None
+    redis_rate_limiter: Optional[RedisRateLimiter] = None
+    redis_progress_client: Optional[Any] = None
+    event_bus: Optional[RedisEventBus] = None
     _closed: bool = field(default=False, init=False, repr=False)
 
     @property
@@ -76,8 +82,14 @@ class ApiRuntime:
                                 if self.model_provider is not None:
                                     await self.model_provider.client.aclose()
                             finally:
-                                if self.privacy_gateway_client is not None:
-                                    await self.privacy_gateway_client.aclose()
+                                try:
+                                    if self.privacy_gateway_client is not None:
+                                        await self.privacy_gateway_client.aclose()
+                                finally:
+                                    if self.redis_client is not None:
+                                        await self.redis_client.aclose()
+                                    if self.redis_progress_client is not None:
+                                        await self.redis_progress_client.aclose()
             finally:
                 connection = getattr(self.checkpointer, "conn", None)
                 if connection is not None:
@@ -224,6 +236,44 @@ async def build_api_runtime(
             timeout_seconds=settings.privacy_gateway_timeout_seconds,
         )
 
+    redis_client = None
+    redis_rate_limiter = None
+    redis_progress_client = None
+    event_bus = None
+    if settings.api_rate_limit_enabled or settings.task_execution_mode == "celery":
+        from redis.asyncio import Redis
+
+        redis_client = Redis.from_url(
+            settings.redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=3,
+            health_check_interval=30,
+        )
+        if settings.api_rate_limit_enabled:
+            redis_rate_limiter = RedisRateLimiter(
+                redis_client,
+                limit=settings.api_rate_limit_requests,
+                window_seconds=settings.api_rate_limit_window_seconds,
+            )
+    if settings.task_execution_mode == "celery":
+        from redis.asyncio import Redis
+
+        redis_progress_client = Redis.from_url(
+            settings.redis_progress_url or settings.redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=max(3, settings.redis_progress_block_ms / 1000 + 2),
+            health_check_interval=30,
+        )
+        event_bus = RedisEventBus(
+            redis_progress_client,
+            maxlen=settings.redis_progress_stream_maxlen,
+            ttl_seconds=settings.redis_progress_ttl_seconds,
+        )
+
     return ApiRuntime(
         store=store,
         checkpointer=checkpointer,
@@ -236,4 +286,8 @@ async def build_api_runtime(
         official_web_search_client=official_web_search_client,
         embedding_provider=embedding_provider,
         model_provider=model_provider,
+        redis_client=redis_client,
+        redis_rate_limiter=redis_rate_limiter,
+        redis_progress_client=redis_progress_client,
+        event_bus=event_bus,
     )

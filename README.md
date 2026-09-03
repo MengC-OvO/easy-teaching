@@ -10,7 +10,7 @@ The repository contains the application, migrations, synthetic/public evaluation
 - **Evidence-backed support:** retrieves EYLF, NQF/NQS and synthetic centre-policy evidence with citations and hard source-scope filters.
 - **Teacher-controlled records:** drafts observation and educational records, freezes validated write arguments and waits for explicit approval.
 - **Conversation continuity:** combines recent turns, compressed context, draft metadata and scoped teacher/class long-term memory.
-- **Operational recovery:** persists sessions, LangGraph checkpoints and replayable SSE lifecycle events in PostgreSQL.
+- **Operational recovery:** runs long Agent work in Celery workers, uses a PostgreSQL transactional Outbox and checkpoints, and streams short-lived node progress through Redis Streams.
 - **Optional integrations:** supports a local Qwen privacy Gateway and authorised Google Drive search/upload through MCP.
 - **Scoped teacher inputs:** reads uploaded documents, locally indexes approved centre material, aggregates authorised learning records, searches allowlisted official sites and optionally transcribes local voice notes.
 
@@ -22,7 +22,10 @@ Core product scope includes **Activity planning drafts**, **Observation and educ
 flowchart LR
     Browser[Teacher workspace] --> API[FastAPI + SSE]
     API --> Gateway[Optional privacy Gateway]
-    API --> Graph[LangGraph ReAct]
+    API --> Outbox[(PostgreSQL Outbox)]
+    Outbox --> Redis[Redis broker]
+    Redis --> Worker[Celery workers]
+    Worker --> Graph[LangGraph ReAct]
     Graph --> Validate[Decision validation]
     Validate --> Tools[Controlled Tools / MCP]
     Validate --> Workers[Bounded Workers]
@@ -60,9 +63,7 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
-docker compose up -d postgres
-.\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\python.exe scripts\run_api.py
+docker compose up --build -d
 ```
 
 ### macOS / Linux
@@ -72,12 +73,10 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-docker compose up -d postgres
-alembic upgrade head
-python scripts/run_api.py
+docker compose up --build -d
 ```
 
-Edit `.env` before starting: use the same PostgreSQL password in `POSTGRES_PASSWORD`, `DATABASE_URL` and `CHECKPOINT_DATABASE_URL`, then configure the chat and embedding credentials. Keep optional integrations disabled until their setup is complete.
+Edit `.env` before starting: set different strong PostgreSQL and Redis passwords, then configure the chat and embedding credentials. Compose runs the migration, API, Redis and Celery worker. Keep optional integrations disabled until their setup is complete.
 
 Open <http://127.0.0.1:8000>. API documentation is at <http://127.0.0.1:8000/docs> and health status at `GET /health`.
 
@@ -104,13 +103,13 @@ The knowledge Tool enforces `eylf`, `nqs`, `centre_policy` or `all` scopes:
 1. `POST /sessions` creates a durable conversation.
 2. `POST /sessions/{session_id}/messages` accepts an idempotent request.
 3. `POST /sessions/{session_id}/uploads` stores a scoped document or audio note and returns an opaque `file_id`.
-4. `GET /sessions/{session_id}/events` replays ordered SSE progress events.
+4. `GET /sessions/{session_id}/events` streams ordered node progress from Redis and falls back to durable lifecycle state.
 5. `GET /sessions/{session_id}/drafts/{request_id}` returns a draft and citations.
 6. `POST /sessions/{session_id}/approvals` approves or rejects one frozen action.
 
-SSE streams persisted Agent lifecycle events rather than individual LLM tokens. Saving records, exporting files and Google Drive uploads cannot execute during model generation: reviewed arguments are frozen and run only after approval. External message sending is not implemented.
+SSE blocks on Redis Streams for node-level progress rather than polling PostgreSQL or streaming private model tokens. PostgreSQL retains only important lifecycle events and final results. Saving records, exporting files and Google Drive uploads cannot execute during model generation: reviewed arguments are frozen and run only after approval. External message sending is not implemented.
 
-Uploaded centre documents are read within the originating teacher/class/session scope. Adding one to knowledge is a separate approval-gated action and builds a tenant-specific local BM25 index; private text is not sent to the embedding provider. Official web search requires Google Programmable Search credentials and filters both requested and returned domains. Voice transcription is disabled by default and uses the optional local `faster-whisper` dependency from `requirements-transcription.txt`.
+Uploaded centre documents are read within the originating teacher/class/session scope. Adding one to knowledge is a separate approval-gated action and builds tenant-specific local BM25 and Chroma indexes. Dense vectors use a local SentenceTransformer, so private text is not sent to the external Gemini embedding provider. Official web search requires Google Programmable Search credentials and filters both requested and returned domains. Voice transcription is disabled by default and uses the optional local `faster-whisper` dependency from `requirements-transcription.txt`.
 
 ## Safety boundary
 
@@ -162,7 +161,7 @@ modes are documented in [Agent evaluation](docs/agent-evaluation.md),
 
 - The local privacy model and deployed Gateway have not passed their release gates.
 - Authentication is optional and disabled by default; production requires centre isolation, roles, retention policy and security review.
-- Multi-instance deployment still needs shared ephemeral state, rate limiting, background jobs, monitoring, backups and load testing.
+- Production still needs managed backups, TLS/secrets management, metrics/alerts and environment-specific load testing.
 - All included child, family, teacher and centre examples are synthetic.
 
 ## Documentation

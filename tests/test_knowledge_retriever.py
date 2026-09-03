@@ -256,6 +256,38 @@ def test_knowledge_retriever_deduplicates_chunks_before_returning_top_k() -> Non
     assert result.stats.returned_count == 2
 
 
+def test_knowledge_retriever_can_return_ranked_candidate_pool_for_downstream_gate() -> None:
+    vector_store = FakeVectorStore(
+        [
+            make_retrieved_chunk("chunk-1", 0.1, content_hash="1" * 64),
+            make_retrieved_chunk("chunk-2", 0.2, content_hash="2" * 64),
+            make_retrieved_chunk("chunk-3", 0.3, content_hash="3" * 64),
+        ]
+    )
+    retriever = KnowledgeRetriever(
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_store=vector_store,
+        candidate_multiplier=3,
+    )
+
+    result = retriever.retrieve(
+        RetrievalRequest(
+            query="play",
+            top_k=1,
+            return_candidate_pool=True,
+        )
+    )
+
+    assert vector_store.calls[0]["top_k"] == 3
+    assert [chunk.chunk_id for chunk in result.chunks] == [
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+    ]
+    assert result.stats.requested_top_k == 1
+    assert result.stats.returned_count == 3
+
+
 def test_bm25_mode_searches_lexical_index_without_dense_embedding() -> None:
     embedding_provider = FakeEmbeddingProvider()
     vector_store = FakeVectorStore([])

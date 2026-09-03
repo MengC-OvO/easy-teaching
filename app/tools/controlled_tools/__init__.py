@@ -51,27 +51,30 @@ from app.tools.controlled_tools.records import (
     build_save_observation_tool,
 )
 from app.tools.controlled_tools.google_drive import (
-    SearchGoogleDriveInput,
-    SearchGoogleDriveOutput,
-    UploadExportToGoogleDriveInput,
-    UploadExportToGoogleDriveOutput,
-    build_google_drive_tools,
+    DriveOperationInput,
+    DriveOperationOutput,
+    GoogleDriveMCPGateway,
+    UploadExportArguments,
+    build_google_drive_tool,
 )
-from app.tools.controlled_tools.extended_capabilities import (
-    AnalyseLearningRecordsInput,
-    AnalyseLearningRecordsOutput,
+from app.tools.controlled_tools.uploaded_document_ingestion import (
     IngestUploadedDocumentInput,
     IngestUploadedDocumentOutput,
+    build_ingest_uploaded_document_tool,
+)
+from app.tools.controlled_tools.official_web import (
     OfficialWebSearchInput,
     OfficialWebSearchOutput,
+    build_official_web_search_tool,
+)
+from app.tools.controlled_tools.uploaded_document_reader import (
     ReadUploadedDocumentInput,
     ReadUploadedDocumentOutput,
+    build_read_uploaded_document_tool,
+)
+from app.tools.controlled_tools.voice_note import (
     TranscribeVoiceNoteInput,
     TranscribeVoiceNoteOutput,
-    build_analyse_learning_records_tool,
-    build_ingest_uploaded_document_tool,
-    build_official_web_search_tool,
-    build_read_uploaded_document_tool,
     build_transcribe_voice_note_tool,
 )
 
@@ -102,12 +105,10 @@ __all__ = [
     "SaveObservationInput",
     "SaveObservationOutput",
     "SafetyCheckItem",
-    "SearchGoogleDriveInput",
-    "SearchGoogleDriveOutput",
-    "UploadExportToGoogleDriveInput",
-    "UploadExportToGoogleDriveOutput",
-    "AnalyseLearningRecordsInput",
-    "AnalyseLearningRecordsOutput",
+    "DriveOperationInput",
+    "DriveOperationOutput",
+    "GoogleDriveMCPGateway",
+    "UploadExportArguments",
     "IngestUploadedDocumentInput",
     "IngestUploadedDocumentOutput",
     "OfficialWebSearchInput",
@@ -127,8 +128,11 @@ __all__ = [
     "build_retrieve_knowledge_tool",
     "build_save_educational_record_tool",
     "build_save_observation_tool",
-    "build_google_drive_tools",
-    "build_analyse_learning_records_tool",
+    "DriveOperationInput",
+    "DriveOperationOutput",
+    "GoogleDriveMCPGateway",
+    "UploadExportArguments",
+    "build_google_drive_tool",
     "build_ingest_uploaded_document_tool",
     "build_official_web_search_tool",
     "build_read_uploaded_document_tool",

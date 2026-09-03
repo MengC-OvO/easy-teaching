@@ -79,7 +79,7 @@ DEFAULT_WORKER_PROFILES = (
         name=WorkerName.RECORD_CONTEXT,
         description="多步骤研究当前教师有权访问的班级、观察与教育记录。仅能作为并行深度研究批次的一部分。",
         allowed_tool_names=frozenset(
-            {"get_class_context", "query_records", "analyse_learning_records"}
+            {"get_class_context", "query_records"}
         ),
     ),
 )

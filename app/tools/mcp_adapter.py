@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Dict, List, Optional, Protocol, Type
 
 from pydantic import BaseModel
@@ -19,6 +20,14 @@ from app.tools.definition import (
 
 
 class MCPClientProtocol(Protocol):
+    async def list_tools(
+        self,
+        *,
+        server_name: str,
+        refresh: bool = False,
+    ) -> List["MCPToolInfo"]:
+        ...
+
     async def call_tool(
         self,
         *,
@@ -33,10 +42,90 @@ class MCPClientProtocol(Protocol):
 
 
 @dataclass
-class _MCPRequest:
+class MCPToolInfo:
+    """A transport-neutral view of one tool returned by MCP tools/list."""
+
+    name: str
+    description: str
+    input_schema: Dict[str, Any]
+    annotations: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MCPRiskDecision:
+    risk_level: RiskLevel
+    permission: ToolPermission
+    reason: str
+
+
+@dataclass
+class _MCPCallRequest:
     tool_name: str
     arguments: Dict[str, Any]
     future: asyncio.Future
+
+
+@dataclass
+class _MCPListRequest:
+    future: asyncio.Future
+
+
+def classify_mcp_tool(
+    tool: MCPToolInfo,
+    *,
+    trusted_server: bool,
+) -> MCPRiskDecision:
+    """Treat MCP annotations as hints; only trusted servers may earn L0."""
+
+    annotations = tool.annotations
+    if annotations.get("destructiveHint") is True:
+        return MCPRiskDecision(
+            risk_level=RiskLevel.L3_FORBIDDEN,
+            permission=ToolPermission.FORBIDDEN,
+            reason="MCP server marks the tool as destructive.",
+        )
+    if trusted_server and annotations.get("readOnlyHint") is True:
+        return MCPRiskDecision(
+            risk_level=RiskLevel.L0_READ_ONLY,
+            permission=ToolPermission.AUTO_EXECUTE,
+            reason="Trusted MCP server marks the tool as read-only.",
+        )
+    return MCPRiskDecision(
+        risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+        permission=ToolPermission.REQUIRE_APPROVAL,
+        reason=(
+            "Tool can change external state, or its read-only annotation is not "
+            "trusted; approval is required."
+        ),
+    )
+
+
+async def require_discovered_mcp_tool(
+    client: MCPClientProtocol,
+    *,
+    server_name: str,
+    tool_name: str,
+    trusted_server: bool,
+    maximum_risk: RiskLevel,
+) -> MCPToolInfo:
+    """Discover at first use and reject missing or riskier-than-expected tools."""
+
+    tools = await client.list_tools(server_name=server_name)
+    tool = next((item for item in tools if item.name == tool_name), None)
+    if tool is None:
+        raise RuntimeError(f"MCP tool is not advertised by {server_name}: {tool_name}")
+    decision = classify_mcp_tool(tool, trusted_server=trusted_server)
+    order = {
+        RiskLevel.L0_READ_ONLY: 0,
+        RiskLevel.L1_DRAFT: 1,
+        RiskLevel.L2_CONTROLLED_WRITE: 2,
+        RiskLevel.L3_FORBIDDEN: 3,
+    }
+    if order[decision.risk_level] > order[maximum_risk]:
+        raise PermissionError(
+            f"MCP tool risk exceeds local policy for {tool_name}: {decision.reason}"
+        )
+    return tool
 
 
 class StdioMCPClient:
@@ -52,14 +141,20 @@ class StdioMCPClient:
         command: str,
         args: List[str],
         env: Optional[Dict[str, str]] = None,
+        tool_cache_ttl_seconds: float = 300.0,
     ) -> None:
         self.command = command
         self.args = list(args)
         self.env = env
-        self._queue: asyncio.Queue[Optional[_MCPRequest]] = asyncio.Queue()
+        self.tool_cache_ttl_seconds = tool_cache_ttl_seconds
+        self._queue: asyncio.Queue[
+            Optional[_MCPCallRequest | _MCPListRequest]
+        ] = asyncio.Queue()
         self._runner: Optional[asyncio.Task] = None
         self._ready: Optional[asyncio.Future] = None
         self._start_lock = asyncio.Lock()
+        self._tool_cache: Optional[List[MCPToolInfo]] = None
+        self._tool_cache_time = 0.0
 
     async def _ensure_started(self) -> None:
         async with self._start_lock:
@@ -101,6 +196,33 @@ class StdioMCPClient:
                     if request is None:
                         return
                     try:
+                        if isinstance(request, _MCPListRequest):
+                            tools: List[MCPToolInfo] = []
+                            cursor = None
+                            while True:
+                                page = await session.list_tools(cursor=cursor)
+                                for tool in page.tools:
+                                    annotations = (
+                                        tool.annotations.model_dump(
+                                            by_alias=True,
+                                            exclude_none=True,
+                                        )
+                                        if tool.annotations is not None
+                                        else {}
+                                    )
+                                    tools.append(
+                                        MCPToolInfo(
+                                            name=tool.name,
+                                            description=tool.description or "",
+                                            input_schema=dict(tool.inputSchema),
+                                            annotations=annotations,
+                                        )
+                                    )
+                                cursor = getattr(page, "nextCursor", None)
+                                if not cursor:
+                                    break
+                            request.future.set_result(tools)
+                            continue
                         result = await session.call_tool(
                             request.tool_name,
                             arguments=request.arguments,
@@ -149,8 +271,30 @@ class StdioMCPClient:
         del server_name
         await self._ensure_started()
         future = asyncio.get_running_loop().create_future()
-        await self._queue.put(_MCPRequest(tool_name, arguments, future))
+        await self._queue.put(_MCPCallRequest(tool_name, arguments, future))
         return await future
+
+    async def list_tools(
+        self,
+        *,
+        server_name: str,
+        refresh: bool = False,
+    ) -> List[MCPToolInfo]:
+        del server_name
+        now = monotonic()
+        if (
+            not refresh
+            and self._tool_cache is not None
+            and now - self._tool_cache_time < self.tool_cache_ttl_seconds
+        ):
+            return list(self._tool_cache)
+        await self._ensure_started()
+        future = asyncio.get_running_loop().create_future()
+        await self._queue.put(_MCPListRequest(future=future))
+        tools = await future
+        self._tool_cache = list(tools)
+        self._tool_cache_time = monotonic()
+        return list(tools)
 
     async def aclose(self) -> None:
         if self._runner is None:
@@ -159,6 +303,8 @@ class StdioMCPClient:
         await self._runner
         self._runner = None
         self._ready = None
+        self._tool_cache = None
+        self._tool_cache_time = 0.0
 
 
 def build_read_only_mcp_tool(

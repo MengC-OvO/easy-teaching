@@ -1,4 +1,4 @@
-"""Live Google Drive MCP connectivity check without an LLM call."""
+"""Live Google Drive MCP connectivity checks without an LLM call."""
 
 import argparse
 import asyncio
@@ -26,20 +26,14 @@ def _command() -> str:
     return str(local) if local.exists() else configured
 
 
-async def _check(query: str, show_results: bool) -> None:
-    if not settings.google_drive_mcp_enabled:
-        raise SystemExit("GOOGLE_DRIVE_MCP_ENABLED must be true")
-    if not all(
-        (
-            settings.google_drive_user_email,
-            settings.google_oauth_client_id,
-            settings.google_oauth_client_secret,
-        )
-    ):
-        raise SystemExit("Google Drive MCP credentials are incomplete")
-
-    credentials_dir = Path(settings.google_workspace_mcp_credentials_dir).resolve()
-    client = StdioMCPClient(
+def _client(*, state_dir: Path | None = None) -> StdioMCPClient:
+    credentials_dir = (
+        state_dir or Path(settings.google_workspace_mcp_credentials_dir)
+    ).resolve()
+    credentials_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = credentials_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return StdioMCPClient(
         command=_command(),
         args=[
             "--single-user",
@@ -55,11 +49,51 @@ async def _check(query: str, show_results: bool) -> None:
             "GOOGLE_OAUTH_CLIENT_ID": settings.google_oauth_client_id,
             "GOOGLE_OAUTH_CLIENT_SECRET": settings.google_oauth_client_secret,
             "WORKSPACE_MCP_CREDENTIALS_DIR": str(credentials_dir),
-            "WORKSPACE_MCP_LOG_DIR": str(credentials_dir / "logs"),
+            "WORKSPACE_MCP_LOG_DIR": str(log_dir),
             "PYTHONIOENCODING": "utf-8",
             "PYTHONUTF8": "1",
         },
     )
+
+
+async def _list_tools(state_dir: Path) -> None:
+    """Start workspace-mcp and perform only the read-only MCP tools/list call."""
+
+    client = _client(state_dir=state_dir)
+    try:
+        tools = await client.list_tools(server_name="google_workspace", refresh=True)
+        print("GOOGLE_DRIVE_MCP_TOOLS_LIST_OK")
+        print(f"tool_count={len(tools)}")
+        for tool in tools:
+            annotations = ",".join(
+                f"{key}={value}" for key, value in sorted(tool.annotations.items())
+            )
+            properties = tool.input_schema.get("properties", {})
+            property_names = ",".join(properties) if isinstance(properties, dict) else ""
+            required = tool.input_schema.get("required", [])
+            required_names = ",".join(required) if isinstance(required, list) else ""
+            print(
+                f"{tool.name}\t{annotations}\tproperties={property_names}"
+                f"\trequired={required_names}"
+            )
+    finally:
+        await client.aclose()
+
+
+async def _check(query: str, show_results: bool) -> None:
+    if not settings.google_drive_mcp_enabled:
+        raise SystemExit("GOOGLE_DRIVE_MCP_ENABLED must be true")
+    if not all(
+        (
+            settings.google_drive_user_email,
+            settings.google_oauth_client_id,
+            settings.google_oauth_client_secret,
+        )
+    ):
+        raise SystemExit("Google Drive MCP credentials are incomplete")
+
+    credentials_dir = Path(settings.google_workspace_mcp_credentials_dir).resolve()
+    client = _client()
     try:
         arguments = {
             "user_google_email": settings.google_drive_user_email,
@@ -110,8 +144,22 @@ def main() -> None:
         action="store_true",
         help="Print matching Drive file metadata; off by default for privacy.",
     )
+    parser.add_argument(
+        "--list-tools-only",
+        action="store_true",
+        help="Call only MCP tools/list; do not authenticate or call any Drive API.",
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=PROJECT_ROOT / ".test-tmp" / "google-drive-tools-list",
+        help="Writable workspace-mcp state directory used by --list-tools-only.",
+    )
     args = parser.parse_args()
-    run_async(_check(args.query, args.show_results))
+    if args.list_tools_only:
+        run_async(_list_tools(args.state_dir))
+    else:
+        run_async(_check(args.query, args.show_results))
 
 
 if __name__ == "__main__":
