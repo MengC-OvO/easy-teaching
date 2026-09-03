@@ -52,8 +52,7 @@ def _names(**kwargs):
         _tool("check_activity_safety", max_successful_calls_per_run=2),
         _tool("save_observation", write=True),
         _tool("export_records", write=True),
-        _tool("search_google_drive"),
-        _tool("upload_export_to_google_drive", write=True),
+        _tool("drive_operation"),
     ]
     return {
         tool.name
@@ -76,8 +75,7 @@ def test_initial_state_exposes_all_registered_permitted_tools() -> None:
         "check_activity_safety",
         "save_observation",
         "export_records",
-        "search_google_drive",
-        "upload_export_to_google_drive",
+        "drive_operation",
     }
 
 

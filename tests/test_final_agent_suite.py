@@ -2,10 +2,35 @@ import json
 
 from evals.final_agent_suite import (
     DEFAULT_FINAL_CASES_PATH,
+    ExpectedTurn,
+    FinalAgentCase,
     _parse_sse,
     _trace,
     load_cases,
 )
+from scripts.build_final_closeout_challenges import build_cases
+
+
+def test_answerability_contract_supports_bounded_citations() -> None:
+    expected = ExpectedTurn(
+        outcome="final",
+        answerability="unanswerable",
+        max_citations=1,
+        required_any_terms=[["not documented", "no evidence"]],
+    )
+
+    assert expected.answerability == "unanswerable"
+    assert expected.max_citations == 1
+
+
+def test_closeout_challenges_cover_answers_corrections_and_abstention() -> None:
+    cases = [FinalAgentCase.model_validate(item) for item in build_cases()]
+    answerability = [turn.expected.answerability for case in cases for turn in case.turns]
+
+    assert len(cases) == 20
+    assert answerability.count("answerable") == 10
+    assert answerability.count("correctable") == 3
+    assert answerability.count("unanswerable") == 7
 
 
 def test_final_suite_is_independent_and_bounded() -> None:

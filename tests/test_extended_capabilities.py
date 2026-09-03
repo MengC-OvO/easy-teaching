@@ -12,13 +12,14 @@ from app.services.scoped_knowledge import ScopedKnowledgeStore
 from app.services.transcription import TranscriptSegment, TranscriptionResult
 from app.tools import ToolErrorCode, ToolExecutionContext, ToolRegistry
 from app.schemas import CitationMetadata, KnowledgeSourceType, RetrievedKnowledgeChunk, RetrievalResult, RetrievalStats
-from app.tools.controlled_tools.extended_capabilities import (
-    build_analyse_learning_records_tool,
+from app.tools.controlled_tools.uploaded_document_ingestion import (
     build_ingest_uploaded_document_tool,
-    build_official_web_search_tool,
-    build_read_uploaded_document_tool,
-    build_transcribe_voice_note_tool,
 )
+from app.tools.controlled_tools.official_web import build_official_web_search_tool
+from app.tools.controlled_tools.uploaded_document_reader import (
+    build_read_uploaded_document_tool,
+)
+from app.tools.controlled_tools.voice_note import build_transcribe_voice_note_tool
 from app.tools.controlled_tools.knowledge_search import build_retrieve_knowledge_tool
 from app.main import create_app
 
@@ -28,6 +29,20 @@ SCOPE = ToolExecutionContext(
     class_id="kangaroo-room",
     session_id="session-1",
 )
+
+
+class FakeScopedEmbeddingProvider:
+    model_name = "test-local-embedding"
+    dimension = 3
+
+    async def embed_texts_async(self, texts, *, task_type="RETRIEVAL_DOCUMENT"):
+        assert task_type == "RETRIEVAL_DOCUMENT"
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+    async def embed_text_async(self, text, *, task_type="RETRIEVAL_QUERY"):
+        assert text
+        assert task_type == "RETRIEVAL_QUERY"
+        return [1.0, 0.0, 0.0]
 
 
 def _upload(store: LocalUploadedFileStore, name: str, content: bytes, *, category_scope=SCOPE):
@@ -84,7 +99,12 @@ def test_document_reader_supports_docx_headings_and_csv_rows(tmp_path: Path) -> 
 def test_ingestion_requires_approval_and_keeps_tenant_indexes_isolated(tmp_path: Path) -> None:
     file_store = LocalUploadedFileStore(tmp_path / "uploads")
     reader = UploadedDocumentReader()
-    knowledge = ScopedKnowledgeStore(root=tmp_path / "knowledge", file_store=file_store, document_reader=reader)
+    knowledge = ScopedKnowledgeStore(
+        root=tmp_path / "knowledge",
+        file_store=file_store,
+        document_reader=reader,
+        embedding_provider=FakeScopedEmbeddingProvider(),
+    )
     first = _upload(file_store, "garden.txt", b"The garden protocol requires a boundary check before play.")
     registry = ToolRegistry()
     definition = build_ingest_uploaded_document_tool(knowledge)
@@ -109,8 +129,11 @@ def test_ingestion_requires_approval_and_keeps_tenant_indexes_isolated(tmp_path:
     assert "boundary check" in prepared.preview["preview"]
     assert blocked.error.code is ToolErrorCode.PERMISSION_DENIED
     assert indexed.success is True
-    assert indexed.data["index_mode"] == "tenant_local_bm25"
+    assert indexed.data["index_mode"] == "tenant_local_hybrid"
     assert len(own_results) == 1
+    assert own_results[0].dense_distance is not None
+    assert own_results[0].bm25_score is not None
+    assert own_results[0].fusion_score is not None
     assert other_results == []
 
 
@@ -140,30 +163,6 @@ def test_official_search_rejects_non_allowlisted_domains_and_filters_provider_re
     assert result.data["returned_count"] == 1
     assert result.data["results"][0]["domain"] == "www.acecqa.gov.au"
     assert rejected.success is False
-
-
-class AnalyticsStore:
-    def query_records(self, **kwargs):
-        assert kwargs["teacher_id"] == "teacher-1"
-        assert kwargs["class_id"] == "kangaroo-room"
-        return [
-            {"record_type": "observation", "status": "draft", "observed_at": "2026-07-01T09:00:00"},
-            {"record_type": "observation", "status": "final", "observed_at": "2026-07-02T09:00:00"},
-            {"record_type": "educational_record", "status": "final", "created_at": "2026-08-02T09:00:00"},
-        ]
-
-
-def test_learning_record_analysis_returns_aggregates_not_record_text() -> None:
-    registry = ToolRegistry()
-    registry.register(build_analyse_learning_records_tool(AnalyticsStore()))
-    result = asyncio.run(registry.execute_async(
-        "analyse_learning_records", {"group_by": "status"}, execution_context=SCOPE
-    ))
-
-    assert result.success is True
-    assert result.data["total_records"] == 3
-    assert result.data["groups"] == [{"key": "draft", "count": 1}, {"key": "final", "count": 2}]
-    assert "records" not in result.data
 
 
 class FakeTranscriber:
@@ -266,7 +265,9 @@ class ScopedSearchStub:
             ),
             content_hash="a" * 64,
             distance=0.2,
-            bm25_score=3.0,
+            dense_distance=0.2,
+            bm25_score=0.1,
+            metadata={"scoped_hybrid_score": "0.016393"},
         )]
 
 

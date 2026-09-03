@@ -5,6 +5,7 @@ from pathlib import Path
 from app.config import settings
 from app.services import KnowledgeIngestionService
 from scripts.run_rag_evals import CachedQueryEmbeddingProvider, load_cases
+from scripts.build_rag_robustness_cases import VARIANTS
 
 
 class StubEmbeddingProvider:
@@ -78,3 +79,10 @@ def test_final_cases_reference_real_chunks_in_the_expected_scope() -> None:
                 assert chunk.page == gold.page
             if gold.section_contains is not None:
                 assert gold.section_contains.lower() in (chunk.section or "").lower()
+
+
+def test_robustness_variants_are_frozen_and_cover_distinct_stressors() -> None:
+    tags = {tag for _, case_tags in VARIANTS.values() for tag in case_tags}
+
+    assert len(VARIANTS) == 24
+    assert {"typo", "chinese", "false-premise", "multi-part"} <= tags

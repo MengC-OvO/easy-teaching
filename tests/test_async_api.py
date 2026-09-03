@@ -49,7 +49,7 @@ class MemoryStore:
     async def get_conversation_session(self, session_id):
         return self.sessions.get(session_id)
 
-    async def create_conversation_run(self, *, request_id, session_id):
+    async def create_conversation_run(self, *, request_id, session_id, task_payload=None):
         existing = self.runs.get(request_id)
         if existing:
             return {**existing, "created": False}
@@ -159,6 +159,21 @@ class FakeRuntime:
 
     async def close(self):
         self.is_closed = True
+
+
+class StubRateLimiter:
+    def __init__(self, *, allowed=True, error=None):
+        self.allowed = allowed
+        self.error = error
+
+    async def check(self, identity):
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(
+            allowed=self.allowed,
+            remaining=0,
+            retry_after_seconds=17,
+        )
 
 
 class FakeGatewayClient:
@@ -319,6 +334,41 @@ def test_same_session_busy_error_rejects_a_second_active_run():
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "session_busy"
+
+
+def test_distributed_rate_limit_returns_429_with_retry_after() -> None:
+    runtime = FakeRuntime()
+    runtime.redis_rate_limiter = StubRateLimiter(allowed=False)
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Create a plan.", "request_id": "limited-1"},
+        )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "17"
+    assert response.json()["error"]["code"] == "rate_limit_exceeded"
+    assert runtime.store.runs == {}
+    assert runtime.graph.calls == []
+
+
+def test_rate_limiter_outage_fails_closed_before_expensive_work() -> None:
+    runtime = FakeRuntime()
+    runtime.redis_rate_limiter = StubRateLimiter(error=ConnectionError("offline"))
+    app = create_app(runtime_factory=lambda: runtime)
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Create a plan.", "request_id": "limit-down-1"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "rate_limiter_unavailable"
+    assert runtime.store.runs == {}
+    assert runtime.graph.calls == []
 
 
 def test_enforce_mode_check_happens_before_run_persistence_and_forwards_only_redacted_text():

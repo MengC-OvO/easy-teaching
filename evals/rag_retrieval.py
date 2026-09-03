@@ -47,7 +47,10 @@ class RagCaseMetrics(BaseModel):
     mode: str
     latency_ms: float = Field(ge=0)
     recall_at_k: Dict[int, float]
+    hit_at_k: Dict[int, float]
+    precision_at_k: Dict[int, float]
     reciprocal_rank: float = Field(ge=0, le=1)
+    average_precision: float = Field(ge=0, le=1)
     ndcg_at_k: Dict[int, float]
     scope_violation_count: int = Field(ge=0)
     returned_count: int = Field(ge=0)
@@ -59,7 +62,10 @@ class RagModeSummary(BaseModel):
     mode: str
     case_count: int = Field(ge=1)
     recall_at_k: Dict[int, float]
+    hit_rate_at_k: Dict[int, float]
+    precision_at_k: Dict[int, float]
     mrr: float = Field(ge=0, le=1)
+    map: float = Field(ge=0, le=1)
     ndcg_at_k: Dict[int, float]
     scope_violation_rate: float = Field(ge=0, le=1)
     citation_correctness: float = Field(ge=0, le=1)
@@ -106,7 +112,10 @@ def evaluate_case(
         mode=mode,
         latency_ms=latency_ms,
         recall_at_k={k: _recall_at_k(grades, len(case.relevant_evidence), k) for k in ks},
+        hit_at_k={k: float(any(grade > 0 for grade in grades[:k])) for k in ks},
+        precision_at_k={k: _precision_at_k(grades, k) for k in ks},
         reciprocal_rank=(1 / first_relevant_rank if first_relevant_rank else 0.0),
+        average_precision=_average_precision(grades, len(case.relevant_evidence)),
         ndcg_at_k={
             k: _ndcg_at_k(
                 grades,
@@ -131,7 +140,10 @@ def summarize_mode(results: Sequence[RagCaseMetrics], ks: Sequence[int]) -> RagM
         mode=results[0].mode,
         case_count=len(results),
         recall_at_k={k: mean(result.recall_at_k[k] for result in results) for k in ks},
+        hit_rate_at_k={k: mean(result.hit_at_k[k] for result in results) for k in ks},
+        precision_at_k={k: mean(result.precision_at_k[k] for result in results) for k in ks},
         mrr=mean(result.reciprocal_rank for result in results),
+        map=mean(result.average_precision for result in results),
         ndcg_at_k={k: mean(result.ndcg_at_k[k] for result in results) for k in ks},
         scope_violation_rate=(
             sum(result.scope_violation_count for result in results) / returned
@@ -211,6 +223,23 @@ def _matches_gold(chunk, gold: RagGoldEvidence) -> bool:
 
 def _recall_at_k(grades: Sequence[int], relevant_count: int, k: int) -> float:
     return sum(1 for grade in grades[:k] if grade > 0) / relevant_count
+
+
+def _precision_at_k(grades: Sequence[int], k: int) -> float:
+    return sum(1 for grade in grades[:k] if grade > 0) / k
+
+
+def _average_precision(grades: Sequence[int], relevant_count: int) -> float:
+    if relevant_count <= 0:
+        return 0.0
+    precision_sum = 0.0
+    relevant_seen = 0
+    for rank, grade in enumerate(grades, start=1):
+        if grade <= 0:
+            continue
+        relevant_seen += 1
+        precision_sum += relevant_seen / rank
+    return precision_sum / relevant_count
 
 
 def _ndcg_at_k(grades: Sequence[int], ideal_grades: Sequence[int], k: int) -> float:

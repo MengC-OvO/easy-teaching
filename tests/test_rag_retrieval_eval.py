@@ -85,7 +85,10 @@ def test_evaluate_case_computes_rank_metrics_scope_and_citation_integrity() -> N
     )
 
     assert measured.recall_at_k == {1: 0.5, 3: 1.0}
+    assert measured.hit_at_k == {1: 1.0, 3: 1.0}
+    assert measured.precision_at_k == {1: 1.0, 3: 2 / 3}
     assert measured.reciprocal_rank == 1.0
+    assert measured.average_precision == (1.0 + 2 / 3) / 2
     assert measured.ndcg_at_k[1] == 1.0
     assert 0.8 < measured.ndcg_at_k[3] < 1.0
     assert measured.scope_violation_count == 1
@@ -94,6 +97,8 @@ def test_evaluate_case_computes_rank_metrics_scope_and_citation_integrity() -> N
     summary = summarize_mode([measured], [1, 3])
     assert summary.scope_violation_rate == 1 / 3
     assert summary.citation_correctness == 1.0
+    assert summary.hit_rate_at_k == {1: 1.0, 3: 1.0}
+    assert summary.map == measured.average_precision
     assert summary.latency_p95_ms == 12.0
 
 

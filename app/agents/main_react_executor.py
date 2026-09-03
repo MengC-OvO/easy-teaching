@@ -106,7 +106,7 @@ class MainDecisionValidator:
                 and call.name not in self.allowed_tool_names
             ):
                 return self._feedback(f"当前主流程不允许调用：{call.name}")
-            if tool.permission is ToolPermission.FORBIDDEN:
+            if tool.permission_for(call.arguments) is ToolPermission.FORBIDDEN:
                 return self._feedback(f"当前流程禁止工具：{call.name}")
             identical_limit = min(
                 self.max_repeated_calls,
@@ -122,7 +122,7 @@ class MainDecisionValidator:
         controlled_writes = [
             call
             for call in calls
-            if self.registry.get(call.name).permission
+            if self.registry.get(call.name).permission_for(call.arguments)
             is ToolPermission.REQUIRE_APPROVAL
         ]
         if controlled_writes:

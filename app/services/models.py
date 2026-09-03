@@ -271,6 +271,35 @@ class ObservationRecord(Base):
     )
 
 
+class ConversationTaskOutboxRecord(Base):
+    """Durable hand-off from the API transaction to the Celery broker.
+
+    The broker message contains only ``request_id``.  The redacted execution
+    payload remains in PostgreSQL so a broker outage cannot lose accepted work.
+    """
+
+    __tablename__ = "conversation_task_outbox"
+
+    request_id: Mapped[str] = mapped_column(
+        ForeignKey("conversation_runs.request_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+    publish_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    execution_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    lease_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    celery_task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class ObservationChildRecord(Base):
     __tablename__ = "observation_children"
     __table_args__ = (

@@ -30,7 +30,10 @@ def resolve_required_controlled_tools(
     normalized = " ".join(message.casefold().split())
     required: List[str] = []
     for tool in tools:
-        if tool.permission is not ToolPermission.REQUIRE_APPROVAL:
+        if (
+            tool.permission is not ToolPermission.REQUIRE_APPROVAL
+            and tool.permission_resolver is None
+        ):
             continue
         if any(_contains_unnegated_alias(normalized, alias) for alias in tool.completion_aliases):
             required.append(tool.name)

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -11,12 +13,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.api.dependencies import get_runtime
 from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.schemas import ApiErrorDetail, ApiErrorResponse, RunStatus, StreamEvent
+from app.config import settings
 
 if TYPE_CHECKING:
     from app.api.runtime import ApiRuntime
 
 
 router = APIRouter(prefix="/sessions", tags=["events"])
+logger = logging.getLogger(__name__)
+_REDIS_EVENT_ID = re.compile(r"^\d+-\d+$")
 
 _STREAM_END_STATUSES = {
     RunStatus.WAITING_FOR_APPROVAL.value,
@@ -69,7 +74,7 @@ def _public_event(record: Dict[str, Any]) -> StreamEvent:
     )
 
 
-async def _event_stream(
+async def _database_event_stream(
     *,
     runtime: ApiRuntime,
     request: Request,
@@ -99,7 +104,85 @@ async def _event_stream(
         if idle_polls >= 150:
             yield ": heartbeat\n\n"
             idle_polls = 0
-        await asyncio.sleep(0.1)
+        # Degraded/inline mode only. Production blocks on Redis Streams.
+        await asyncio.sleep(1.0)
+
+
+async def _redis_event_stream(
+    *,
+    runtime: ApiRuntime,
+    request: Request,
+    request_id: str,
+    after_event_id: str,
+    after_sequence: int,
+) -> AsyncIterator[str]:
+    cursor = after_event_id
+    while True:
+        if await request.is_disconnected():
+            return
+        try:
+            records = await runtime.event_bus.read(
+                request_id,
+                after_event_id=cursor,
+                block_ms=settings.redis_progress_block_ms,
+                count=50,
+            )
+        except Exception:
+            # Redis progress is disposable. Fall back to low-frequency durable
+            # lifecycle polling so a user can still receive the final result.
+            logger.warning(
+                "Redis progress read failed; using database fallback",
+                extra={"request_id": request_id},
+                exc_info=True,
+            )
+            async for frame in _database_event_stream(
+                runtime=runtime,
+                request=request,
+                request_id=request_id,
+                after_sequence=after_sequence,
+            ):
+                yield frame
+            return
+
+        for record in records:
+            cursor = record.event_id
+            event = StreamEvent(
+                event_id=record.event_id,
+                event=record.event,
+                sequence=record.sequence,
+                session_id=record.session_id,
+                request_id=record.request_id,
+                data=record.data,
+            )
+            yield _sse_frame(event)
+            if record.event in {
+                "approval_required",
+                "completed",
+                "failed",
+                "cancelled",
+            }:
+                return
+
+        if records:
+            continue
+        run = await runtime.store.get_conversation_run(request_id)
+        if run is None or run["status"] in _STREAM_END_STATUSES:
+            # The terminal Redis notification may have expired or failed. Replay
+            # the durable lifecycle record once before closing the connection.
+            durable = await runtime.store.list_conversation_events(
+                request_id=request_id,
+                after_sequence=after_sequence,
+            )
+            for item in durable:
+                if item["event"] in {
+                    "approval_required",
+                    "completed",
+                    "failed",
+                    "cancelled",
+                }:
+                    yield _sse_frame(_public_event(item))
+            return
+        yield ": heartbeat\n\n"
 
 
 @router.get(
@@ -115,6 +198,7 @@ async def stream_events(
     request: Request,
     request_id: str = Query(..., min_length=1, max_length=128),
     after_sequence: int = Query(-1, ge=-1),
+    after_event_id: Optional[str] = Query(default=None, max_length=64),
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[StreamingResponse, JSONResponse]:
     runtime = get_runtime(request)
@@ -139,13 +223,28 @@ async def stream_events(
             request_id=request_id,
         )
 
-    return StreamingResponse(
-        _event_stream(
+    requested_event_id = after_event_id or request.headers.get("Last-Event-ID") or "0-0"
+    if not _REDIS_EVENT_ID.fullmatch(requested_event_id):
+        requested_event_id = "0-0"
+    event_bus = getattr(runtime, "event_bus", None)
+    stream = (
+        _redis_event_stream(
+            runtime=runtime,
+            request=request,
+            request_id=request_id,
+            after_event_id=requested_event_id,
+            after_sequence=after_sequence,
+        )
+        if event_bus is not None and run["status"] not in _STREAM_END_STATUSES
+        else _database_event_stream(
             runtime=runtime,
             request=request,
             request_id=request_id,
             after_sequence=after_sequence,
-        ),
+        )
+    )
+    return StreamingResponse(
+        stream,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

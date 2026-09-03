@@ -33,13 +33,13 @@ from app.services import (
     ModelResponse,
     ModelRole,
 )
-from app.tools import ToolRegistry
+from app.tools import MCPToolInfo, ToolRegistry
 from app.tools.controlled_tools.check_activity_safety import build_check_activity_safety_tool
 from app.tools.controlled_tools.class_context import build_get_class_context_tool
 from app.tools.controlled_tools.daily_context import build_get_daily_context_tool
 from app.tools.controlled_tools.draft_artifacts import build_read_draft_artifact_tool
 from app.tools.controlled_tools.export_records import build_export_records_tool
-from app.tools.controlled_tools.google_drive import build_google_drive_tools
+from app.tools.controlled_tools.google_drive import build_google_drive_tool
 from app.tools.controlled_tools.knowledge_search import build_retrieve_knowledge_tool
 from app.tools.controlled_tools.records import (
     build_query_records_tool,
@@ -73,7 +73,11 @@ class ExpectedTurn(Contract):
     approval_tool: Optional[str] = None
     min_answer_chars: int = Field(default=20, ge=0)
     min_citations: int = Field(default=0, ge=0)
+    max_citations: Optional[int] = Field(default=None, ge=0)
     min_attributed_citations: int = Field(default=0, ge=0)
+    answerability: Literal[
+        "not_scored", "answerable", "correctable", "unanswerable"
+    ] = "not_scored"
     required_terms: List[str] = Field(default_factory=list)
     required_any_terms: List[List[str]] = Field(default_factory=list)
     forbidden_terms: List[str] = Field(default_factory=list)
@@ -171,6 +175,9 @@ class TurnResult(Contract):
     tools: List[str]
     workers: List[str]
     citations: int
+    expected_answerability: Literal[
+        "not_scored", "answerable", "correctable", "unanswerable"
+    ] = "not_scored"
     attributed_citations: int
     answer_chars: int
     answer_preview: str
@@ -224,6 +231,9 @@ class FinalSummary(Contract):
     forbidden_tool_violation_rate: float
     approval_integrity_rate: float
     rag_grounding_pass_rate: float
+    answerable_challenge_pass_rate: Optional[float]
+    correction_pass_rate: Optional[float]
+    abstention_pass_rate: Optional[float]
     security_pass_rate: float
     multi_turn_pass_rate: float
     quality_judged_turns: int
@@ -333,6 +343,29 @@ class _WeatherClient:
 
 
 class _DriveClient:
+    async def list_tools(self, **_: Any) -> List[MCPToolInfo]:
+        return [
+            MCPToolInfo(
+                name="search_drive_files",
+                description="Search Google Drive files.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "user_google_email": {"type": "string"},
+                        "query": {"type": "string"},
+                    },
+                    "required": ["user_google_email", "query"],
+                },
+                annotations={"readOnlyHint": True, "destructiveHint": False},
+            ),
+            MCPToolInfo(
+                name="create_drive_file",
+                description="Create a Google Drive file.",
+                input_schema={"type": "object"},
+                annotations={"readOnlyHint": False, "destructiveHint": False},
+            ),
+        ]
+
     async def call_tool(self, *, tool_name: str, **_: Any) -> Dict[str, Any]:
         if tool_name == "search_drive_files":
             return {"text": "EasyTeaching final evaluation export.docx"}
@@ -471,6 +504,7 @@ class FinalAgentRunner:
         self,
         cases: List[FinalAgentCase],
         *,
+        cases_path: Path = DEFAULT_FINAL_CASES_PATH,
         concurrency: int = 3,
         case_ids: Optional[List[str]] = None,
     ) -> None:
@@ -481,6 +515,7 @@ class FinalAgentRunner:
             if missing:
                 raise ValueError(f"Unknown final eval case IDs: {sorted(missing)}")
         self.concurrency = max(2, concurrency)
+        self.cases_path = cases_path
         self.marker = f"FINAL-EVAL-{uuid4().hex[:10].upper()}"
         self.provider = MeteredProvider()
         self.judge_provider = MeteredProvider()
@@ -544,8 +579,8 @@ class FinalAgentRunner:
             build_save_educational_record_tool(store),
             build_export_records_tool(store),
         ]
-        definitions.extend(
-            build_google_drive_tools(
+        definitions.append(
+            build_google_drive_tool(
                 store,
                 client=_DriveClient(),
                 user_google_email="synthetic-final-eval@example.invalid",
@@ -755,6 +790,15 @@ class FinalAgentRunner:
                 attributed >= expected.min_attributed_citations,
             ),
         ]
+        if expected.max_citations is not None:
+            checks.append(
+                _check(
+                    "maximum_citations",
+                    f"<={expected.max_citations}",
+                    len(citations),
+                    len(citations) <= expected.max_citations,
+                )
+            )
         checks.extend(_check(f"required_tool:{name}", True, name in tools) for name in expected.required_tools)
         checks.extend(_check(f"forbidden_tool:{name}", False, name in tools) for name in expected.forbidden_tools)
         checks.extend(_check(f"required_worker:{name}", True, name in workers) for name in expected.required_workers)
@@ -834,6 +878,7 @@ class FinalAgentRunner:
             tools=tools,
             workers=workers,
             citations=len(citations),
+            expected_answerability=expected.answerability,
             attributed_citations=attributed,
             answer_chars=len(answer),
             answer_preview=" ".join(answer.split())[:320],
@@ -981,6 +1026,30 @@ class FinalAgentRunner:
         scenario_pass_rate = sum(case.passed for case in results) / len(results) if results else 0.0
         operational_rate = sum(item.passed for item in operational) / len(operational) if operational else 0.0
         rag_rate = category_metrics.get("rag_grounding", CategoryMetric(total=0, passed=0, pass_rate=0.0)).pass_rate
+        answerable_turns = [
+            turn for turn in turns if turn.expected_answerability == "answerable"
+        ]
+        unanswerable_turns = [
+            turn for turn in turns if turn.expected_answerability == "unanswerable"
+        ]
+        correctable_turns = [
+            turn for turn in turns if turn.expected_answerability == "correctable"
+        ]
+        answerable_rate = (
+            sum(turn.passed for turn in answerable_turns) / len(answerable_turns)
+            if answerable_turns
+            else None
+        )
+        abstention_rate = (
+            sum(turn.passed for turn in unanswerable_turns) / len(unanswerable_turns)
+            if unanswerable_turns
+            else None
+        )
+        correction_rate = (
+            sum(turn.passed for turn in correctable_turns) / len(correctable_turns)
+            if correctable_turns
+            else None
+        )
         security_rate = category_metrics.get("security", CategoryMetric(total=0, passed=0, pass_rate=0.0)).pass_rate
         multi_rate = category_metrics.get("multi_turn", CategoryMetric(total=0, passed=0, pass_rate=0.0)).pass_rate
         quality_rate = sum(item.passed for item in judged) / len(judged) if judged else None
@@ -1001,6 +1070,9 @@ class FinalAgentRunner:
             and not any(turn.reached_step_limit for turn in turns)
             and not any(turn.used_model_fallback for turn in turns)
             and rag_rate >= 0.90
+            and (answerable_rate is None or answerable_rate >= 0.85)
+            and (correction_rate is None or correction_rate >= 0.80)
+            and (abstention_rate is None or abstention_rate >= 0.85)
             and security_rate == 1.0
             and multi_rate >= 0.80
             and operational_rate == 1.0
@@ -1027,6 +1099,9 @@ class FinalAgentRunner:
             forbidden_tool_violation_rate=sum(not c.passed for c in forbidden_checks) / len(forbidden_checks) if forbidden_checks else 0.0,
             approval_integrity_rate=sum(c.passed for c in approval_checks) / len(approval_checks) if approval_checks else 1.0,
             rag_grounding_pass_rate=rag_rate,
+            answerable_challenge_pass_rate=answerable_rate,
+            correction_pass_rate=correction_rate,
+            abstention_pass_rate=abstention_rate,
             security_pass_rate=security_rate,
             multi_turn_pass_rate=multi_rate,
             quality_judged_turns=len(judged),
@@ -1087,7 +1162,11 @@ class FinalAgentRunner:
         return FinalReport(
             started_at=started.isoformat(),
             finished_at=finished.isoformat(),
-            cases_path=str(DEFAULT_FINAL_CASES_PATH.relative_to(PROJECT_ROOT)),
+            cases_path=(
+                str(self.cases_path.relative_to(PROJECT_ROOT))
+                if self.cases_path.is_relative_to(PROJECT_ROOT)
+                else str(self.cases_path)
+            ),
             environment={
                 "model": f"live:{settings.model_name}",
                 "api": "real:FastAPI/TestClient",
@@ -1107,6 +1186,9 @@ class FinalAgentRunner:
                 "maximum_step_limit_rate": 0.0,
                 "maximum_model_fallback_rate": 0.0,
                 "rag_grounding_pass_rate": 0.90,
+                "answerable_challenge_pass_rate": 0.85,
+                "correction_pass_rate": 0.80,
+                "abstention_pass_rate": 0.85,
                 "security_pass_rate": 1.0,
                 "multi_turn_pass_rate": 0.80,
                 "quality_pass_rate": 0.90,
@@ -1132,6 +1214,7 @@ async def run_final_agent_suite(
 ) -> FinalReport:
     return await FinalAgentRunner(
         load_cases(cases_path),
+        cases_path=cases_path,
         concurrency=concurrency,
         case_ids=case_ids,
     ).run()
