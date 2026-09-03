@@ -360,9 +360,10 @@ def build_validate_decision_node(
                 tool = validator.registry.get(call.name)
                 if tool is None:
                     continue
-                if tool.permission is ToolPermission.REQUIRE_APPROVAL:
+                permission = tool.permission_for(call.arguments)
+                if permission is ToolPermission.REQUIRE_APPROVAL:
                     write_calls.append(call)
-                elif tool.permission is ToolPermission.AUTO_EXECUTE:
+                elif permission is ToolPermission.AUTO_EXECUTE:
                     read_calls.append(call)
             if read_calls and write_calls:
                 # A model may correctly identify both operations but put a dependent
@@ -670,6 +671,60 @@ def merge_observations(state: GraphStateInput) -> Dict[str, Any]:
     }
 
 
+def route_merged_observations(state: GraphStateInput) -> str:
+    """Fail closed when the latest knowledge retrieval misses the score gate."""
+
+    current = _state(state)
+    latest_rag = next(
+        (
+            observation
+            for observation in reversed(list(current.observations.values()))
+            if observation.capability_name == "retrieve_knowledge"
+        ),
+        None,
+    )
+    if (
+        latest_rag is not None
+        and latest_rag.data.get("answerability") == "insufficient"
+    ):
+        return "evidence_refusal"
+    return "main_react"
+
+
+def finalize_evidence_refusal(state: GraphStateInput) -> Dict[str, Any]:
+    """Return a deterministic refusal without another answer-model call."""
+
+    current = _state(state)
+    latest_rag = next(
+        observation
+        for observation in reversed(list(current.observations.values()))
+        if observation.capability_name == "retrieve_knowledge"
+    )
+    reason = str(
+        latest_rag.data.get("answerability_reason")
+        or "evidence_below_relevance_threshold"
+    )
+    return {
+        "workflow_status": WorkflowStatus.COMPLETED,
+        "draft": Draft(
+            title="Insufficient evidence",
+            content=(
+                "The current knowledge base does not contain sufficiently reliable "
+                "evidence to answer this question."
+            ),
+            is_draft=False,
+        ),
+        "approval": Approval(),
+        "trace": [
+            TraceEvent(
+                step="finalize_evidence_refusal",
+                message="Stopped before answer generation because RAG evidence missed the calibrated gate.",
+                metadata={"reason": reason},
+            )
+        ],
+    }
+
+
 def _citations_from_observations(
     observations: List[CapabilityObservation],
     existing: List[Citation],
@@ -781,7 +836,8 @@ def build_prepare_approval_node(store, registry: ToolRegistry):
         assert current.decision is not None and len(current.decision.tool_calls) == 1
         call = current.decision.tool_calls[0]
         tool = registry.get(call.name)
-        assert tool is not None and tool.permission is ToolPermission.REQUIRE_APPROVAL
+        assert tool is not None
+        assert tool.permission_for(call.arguments) is ToolPermission.REQUIRE_APPROVAL
         if not current.teacher_id:
             return {
                 "workflow_status": WorkflowStatus.FAILED,
@@ -857,7 +913,7 @@ def build_prepare_approval_node(store, registry: ToolRegistry):
             ),
             "approval": Approval(
                 status=ApprovalStatus.REQUIRED,
-                risk_level=RiskLevel.L2_CONTROLLED_WRITE,
+                risk_level=tool.risk_for(arguments),
                 reason="Review the frozen fields before this write is executed.",
                 action_id=action["action_id"],
                 tool_name=call.name,
@@ -1039,6 +1095,7 @@ def build_main_react_graph(
     graph.add_node("run_worker", build_worker_node(resolved_runner))
     graph.add_node("decision_feedback", decision_feedback)
     graph.add_node("merge_observations", merge_observations)
+    graph.add_node("finalize_evidence_refusal", finalize_evidence_refusal)
     graph.add_node("finalize_draft", finalize_draft)
     graph.add_node("clarification", clarification)
     graph.add_node(
@@ -1070,10 +1127,18 @@ def build_main_react_graph(
     graph.add_edge("parallel_tools", "merge_observations")
     graph.add_edge("run_worker", "merge_observations")
     graph.add_edge("decision_feedback", "merge_observations")
-    graph.add_edge("merge_observations", "main_react")
+    graph.add_conditional_edges(
+        "merge_observations",
+        route_merged_observations,
+        {
+            "main_react": "main_react",
+            "evidence_refusal": "finalize_evidence_refusal",
+        },
+    )
     graph.add_edge("finalize_draft", "context_update")
     graph.add_edge("clarification", "context_update")
     graph.add_edge("prepare_approval", "context_update")
+    graph.add_edge("finalize_evidence_refusal", "context_update")
     graph.add_edge("context_update", "long_memory_update")
     graph.add_edge("long_memory_update", END)
     return graph.compile(checkpointer=checkpointer)

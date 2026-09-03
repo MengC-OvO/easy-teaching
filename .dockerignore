@@ -1,0 +1,12 @@
+.git
+.venv*
+.pytest*
+.test-*
+__pycache__
+*.pyc
+.env
+reports
+local_models
+data/chroma
+data/knowledge/index
+data/local

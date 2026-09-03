@@ -217,7 +217,10 @@ def print_summary(summaries, ks: Sequence[int]) -> None:
     headers = [
         "mode",
         *[f"R@{k}" for k in ks],
+        f"Hit@{max(ks)}",
+        f"P@{max(ks)}",
         "MRR",
+        "MAP",
         f"nDCG@{max(ks)}",
         "scope_err",
         "cite_ok",
@@ -230,7 +233,10 @@ def print_summary(summaries, ks: Sequence[int]) -> None:
             [
                 summary.mode,
                 *[f"{summary.recall_at_k[k]:.3f}" for k in ks],
+                f"{summary.hit_rate_at_k[max(ks)]:.3f}",
+                f"{summary.precision_at_k[max(ks)]:.3f}",
                 f"{summary.mrr:.3f}",
+                f"{summary.map:.3f}",
                 f"{summary.ndcg_at_k[max(ks)]:.3f}",
                 f"{summary.scope_violation_rate:.3f}",
                 f"{summary.citation_correctness:.3f}",

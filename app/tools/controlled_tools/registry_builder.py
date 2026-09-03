@@ -16,14 +16,15 @@ from app.tools.controlled_tools.records import (
     build_save_educational_record_tool,
     build_save_observation_tool,
 )
-from app.tools.controlled_tools.google_drive import build_google_drive_tools
-from app.tools.controlled_tools.extended_capabilities import (
-    build_analyse_learning_records_tool,
+from app.tools.controlled_tools.google_drive import build_google_drive_tool
+from app.tools.controlled_tools.official_web import build_official_web_search_tool
+from app.tools.controlled_tools.uploaded_document_ingestion import (
     build_ingest_uploaded_document_tool,
-    build_official_web_search_tool,
-    build_read_uploaded_document_tool,
-    build_transcribe_voice_note_tool,
 )
+from app.tools.controlled_tools.uploaded_document_reader import (
+    build_read_uploaded_document_tool,
+)
+from app.tools.controlled_tools.voice_note import build_transcribe_voice_note_tool
 from app.tools.definition import ToolDefinition
 from app.tools.mcp_adapter import MCPClientProtocol
 from app.tools.registry import ToolRegistry
@@ -59,7 +60,6 @@ def build_default_tool_definitions(
         build_save_observation_tool(store),
         build_save_educational_record_tool(store),
         build_export_records_tool(store),
-        build_analyse_learning_records_tool(store),
     ]
     if file_store is not None and document_reader is not None:
         domain_tools.append(build_read_uploaded_document_tool(file_store, document_reader))
@@ -72,8 +72,8 @@ def build_default_tool_definitions(
     if google_drive_mcp_client is not None:
         if not google_drive_user_email:
             raise ValueError("GOOGLE_DRIVE_USER_EMAIL is required when Drive MCP is enabled")
-        domain_tools.extend(
-            build_google_drive_tools(
+        domain_tools.append(
+            build_google_drive_tool(
                 store,
                 client=google_drive_mcp_client,
                 user_google_email=google_drive_user_email,

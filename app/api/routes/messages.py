@@ -3,13 +3,13 @@
 from typing import Optional, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
 from app.api.errors import ConversationSessionBusyError
 from app.api.auth import CurrentUser, get_current_user, require_session_owner
-from app.api.execution import execute_message
+from app.api.execution import execute_message, publish_progress_best_effort
 from app.integrations.input_safety import InputSafetyRejected, prepare_user_input
 from app.integrations.privacy_gateway_client import PrivacyGatewayUnavailableError
 from app.schemas import (
@@ -61,7 +61,6 @@ async def create_message(
     session_id: str,
     payload: MessageCreateRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[MessageAcceptedResponse, JSONResponse]:
     runtime = get_runtime(request)
@@ -102,6 +101,39 @@ async def create_message(
             details={"active_request_id": active["request_id"]},
             request_id=request_id,
         )
+
+    rate_limiter = getattr(runtime, "redis_rate_limiter", None)
+    if rate_limiter is not None:
+        identity = (
+            current_user.user_id
+            if current_user is not None
+            else (request.client.host if request.client is not None else "unknown")
+        )
+        try:
+            decision = await rate_limiter.check(identity)
+        except Exception:
+            return _error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="rate_limiter_unavailable",
+                message="Request admission control is temporarily unavailable.",
+                details={},
+                request_id=request_id,
+                recoverable=True,
+            )
+        if not decision.allowed:
+            response = _error_response(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                code="rate_limit_exceeded",
+                message="Too many message requests. Please retry shortly.",
+                details={
+                    "retry_after_seconds": decision.retry_after_seconds,
+                    "remaining": decision.remaining,
+                },
+                request_id=request_id,
+                recoverable=True,
+            )
+            response.headers["Retry-After"] = str(decision.retry_after_seconds)
+            return response
 
     try:
         prepared = await prepare_user_input(
@@ -151,6 +183,15 @@ async def create_message(
         run = await runtime.store.create_conversation_run(
             request_id=request_id,
             session_id=session_id,
+            task_payload={
+                "request_id": request_id,
+                "session_id": session_id,
+                "thread_id": conversation["thread_id"],
+                "teacher_id": conversation["teacher_id"],
+                "class_id": conversation["class_id"],
+                "message": prepared.forwarded_text,
+                "privacy_mapping_id": prepared.mapping_id,
+            },
         )
     except ConversationSessionBusyError as error:
         return _error_response(
@@ -182,17 +223,29 @@ async def create_message(
         event=StreamEventType.RUN_STARTED.value,
         data={"status": run["status"]},
     )
-    background_tasks.add_task(
-        execute_message,
-        runtime=runtime,
+    await publish_progress_best_effort(
+        runtime,
         request_id=request_id,
         session_id=session_id,
-        thread_id=conversation["thread_id"],
-        teacher_id=conversation["teacher_id"],
-        class_id=conversation["class_id"],
-        message=prepared.forwarded_text,
-        privacy_mapping_id=prepared.mapping_id,
+        event=StreamEventType.RUN_STARTED.value,
+        data={"status": run["status"], "message": "Your request is queued…"},
     )
+    relay = getattr(request.app.state, "outbox_relay", None)
+    if relay is not None:
+        relay.notify()
+    else:
+        # Explicit inline mode is retained for deterministic tests and local
+        # debugging; production config uses Celery and the durable Outbox.
+        await execute_message(
+            runtime=runtime,
+            request_id=request_id,
+            session_id=session_id,
+            thread_id=conversation["thread_id"],
+            teacher_id=conversation["teacher_id"],
+            class_id=conversation["class_id"],
+            message=prepared.forwarded_text,
+            privacy_mapping_id=prepared.mapping_id,
+        )
     return MessageAcceptedResponse(
         session_id=session_id,
         request_id=request_id,

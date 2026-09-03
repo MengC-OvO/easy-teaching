@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.auth import CurrentUser, get_current_user, require_session_owner
 from app.api.dependencies import get_runtime
+from app.api.execution import publish_progress_best_effort
 from app.schemas import (
     ApiErrorDetail,
     ApiErrorResponse,
@@ -98,6 +99,13 @@ async def submit_approval(
                 event=StreamEventType.FAILED.value,
                 data={"status": RunStatus.FAILED.value, "tool_name": action["tool_name"]},
             )
+            await publish_progress_best_effort(
+                runtime,
+                request_id=payload.request_id,
+                session_id=session_id,
+                event=StreamEventType.FAILED.value,
+                data={"status": RunStatus.FAILED.value},
+            )
             return _error(
                 "approval_action_corrupt",
                 "The frozen action failed its integrity check.",
@@ -146,6 +154,13 @@ async def submit_approval(
                 event=StreamEventType.FAILED.value,
                 data={"status": RunStatus.FAILED.value, "tool_name": action["tool_name"]},
             )
+            await publish_progress_best_effort(
+                runtime,
+                request_id=payload.request_id,
+                session_id=session_id,
+                event=StreamEventType.FAILED.value,
+                data={"status": RunStatus.FAILED.value},
+            )
             return _error(
                 "approved_tool_failed",
                 tool_result.error.message if tool_result.error else "The approved action failed.",
@@ -180,6 +195,16 @@ async def submit_approval(
             "status": RunStatus.COMPLETED.value,
             "approval_decision": payload.decision.value,
             "tool_name": action["tool_name"],
+        },
+    )
+    await publish_progress_best_effort(
+        runtime,
+        request_id=payload.request_id,
+        session_id=session_id,
+        event=StreamEventType.COMPLETED.value,
+        data={
+            "status": RunStatus.COMPLETED.value,
+            "approval_decision": payload.decision.value,
         },
     )
     return ApprovalSubmitResponse(

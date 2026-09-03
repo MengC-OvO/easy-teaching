@@ -18,6 +18,10 @@ from app.tools import (
     ToolExecutionContext,
     build_default_tool_registry,
 )
+from app.tools.controlled_tools.knowledge_search import (
+    _multi_query_fusion,
+    focus_retrieval_query,
+)
 
 
 def make_store(_tmp_path) -> InMemoryEvalStore:
@@ -48,7 +52,9 @@ class StubPolicyRetriever:
                     citation=citation,
                     content_hash="a" * 64,
                     distance=0.25,
-                    metadata={"bm25_score": "3.140000"},
+                    dense_distance=0.25,
+                    bm25_score=20.0,
+                    metadata={"bm25_score": "20.000000"},
                 )
             ],
             stats=RetrievalStats(
@@ -85,6 +91,41 @@ class StubQueryRewriter:
         )
 
 
+class StubLowConfidenceRetriever(StubPolicyRetriever):
+    def retrieve(self, request):
+        result = super().retrieve(request)
+        result.chunks[0].dense_distance = 0.45
+        result.chunks[0].bm25_score = 2.0
+        return result
+
+
+class StubGateBackfillRetriever(StubPolicyRetriever):
+    def retrieve(self, request):
+        result = super().retrieve(request)
+        template = result.chunks[0]
+        scores = [
+            (0.20, 20.0),
+            (0.45, 2.0),
+            (0.21, 18.0),
+            (0.19, 17.0),
+        ]
+        result.chunks = []
+        for index, (dense_distance, bm25_score) in enumerate(scores, start=1):
+            chunk = template.model_copy(deep=True)
+            chunk.chunk_id = f"chunk-{index}"
+            chunk.content = f"Ranked candidate {index}"
+            chunk.content_hash = str(index) * 64
+            chunk.distance = dense_distance
+            chunk.dense_distance = dense_distance
+            chunk.bm25_score = bm25_score
+            chunk.final_rank = index
+            result.chunks.append(chunk)
+        result.stats.raw_result_count = len(result.chunks)
+        result.stats.deduplicated_count = len(result.chunks)
+        result.stats.returned_count = len(result.chunks)
+        return result
+
+
 class StubCrossEncoderReranker:
     def __init__(self) -> None:
         self.calls = []
@@ -111,7 +152,6 @@ def test_default_tool_registry_registers_controlled_tools(tmp_path) -> None:
         "save_observation",
         "save_educational_record",
         "export_records",
-        "analyse_learning_records",
     ]
 
 
@@ -173,6 +213,7 @@ def test_retrieve_knowledge_standard_mode_returns_citable_chunks_without_rewrite
     assert result.data["strategy"] == "simple"
     assert result.data["knowledge_scope"] == "eylf"
     assert result.data["search_queries"] == ["play based learning"]
+    assert result.data["answerability"] == "answerable"
     assert result.data["returned_count"] == 1
     assert result.data["evidence"][0]["evidence_id"] == "E1"
     assert result.data["evidence"][0]["citation"]["source_id"] == "eylf-v2"
@@ -181,6 +222,57 @@ def test_retrieve_knowledge_standard_mode_returns_citable_chunks_without_rewrite
     assert retriever.requests[0].mode is RetrievalMode.HYBRID
     assert retriever.requests[0].filters.source_ids == ["eylf-v2"]
     assert retriever.requests[0].filters.source_types == [KnowledgeSourceType.OFFICIAL]
+
+
+def test_retrieve_knowledge_marks_low_confidence_evidence_insufficient(tmp_path) -> None:
+    registry = build_default_tool_registry(
+        make_store(tmp_path),
+        knowledge_retriever=StubLowConfidenceRetriever(),
+    )
+
+    result = registry.execute(
+        "retrieve_knowledge",
+        {
+            "query": "fabricated requirement",
+            "mode": "standard",
+            "knowledge_scope": "eylf",
+        },
+    )
+
+    assert result.success is True
+    assert result.data["answerability"] == "insufficient"
+    assert result.data["answerability_reason"] == "evidence_below_relevance_threshold"
+    assert result.data["retrieved_count"] == 1
+    assert result.data["returned_count"] == 0
+    assert result.data["supported_evidence_ids"] == []
+    assert result.data["evidence"] == []
+
+
+def test_retrieve_knowledge_gates_candidate_pool_before_top_k(tmp_path) -> None:
+    retriever = StubGateBackfillRetriever()
+    registry = build_default_tool_registry(
+        make_store(tmp_path),
+        knowledge_retriever=retriever,
+    )
+
+    result = registry.execute(
+        "retrieve_knowledge",
+        {
+            "query": "play based learning",
+            "mode": "standard",
+            "top_k": 3,
+            "knowledge_scope": "eylf",
+        },
+    )
+
+    assert retriever.requests[0].return_candidate_pool is True
+    assert result.data["retrieved_count"] == 4
+    assert result.data["returned_count"] == 3
+    assert [item["content"] for item in result.data["evidence"]] == [
+        "Ranked candidate 1",
+        "Ranked candidate 3",
+        "Ranked candidate 4",
+    ]
 
 
 def test_check_activity_safety_tool_flags_common_risks(tmp_path) -> None:
@@ -280,6 +372,35 @@ def test_retrieve_knowledge_deep_mode_rewrites_and_fuses_queries(tmp_path) -> No
             "candidate_count": 1,
         }
     ]
+
+
+def test_retrieval_focus_removes_meta_preamble_but_not_normal_colons() -> None:
+    factual = "What does EYLF say about children's agency?"
+    noisy = (
+        "I may be mixing this up with a neighbouring outcome. Use only the "
+        f"requested source and verify the exact claim: {factual}"
+    )
+
+    assert focus_retrieval_query(noisy) == factual
+    assert focus_retrieval_query("Compare these: EYLF and NQS") == (
+        "Compare these: EYLF and NQS"
+    )
+
+
+def test_multi_query_fusion_preserves_best_absolute_scores() -> None:
+    retriever = StubPolicyRetriever()
+    original = retriever.retrieve(type("Request", (), {"query": "original", "top_k": 1, "mode": RetrievalMode.HYBRID, "reranker": RerankerMode.NONE})())
+    rewritten = original.model_copy(deep=True)
+    rewritten.query = "official terminology"
+    rewritten.chunks[0].dense_distance = 0.18
+    rewritten.chunks[0].distance = 0.18
+    rewritten.chunks[0].bm25_score = 31.0
+
+    fused = _multi_query_fusion([original, rewritten], top_k=1)
+
+    assert fused[0].dense_distance == 0.18
+    assert fused[0].bm25_score == 31.0
+    assert fused[0].metadata["matched_queries"] == "original | official terminology"
 
 
 def test_get_class_context_tool_reports_missing_profile(tmp_path) -> None:

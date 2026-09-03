@@ -1,6 +1,6 @@
 # RAG system and retrieval evaluation
 
-Updated: 2026-08-26
+Updated: 2026-08-31
 
 ## Current decision
 
@@ -35,6 +35,45 @@ ablation unless a larger evaluation set later exposes a recall problem.
 9. Both tools support hard `knowledge_scope` boundaries: `eylf`, `nqs`,
    `centre_policy`, or `all`. The scopes map to stored source IDs, so changing
    scope does not require rebuilding embeddings.
+10. Teacher-uploaded centre documents use a separate approval-gated path. Each
+    teacher/class scope has isolated SQLite FTS5 and Chroma indexes; a local
+    SentenceTransformer creates 384-dimensional Dense vectors, and scoped search
+    combines Dense 0.60 and BM25 0.40 with RRF. Uploaded private text is never sent
+    to the external Gemini embedding provider.
+
+## Deterministic evidence gate
+
+`retrieve_knowledge` now filters the ranked candidate pool through calibrated
+absolute relevance thresholds, then takes the requested Top-K from the passing
+chunks before evidence reaches Main. This allows a lower-ranked passing chunk to
+backfill a higher-ranked rejected chunk without ever padding the result with weak
+evidence. Standard mode uses raw Dense
+distance plus BM25; Deep mode requires the same base gate and a Cross-encoder
+score of at least -4.40. RRF scores are deliberately excluded because they are
+rank-only values. BM25 thresholds are source-aware because the EYLF, NQF guide,
+and small centre-policy corpus have different score distributions. Tenant-local
+uploaded indexes use their own conservative Dense ceiling plus Dense/BM25 rank
+agreement because BM25 magnitude is not comparable across tiny private corpora.
+
+If no chunk passes, the Tool returns `answerability=insufficient` with no
+evidence. The graph then returns a fixed insufficient-evidence response without
+another Main model call, so irrelevant Top-K neighbours cannot be converted into
+an answer or citation. The gate is intentionally conservative: it protects
+unsupported-answer cases, but some false-premise questions that could have been
+corrected from indirect counter-evidence will instead be refused.
+
+Thresholds were frozen using labelled answerable, correctable, and unanswerable
+cases, then checked on frozen blind and robustness sets. EYLF currently passes at
+Dense <= 0.22, or Dense <= 0.31 with BM25 >= 13. NQS passes at Dense <= 0.22, or
+Dense <= 0.30 with BM25 >= 15. Centre policy requires Dense <= 0.30 and BM25 >=
+22. Run `scripts/run_rag_gate_evals.py` to reproduce the production-path decision
+test.
+
+Long questions with an explicit retrieval-control preamble are reduced to their
+factual question before retrieval. Deep multi-query fusion preserves the best
+absolute Dense/BM25 evidence found by any rewrite. There is no special false-premise
+prompt, framework-identifier rule, or correction-query map; questions proceed
+through ordinary retrieval and the evidence threshold only.
 
 ## Final retrieval evaluation
 
@@ -54,9 +93,10 @@ Final results:
 | Hybrid | **0.775** | **0.950** | **0.975** | 0.975 | **0.860** | **0.890** | **0.000** | **1.000** |
 | Hybrid + Cross-encoder | **0.775** | **0.975** | **0.975** | **1.000** | **0.869** | **0.902** | **0.000** | **1.000** |
 
-Hybrid remains the default fast path. Cross-encoder reranking improves the
-deeper ranking metrics without reducing first-result accuracy, but its CPU
-latency is reserved for the explicit enhanced research tool.
+Hybrid remains the default fast path. The 40-case benchmark shows a small
+Cross-encoder improvement, but the broader 280-case production-path benchmark in
+`docs/rag-closeout-evaluation.md` shows weaker early-rank Deep performance. Deep is
+therefore reserved for explicit broad research while its rank fusion is improved.
 
 Measured latency:
 

@@ -133,6 +133,8 @@ AsyncRuntimeToolHandler = Callable[
 ApprovalPreparationHandler = Callable[
     [BaseModel, ToolExecutionContext], Awaitable[PreparedToolAction]
 ]
+ToolPermissionResolver = Callable[[Dict[str, Any]], ToolPermission]
+ToolRiskResolver = Callable[[Dict[str, Any]], RiskLevel]
 
 
 class ToolDefinition(BaseModel):
@@ -155,6 +157,8 @@ class ToolDefinition(BaseModel):
     async_handler: Optional[AsyncToolHandler] = None
     async_runtime_handler: Optional[AsyncRuntimeToolHandler] = None
     approval_preparation_handler: Optional[ApprovalPreparationHandler] = None
+    permission_resolver: Optional[ToolPermissionResolver] = None
+    risk_resolver: Optional[ToolRiskResolver] = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -180,6 +184,16 @@ class ToolDefinition(BaseModel):
     def is_forbidden(self) -> bool:
         return self.permission is ToolPermission.FORBIDDEN
 
+    def permission_for(self, raw_arguments: Dict[str, Any]) -> ToolPermission:
+        if self.permission_resolver is not None:
+            return self.permission_resolver(raw_arguments)
+        return self.permission
+
+    def risk_for(self, raw_arguments: Dict[str, Any]) -> RiskLevel:
+        if self.risk_resolver is not None:
+            return self.risk_resolver(raw_arguments)
+        return self.risk_level
+
     def input_schema(self) -> Dict[str, Any]:
         return self.input_model.model_json_schema()
 
@@ -195,7 +209,11 @@ class ToolDefinition(BaseModel):
             "description": self.description,
             "domain": self.domain.value,
             "parallel_safe": self.parallel_safe,
-            "permission": self.permission.value,
+            "permission": (
+                "dynamic_by_arguments"
+                if self.permission_resolver is not None
+                else self.permission.value
+            ),
             "input_schema": self.model_input_schema(),
         }
 

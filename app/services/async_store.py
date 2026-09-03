@@ -25,6 +25,7 @@ from app.services.models import (
     ConversationRunRecord,
     ConversationRunResultRecord,
     ConversationSessionRecord,
+    ConversationTaskOutboxRecord,
     EducationalRecord,
     EducationalRecordObservation,
     LongTermMemoryRecord,
@@ -149,6 +150,11 @@ class AsyncEasyTeachingStore:
     async def close(self) -> None:
         await self.engine.dispose()
 
+    async def healthcheck(self) -> bool:
+        async with self.engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        return True
+
     async def get_class_context(
         self,
         *,
@@ -266,7 +272,11 @@ class AsyncEasyTeachingStore:
             return None if record is None else self._conversation_session_to_dict(record)
 
     async def create_conversation_run(
-        self, *, request_id: str, session_id: str
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+        task_payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         async with self.session_factory() as session:
             existing = await session.get(ConversationRunRecord, request_id)
@@ -278,6 +288,14 @@ class AsyncEasyTeachingStore:
                 status="accepted",
             )
             session.add(record)
+            if task_payload is not None:
+                session.add(
+                    ConversationTaskOutboxRecord(
+                        request_id=request_id,
+                        payload=task_payload,
+                        status="pending",
+                    )
+                )
             try:
                 await session.commit()
             except IntegrityError:
@@ -290,6 +308,138 @@ class AsyncEasyTeachingStore:
                     raise ConversationSessionBusyError(active.request_id)
                 raise
         return self._conversation_run_to_dict(record, created=True)
+
+    async def claim_conversation_task_for_publish(
+        self, request_id: str, *, lease_seconds: int
+    ) -> Optional[Dict[str, Any]]:
+        """Lease one pending Outbox row; an expired publishing lease is recoverable."""
+        now = datetime.utcnow()
+        async with self.session_factory() as session:
+            record = (
+                await session.execute(
+                    select(ConversationTaskOutboxRecord)
+                    .where(
+                        ConversationTaskOutboxRecord.request_id == request_id,
+                        ConversationTaskOutboxRecord.available_at <= now,
+                        or_(
+                            ConversationTaskOutboxRecord.status == "pending",
+                            (
+                                (ConversationTaskOutboxRecord.status == "publishing")
+                                & (ConversationTaskOutboxRecord.lease_until < now)
+                            ),
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if record is None:
+                return None
+            record.status = "publishing"
+            record.publish_attempts += 1
+            record.lease_until = now + timedelta(seconds=lease_seconds)
+            record.updated_at = now
+            await session.commit()
+            return self._conversation_task_to_dict(record)
+
+    async def list_publishable_conversation_task_ids(self, *, limit: int) -> List[str]:
+        now = datetime.utcnow()
+        async with self.session_factory() as session:
+            records = (
+                await session.execute(
+                    select(ConversationTaskOutboxRecord.request_id)
+                    .where(
+                        ConversationTaskOutboxRecord.available_at <= now,
+                        or_(
+                            ConversationTaskOutboxRecord.status == "pending",
+                            (
+                                (ConversationTaskOutboxRecord.status == "publishing")
+                                & (ConversationTaskOutboxRecord.lease_until < now)
+                            ),
+                        ),
+                    )
+                    .order_by(ConversationTaskOutboxRecord.created_at)
+                    .limit(limit)
+                )
+            ).scalars().all()
+        return list(records)
+
+    async def finish_conversation_task_publish(
+        self,
+        request_id: str,
+        *,
+        celery_task_id: Optional[str] = None,
+        error: Optional[str] = None,
+        retry_delay_seconds: int = 0,
+    ) -> None:
+        now = datetime.utcnow()
+        async with self.session_factory() as session:
+            record = await session.get(ConversationTaskOutboxRecord, request_id)
+            if record is None:
+                raise ValueError("Conversation task outbox does not exist")
+            record.status = "published" if error is None else "pending"
+            if error is None:
+                record.celery_task_id = celery_task_id
+            record.last_error = None if error is None else error[:2000]
+            record.available_at = now + timedelta(seconds=max(0, retry_delay_seconds))
+            record.lease_until = None
+            record.updated_at = now
+            await session.commit()
+
+    async def claim_conversation_task_for_execution(
+        self, request_id: str, *, lease_seconds: int
+    ) -> Optional[Dict[str, Any]]:
+        """Suppress duplicate delivery while allowing an expired execution to recover."""
+        now = datetime.utcnow()
+        async with self.session_factory() as session:
+            record = (
+                await session.execute(
+                    select(ConversationTaskOutboxRecord)
+                    .where(
+                        ConversationTaskOutboxRecord.request_id == request_id,
+                        or_(
+                            ConversationTaskOutboxRecord.status == "published",
+                            (
+                                (ConversationTaskOutboxRecord.status == "running")
+                                & (ConversationTaskOutboxRecord.lease_until < now)
+                            ),
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if record is None:
+                return None
+            record.status = "running"
+            record.execution_attempts += 1
+            record.lease_until = now + timedelta(seconds=lease_seconds)
+            record.last_error = None
+            record.updated_at = now
+            await session.commit()
+            return self._conversation_task_to_dict(record)
+
+    async def finish_conversation_task_execution(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        error: Optional[str] = None,
+    ) -> None:
+        if status not in {"published", "completed", "dead"}:
+            raise ValueError("Invalid conversation task status")
+        async with self.session_factory() as session:
+            record = await session.get(ConversationTaskOutboxRecord, request_id)
+            if record is None:
+                raise ValueError("Conversation task outbox does not exist")
+            record.status = status
+            record.last_error = None if error is None else error[:2000]
+            record.lease_until = None
+            record.updated_at = datetime.utcnow()
+            await session.commit()
+
+    async def get_conversation_task(self, request_id: str) -> Optional[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            record = await session.get(ConversationTaskOutboxRecord, request_id)
+            return None if record is None else self._conversation_task_to_dict(record)
 
     async def get_conversation_run(
         self, request_id: str
@@ -1293,6 +1443,18 @@ class AsyncEasyTeachingStore:
             "created_at": record.created_at.isoformat(),
             "updated_at": record.updated_at.isoformat(),
             "created": created,
+        }
+
+    @staticmethod
+    def _conversation_task_to_dict(record: ConversationTaskOutboxRecord) -> Dict[str, Any]:
+        return {
+            "request_id": record.request_id,
+            "payload": record.payload,
+            "status": record.status,
+            "publish_attempts": record.publish_attempts,
+            "execution_attempts": record.execution_attempts,
+            "celery_task_id": record.celery_task_id,
+            "last_error": record.last_error,
         }
 
     @staticmethod

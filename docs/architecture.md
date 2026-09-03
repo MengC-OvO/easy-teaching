@@ -39,13 +39,15 @@ sequenceDiagram
     participant UI as Web workspace
     participant API as FastAPI
     participant DB as PostgreSQL
+    participant R as Redis Streams / Celery
     participant G as Main ReAct LangGraph
     participant C as Tool / Worker
 
     UI->>API: POST session message
     API->>DB: create idempotent run + run_started
     API-->>UI: 202 accepted
-    API->>G: await graph.ainvoke
+    API->>R: publish request_id from transactional Outbox
+    R->>G: Celery worker graph.astream
     loop one current decision per turn
         G->>G: Main selects current call or batch
         G->>G: validate name, schema, permission, concurrency and budget
@@ -53,9 +55,10 @@ sequenceDiagram
         C-->>G: immutable Observation
     end
     G->>G: Main creates final teacher draft
-    G->>DB: checkpoint, context and scoped memory
-    API->>DB: persist public draft + ordered SSE events
-    UI->>API: replay SSE and fetch draft
+    G->>R: allowlisted node progress
+    R-->>UI: blocking SSE progress
+    G->>DB: checkpoint, context, final draft and scoped memory
+    UI->>API: fetch durable draft
 ```
 
 Main 不预先生成完整执行计划。每一轮只选择当前一个调用或当前可以安全并行的
@@ -105,10 +108,10 @@ Observation，不能直接写主 State 或执行业务副作用。
 
 ### `app/api`
 
-负责认证、session ownership、幂等、session busy、公开结果、SSE replay 和恢复。
+负责认证、session ownership、幂等、session busy、公开结果、SSE 和恢复。
 生产 Runtime 只接受 PostgreSQL，使用 `AsyncPostgresSaver`、异步 SQLAlchemy
-Store 和 `await graph.ainvoke()`。API、恢复、SSE 查询、模型 HTTP 和外部 HTTP
-工具均通过原生 `await`，不再把整张图放入工作线程。
+Store；Celery Worker 使用 `graph.astream()` 执行并向 Redis Stream 发布节点进度。
+SSE 使用阻塞读取，不再每 0.1 秒查询 PostgreSQL。
 
 ### `app/workflows/main_react_graph.py`
 
@@ -138,7 +141,8 @@ Store 和 `await graph.ainvoke()`。API、恢复、SSE 查询、模型 HTTP 和�
 | State | Location | Purpose |
 | --- | --- | --- |
 | Graph checkpoint | LangGraph AsyncPostgresSaver | 恢复精确节点和同一 thread |
-| API session/run/event | SQLAlchemy PostgreSQL | 幂等、状态和 SSE replay |
+| API session/run/key event | SQLAlchemy PostgreSQL | 幂等、最终状态和审计 |
+| Short-lived progress | Redis Stream | 节点级 SSE、断线短期重放 |
 | Current ReAct state | GraphState | 当前决定、Observation、预算和 trace |
 | Short context | checkpointed GraphState | 有界 recent turns 和摘要 |
 | Long-term memory | SQLAlchemy PostgreSQL | teacher/class scoped durable memory |
@@ -152,7 +156,7 @@ Store 和 `await graph.ainvoke()`。API、恢复、SSE 查询、模型 HTTP 和�
 
 生产主图负责生成草稿和准备受控操作，但模型生成阶段不会直接写数据库或上传
 文件。`save_observation`、`save_educational_record`、`export_records` 和
-`upload_export_to_google_drive` 会先冻结已经验证的参数并进入
+`drive_operation` 中动态识别出的 Drive 写操作会先冻结已经验证的参数并进入
 `waiting_for_approval`；只有教师批准后，API 才原子执行同一份冻结参数。重复或
 并发批准不会执行两次。系统不提供真实消息发送能力。
 

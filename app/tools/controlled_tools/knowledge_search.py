@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import re
 from typing import Dict, List, Literal, Optional, Protocol, Type
 
 from pydantic import BaseModel, Field
@@ -26,6 +27,7 @@ from app.services import (
     ModelRole,
 )
 from app.services.request_guard import sanitize_untrusted_prompt_value
+from app.services.evidence_gate import assess_retrieved_evidence
 from app.tools.definition import (
     ToolCategory,
     ToolDefinition,
@@ -37,6 +39,14 @@ from app.tools.definition import (
 
 
 MULTI_QUERY_RRF_K = 60
+
+_RETRIEVAL_PREAMBLE_CUES = re.compile(
+    r"\b(?:keywords?\s+only|mix(?:ing)?\s+(?:this|it)\s+up|"
+    r"use\s+only\s+the\s+(?:requested|named)\s+source|"
+    r"verify\s+the\s+exact\s+(?:claim|evidence)|"
+    r"identify\s+the\s+exact\s+evidence)\b",
+    re.IGNORECASE,
+)
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -88,6 +98,10 @@ class KnowledgeSearchOutput(BaseModel):
     evidence: List[KnowledgeEvidenceItem]
     mode: RetrievalMode
     reranker: RerankerMode
+    answerability: Literal["answerable", "insufficient"]
+    answerability_reason: str
+    supported_evidence_ids: List[str] = Field(default_factory=list)
+    retrieved_count: int = Field(ge=0)
     returned_count: int = Field(ge=0)
 
 
@@ -110,14 +124,22 @@ def build_retrieve_knowledge_tool(
             data.model_dump(exclude={"mode"})
         )
         resolved_retriever = resolved_retriever or KnowledgeRetriever()
+        focused_query = focus_retrieval_query(args.query)
         if data.mode == "standard":
-            result = resolved_retriever.retrieve(_request(args, args.query, args.top_k))
+            result = resolved_retriever.retrieve(
+                _request(
+                    args,
+                    focused_query,
+                    args.top_k,
+                    return_candidate_pool=True,
+                )
+            )
             return _tool_result(
-                args, "simple", [args.query], result.chunks, RerankerMode.NONE
+                args, "simple", [focused_query], result.chunks, RerankerMode.NONE
             )
         resolved_rewriter = resolved_rewriter or ChatCompletionsModelProvider()
         resolved_reranker = resolved_reranker or CrossEncoderReranker()
-        queries = _rewrite_queries(resolved_rewriter, args.query)
+        queries = _rewrite_queries(resolved_rewriter, focused_query)
         per_query_top_k = min(20, max(10, args.top_k * 2))
         results = [
             resolved_retriever.retrieve(_request(args, query, per_query_top_k))
@@ -127,7 +149,7 @@ def build_retrieve_knowledge_tool(
             results, top_k=min(20, max(10, args.top_k * 4))
         )
         chunks = _final_rerank(
-            resolved_reranker, args.query, candidates, args.top_k
+            resolved_reranker, focused_query, candidates
         )
         return _tool_result(
             args, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
@@ -140,17 +162,24 @@ def build_retrieve_knowledge_tool(
             data.model_dump(exclude={"mode"})
         )
         resolved_retriever = resolved_retriever or KnowledgeRetriever()
+        focused_query = focus_retrieval_query(args.query)
         if data.mode == "standard":
             result = await _retrieve_async(
-                resolved_retriever, _request(args, args.query, args.top_k)
+                resolved_retriever,
+                _request(
+                    args,
+                    focused_query,
+                    args.top_k,
+                    return_candidate_pool=True,
+                ),
             )
             return _tool_result(
-                args, "simple", [args.query], result.chunks, RerankerMode.NONE
+                args, "simple", [focused_query], result.chunks, RerankerMode.NONE
             )
         resolved_rewriter = resolved_rewriter or ChatCompletionsModelProvider()
         if resolved_reranker is None:
             resolved_reranker = await asyncio.to_thread(CrossEncoderReranker)
-        queries = await _rewrite_queries_async(resolved_rewriter, args.query)
+        queries = await _rewrite_queries_async(resolved_rewriter, focused_query)
         per_query_top_k = min(20, max(10, args.top_k * 2))
         results = await asyncio.gather(
             *[
@@ -167,9 +196,8 @@ def build_retrieve_knowledge_tool(
         chunks = await asyncio.to_thread(
             _final_rerank,
             resolved_reranker,
-            args.query,
+            focused_query,
             candidates,
-            args.top_k,
         )
         return _tool_result(
             args, "enhanced", queries, chunks, RerankerMode.CROSS_ENCODER
@@ -193,6 +221,7 @@ def build_retrieve_knowledge_tool(
             top_k=data.top_k,
             teacher_id=context.teacher_id,
             class_id=context.class_id,
+            return_candidate_pool=True,
         )
         if not local_chunks:
             return result
@@ -213,7 +242,7 @@ def build_retrieve_knowledge_tool(
             )
             for item in current.evidence
         ]
-        merged = _deduplicate_scoped([*local_chunks, *current_items])[: data.top_k]
+        merged = _deduplicate_scoped([*local_chunks, *current_items])
         return _tool_result(
             KnowledgeSearchInput.model_validate(data.model_dump(exclude={"mode"})),
             current.strategy,
@@ -258,6 +287,25 @@ class QueryRewriteOutput(BaseModel):
     queries: List[str] = Field(min_length=1, max_length=3)
 
 
+def focus_retrieval_query(query: str) -> str:
+    """Drop a retrieval-control preamble while preserving the factual question.
+
+    Users often qualify a question with uncertainty or source-selection language.
+    Passing that prose into a cross-encoder can make the meta-language outrank the
+    actual subject. Only a colon-delimited prefix with explicit retrieval cues is
+    removed; ordinary multi-clause questions are left unchanged.
+    """
+
+    normalized = " ".join(query.split()).strip()
+    if ":" not in normalized:
+        return normalized
+    prefix, candidate = normalized.rsplit(":", 1)
+    candidate = candidate.strip()
+    if _RETRIEVAL_PREAMBLE_CUES.search(prefix) and len(candidate.split()) >= 3:
+        return candidate
+    return normalized
+
+
 class KnowledgeRetrieverProtocol(Protocol):
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         ...
@@ -287,6 +335,8 @@ def _request(
     data: KnowledgeSearchInput,
     query: str,
     top_k: int,
+    *,
+    return_candidate_pool: bool = False,
 ) -> RetrievalRequest:
     filters = RetrievalFilters(source_ids=source_ids_for_scope(data.knowledge_scope))
     if data.knowledge_scope is KnowledgeScope.CENTRE_POLICY:
@@ -300,6 +350,7 @@ def _request(
     return RetrievalRequest(
         query=query,
         top_k=top_k,
+        return_candidate_pool=return_candidate_pool,
         filters=filters,
         mode=RetrievalMode.HYBRID,
         reranker=RerankerMode.NONE,
@@ -389,7 +440,25 @@ def _multi_query_fusion(
     matched_queries: Dict[str, List[str]] = {}
     for result in results:
         for rank, chunk in enumerate(result.chunks, start=1):
-            chunks.setdefault(chunk.chunk_id, chunk.model_copy(deep=True))
+            existing = chunks.get(chunk.chunk_id)
+            if existing is None:
+                chunks[chunk.chunk_id] = chunk.model_copy(deep=True)
+            else:
+                # A rewritten query can express the official terminology much
+                # better than the user's original wording. Preserve the best
+                # absolute retrieval evidence instead of whichever query happened
+                # to run first; the evidence gate consumes these values later.
+                if chunk.dense_distance is not None and (
+                    existing.dense_distance is None
+                    or chunk.dense_distance < existing.dense_distance
+                ):
+                    existing.dense_distance = chunk.dense_distance
+                    existing.distance = chunk.dense_distance
+                if chunk.bm25_score is not None and (
+                    existing.bm25_score is None
+                    or chunk.bm25_score > existing.bm25_score
+                ):
+                    existing.bm25_score = chunk.bm25_score
             scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (
                 1 / (MULTI_QUERY_RRF_K + rank)
             )
@@ -414,9 +483,8 @@ def _final_rerank(
     reranker: KnowledgeRerankerProtocol,
     query: str,
     candidates: List[RetrievedKnowledgeChunk],
-    top_k: int,
 ) -> List[RetrievedKnowledgeChunk]:
-    reranked = reranker.rerank(query, candidates)[:top_k]
+    reranked = reranker.rerank(query, candidates)
     for rank, chunk in enumerate(reranked, start=1):
         chunk.final_rank = rank
     return reranked
@@ -429,6 +497,8 @@ def _tool_result(
     chunks: List[RetrievedKnowledgeChunk],
     reranker: RerankerMode,
 ) -> ToolResult:
+    gate = assess_retrieved_evidence(chunks, reranker=reranker)
+    selected_chunks = gate.supported_chunks[: data.top_k]
     evidence = [
         KnowledgeEvidenceItem(
             evidence_id=f"E{index}",
@@ -442,7 +512,7 @@ def _tool_result(
             final_rank=chunk.final_rank or index,
             metadata=chunk.metadata,
         )
-        for index, chunk in enumerate(chunks, start=1)
+        for index, chunk in enumerate(selected_chunks, start=1)
     ]
     output = KnowledgeSearchOutput(
         query=data.query,
@@ -452,6 +522,10 @@ def _tool_result(
         evidence=evidence,
         mode=RetrievalMode.HYBRID,
         reranker=reranker,
+        answerability="answerable" if gate.answerable else "insufficient",
+        answerability_reason=gate.reason,
+        supported_evidence_ids=[item.evidence_id for item in evidence],
+        retrieved_count=len(chunks),
         returned_count=len(evidence),
     )
     return ToolResult.ok(
