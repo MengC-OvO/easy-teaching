@@ -1,4 +1,6 @@
 import inspect
+import base64
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -25,6 +27,7 @@ class QueryRecordsInput(BaseModel):
     date_to: Optional[datetime] = None
     status: Optional[Literal["draft", "final", "archived"]] = None
     limit: int = Field(default=20, ge=1, le=50)
+    cursor: Optional[str] = Field(default=None, max_length=1024)
 
     @model_validator(mode="after")
     def validate_dates(self) -> "QueryRecordsInput":
@@ -37,6 +40,9 @@ class QueryRecordsOutput(BaseModel):
     records: List[Dict[str, Any]] = Field(default_factory=list)
     returned_count: int = Field(ge=0)
     search_text: Optional[str] = None
+    is_partial: bool = False
+    has_more: Optional[bool] = None
+    next_cursor: Optional[str] = None
 
 
 class SaveObservationInput(BaseModel):
@@ -137,14 +143,27 @@ def build_query_records_tool(store: Any) -> ToolDefinition:
         result = store.query_records(
             teacher_id=context.teacher_id,
             class_id=context.class_id,
-            **data.model_dump(),
+            **data.model_dump(exclude={"limit", "cursor"}),
+            limit=data.limit + 1,
+            **({"cursor": data.cursor} if data.cursor else {}),
         )
         if inspect.isawaitable(result):
             result = await result
+        has_more = len(result) > data.limit
+        records = result[:data.limit]
+        cursor = None
+        if has_more and records:
+            last = records[-1]
+            kind = "observation" if "observation_id" in last else "educational_record"
+            cursor = base64.urlsafe_b64encode(json.dumps([last["created_at"], kind,
+                last.get("observation_id") or last["record_id"]]).encode()).decode()
         output = QueryRecordsOutput(
-            records=result,
-            returned_count=len(result),
+            records=records,
+            returned_count=len(records),
             search_text=data.search_text,
+            is_partial=bool(data.cursor) or has_more,
+            has_more=has_more,
+            next_cursor=cursor,
         )
         return ToolResult.ok(data=output.model_dump(mode="json"), risk_level=RiskLevel.L0_READ_ONLY)
 

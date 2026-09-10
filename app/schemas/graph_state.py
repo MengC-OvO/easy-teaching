@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from typing_extensions import Annotated
 
 from pydantic import BaseModel, Field, model_validator
+from app.schemas.observation_updates import merge_observation_updates
 
 
 class Intent(str, Enum):
@@ -173,6 +174,8 @@ class GraphState(BaseModel):
     # Opaque gateway handle only; plaintext mappings never enter checkpoints.
     privacy_mapping_id: Optional[str] = None
     context: ThreadContext = Field(default_factory=ThreadContext)
+    # Server-owned catalogue only. Full artifact text remains in the database.
+    workspace: Dict[str, Any] = Field(default_factory=dict)
     intent: Intent = Intent.UNKNOWN
     needs_clarification: bool = False
     clarification_question: Optional[str] = None
@@ -187,10 +190,11 @@ class GraphState(BaseModel):
     decision: Optional["MainDecision"] = None
     execution_route: Optional[str] = None
     validation_feedback: Optional["CapabilityObservation"] = None
-    observations: Dict[str, "CapabilityObservation"] = Field(default_factory=dict)
-    pending_observations: Annotated[
-        List["CapabilityObservation"], operator.add
-    ] = Field(default_factory=list)
+    observations: Annotated[Dict[str, "CapabilityObservation"], merge_observation_updates] = Field(default_factory=dict)
+    observation_state_version: int = 2
+    processed_observation_keys: List[str] = Field(default_factory=list)
+    # Read-only legacy channels: drained on recovery; new executions never append.
+    pending_observations: List["CapabilityObservation"] = Field(default_factory=list)
     merged_observation_count: int = Field(default=0, ge=0)
     react_step: int = Field(default=0, ge=0)
     tool_call_count: int = Field(default=0, ge=0)
@@ -201,6 +205,7 @@ class GraphState(BaseModel):
     # Deprecated checkpoint compatibility only. Runtime draft identity comes from
     # the full loaded_draft_references mapping derived from read observations.
     selected_draft_request_id: Optional[str] = None
+    checked_final_candidate: Optional["MainDecision"] = None
     available_tool_names: List[str] = Field(default_factory=list)
     run_trace_start: int = Field(default=0, ge=0)
     run_citation_start: int = Field(default=0, ge=0)

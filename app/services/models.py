@@ -292,12 +292,26 @@ class ConversationTaskOutboxRecord(Base):
         DateTime, nullable=False, default=datetime.utcnow, index=True
     )
     lease_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    lease_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     celery_task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class ToolResultSnapshot(Base):
+    __tablename__ = "tool_result_snapshots"
+    body_ref: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    teacher_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    class_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    result_key: Mapped[str] = mapped_column(String, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    body: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class ObservationChildRecord(Base):

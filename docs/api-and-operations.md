@@ -102,6 +102,12 @@ curl -X POST \
 
 Approval cannot replace the frozen arguments. External sending is not exposed.
 
+In Celery mode, approval now returns HTTP 202 with `status=running`: consent and
+the approved-action Outbox task commit together, and the Worker executes the
+frozen action later. Read the durable draft result to distinguish acceptance
+from completion. Interrupted external effects remain outcome-unknown rather than
+being replayed automatically.
+
 ## Uploaded documents and voice notes
 
 The web composer accepts PDF, DOCX, TXT, Markdown, CSV and common audio formats.

@@ -1,9 +1,11 @@
 """Retrieve request-scoped draft snapshots produced by EasyTeaching runs."""
 
 from typing import Optional, Union
+import asyncio
+import json
 
-from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.dependencies import get_runtime
 from app.api.auth import CurrentUser, get_current_user, require_session_owner
@@ -103,4 +105,38 @@ async def get_draft(
         draft=result["draft"],
         approval=result["approval"],
         citations=result["citations"],
+    )
+
+
+async def _draft_frames(payload: dict, request: Request, offset: int = 0):
+    # Delivery streaming of the authorized, persisted and restored final text.
+    content = payload["draft"]["content"]
+    metadata = {**payload, "draft": {**payload["draft"], "content": ""}}
+    yield "event: answer_start\ndata: " + json.dumps(metadata, ensure_ascii=False) + "\n\n"
+    for start in range(min(offset, len(content)), len(content), 24):
+        if await request.is_disconnected():
+            return
+        end = min(start + 24, len(content))
+        data = json.dumps({"text": content[start:end], "offset": end}, ensure_ascii=False)
+        yield f"id: {end}\nevent: answer_delta\ndata: {data}\n\n"
+        await asyncio.sleep(0.02)
+    yield 'event: answer_done\ndata: {}\n\n'
+
+
+@router.get("/{session_id}/drafts/{request_id}/stream", response_model=None)
+async def stream_draft(
+    session_id: str, request_id: str, request: Request,
+    offset: int = Query(default=0, ge=0),
+    current_user: Optional[CurrentUser] = Depends(get_current_user),
+):
+    payload = await get_draft(session_id, request_id, request, current_user)
+    if isinstance(payload, JSONResponse):
+        return payload
+    last_id = request.headers.get("Last-Event-ID", "")
+    if last_id.isdigit():
+        offset = max(offset, int(last_id))
+    return StreamingResponse(
+        _draft_frames(payload.model_dump(mode="json"), request, offset),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"},
     )

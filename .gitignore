@@ -7,6 +7,8 @@ __pycache__/
 .DS_Store
 .pytest_cache/
 .test-tmp/
+/tmp/
+/private-backups/
 .test-cache/
 .pytest_tmp*/
 .pytest_*/

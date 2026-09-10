@@ -1,7 +1,8 @@
 """Bounded model-facing views of canonical capability observations.
 
-The graph keeps complete observations for citations, approvals, debugging, and
-checkpoint recovery.  Only the copy inserted into a model prompt is compacted.
+Small originals remain inline; large originals live in scoped snapshots. New
+state already contains bounded views. Legacy checkpoint values are compacted
+only in the prompt copy and explicitly marked partial.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from app.schemas import CapabilityObservation
 _MAX_GENERIC_STRING_CHARS = 600
 _MAX_EVIDENCE_CONTENT_CHARS = 900
 _MAX_LIST_ITEMS = 5
-_DETAILED_HISTORY_ITEMS = 4
 _MAX_DRAFT_ARTIFACT_CHARS = 20_000
 
 
@@ -24,7 +24,6 @@ def build_model_observation_view(
     """Return a small, evidence-safe view without mutating canonical state."""
 
     items = list(observations.items())
-    detailed_keys = {key for key, _ in items[-_DETAILED_HISTORY_ITEMS:]}
     view: Dict[str, Dict[str, Any]] = {}
     for key, observation in items:
         base: Dict[str, Any] = {
@@ -35,13 +34,18 @@ def build_model_observation_view(
         }
         if observation.error:
             base["error"] = _compact_generic(observation.error)
-        if key in detailed_keys or observation.capability_name == "retrieve_knowledge":
-            base["data"] = _compact_capability_data(
+        if observation.summary:
+            base["summary"] = observation.summary
+        if observation.body_ref:
+            base.update(body_ref=observation.body_ref, content_hash=observation.content_hash,
+                        original_size=observation.original_size, view_kind=observation.view_kind)
+        base["data"] = observation.data if observation.call_id else _compact_capability_data(
                 observation.capability_name,
                 observation.data,
             )
-        else:
-            base["summary"] = _historical_summary(observation)
+        base["is_partial"] = observation.is_partial or base["data"] != observation.data
+        if base["is_partial"] and not observation.body_ref:
+            base["note"] = "Prompt view is partial. Use the original source tool for more; no snapshot reference is available."
         view[key] = base
     return view
 
@@ -105,7 +109,7 @@ def _compact_capability_data(name: str, data: Mapping[str, Any]) -> Dict[str, An
             ),
             "content_fingerprint": data.get("content_fingerprint"),
         }
-    if name == "drive_operation":
+    if name == "drive_operation" or name.startswith("drive__"):
         tools = data.get("tools")
         return {
             "action": data.get("action"),

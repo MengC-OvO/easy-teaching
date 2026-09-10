@@ -2,6 +2,32 @@
 
 Scripts are local entry points, not production API modules.
 
+## VS Code local launcher (Windows)
+
+From the repository root in a PowerShell terminal:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+The launcher uses the existing `.venv` and `.env`, starts Docker PostgreSQL/Redis,
+applies Alembic migrations, and leaves the privacy gateway disabled by default.
+Pass `-WithSafetyGateway` explicitly to enable and start the gateway.
+It runs the API in the foreground at `http://127.0.0.1:8000`; wait for
+`Application startup complete` before opening the page. Use `-Port 8001` for a
+different API port. Ctrl+C stops the API and the gateway started by this launcher;
+Docker database services stay running. An occupied API port reports an error;
+the launcher never silently reuses a server and exits. Run
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\stop.ps1` to stop local
+project Python servers, or add `-All` to also stop project Docker containers
+without deleting database volumes. Start again to own the server in your terminal.
+
+This is local experience mode: `TASK_EXECUTION_MODE=inline` and `APP_ENV=local`
+apply only to the launcher process. It does not start Celery or change the saved
+execution mode. Local indexes, model assets and Drive configuration remain in use.
+Privacy-model load logs are under `data/local/launcher/`. Full Docker deployment
+continues to use `docker compose up --build -d`.
+
 | Group | Scripts |
 | --- | --- |
 | Knowledge maintenance | `ingest_knowledge.py`, `build_lexical_index.py`, `build_vector_index.py`, `query_vector_index.py`, `test_rag_retrieval.py` |

@@ -5,6 +5,10 @@
 __pycache__
 *.pyc
 .env
+.safety-gateway.env
+tmp/
+.agents/
+.codex/
 reports
 local_models
 data/chroma

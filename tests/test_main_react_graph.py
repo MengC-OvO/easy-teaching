@@ -1617,7 +1617,8 @@ def test_two_workers_fan_out_and_merge_once() -> None:
 
     assert set(state.observations) == {name.value for name in WorkerName}
     assert state.react_step == 1
-    assert state.merged_observation_count == 2
+    assert len(state.processed_observation_keys) == 2
+    assert not state.pending_observations
 
 
 def test_main_react_graph_checkpoints_new_state() -> None:

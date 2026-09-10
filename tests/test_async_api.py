@@ -285,8 +285,16 @@ def gateway_result(*, action="allow"):
     )
 
 
-def test_async_message_lifecycle_idempotency_draft_and_events():
+def test_async_message_lifecycle_idempotency_draft_and_events(monkeypatch):
     runtime = FakeRuntime()
+    synced = []
+
+    async def sync_after_commit(runtime, *, session_id, request_id):
+        assert request_id in runtime.store.results
+        assert runtime.store.runs[request_id]["status"] != RunStatus.COMPLETED.value
+        synced.append(request_id)
+
+    monkeypatch.setattr("app.api.execution.sync_workspace_checkpoint", sync_after_commit)
     app = create_app(runtime_factory=lambda: runtime)
 
     with TestClient(app) as client:
@@ -315,6 +323,7 @@ def test_async_message_lifecycle_idempotency_draft_and_events():
     assert events.status_code == 200
     assert "event: completed" in events.text
     assert runtime.is_closed is True
+    assert synced == ["request-1"]
 
 
 def test_same_session_busy_error_rejects_a_second_active_run():
@@ -480,8 +489,21 @@ def test_enforce_restore_failure_marks_run_failed_and_publishes_no_draft():
     assert gateway.discarded_mapping_ids == ["opaque-mapping-id-123456789"]
 
 
-def test_approval_executes_only_the_frozen_action_and_completes_run() -> None:
+def test_approval_executes_only_the_frozen_action_and_completes_run(monkeypatch) -> None:
+    # This adapter intentionally exercises the explicit inline compatibility path.
+    monkeypatch.setattr("app.api.routes.approvals.settings.task_execution_mode", "inline")
     runtime = FakeRuntime()
+    synced = []
+
+    async def sync_after_commit(runtime, *, session_id, request_id):
+        assert runtime.store.actions["action-1"]["status"] == "executed"
+        assert runtime.store.results[request_id]["approval"]["result"] == {
+            "saved": "teacher-reviewed value"
+        }
+        assert runtime.store.runs[request_id]["status"] == RunStatus.WAITING_FOR_APPROVAL.value
+        synced.append(request_id)
+
+    monkeypatch.setattr("app.api.routes.approvals.sync_workspace_checkpoint", sync_after_commit)
     register_approved_write(runtime)
     app = create_app(runtime_factory=lambda: runtime)
 
@@ -534,3 +556,4 @@ def test_approval_executes_only_the_frozen_action_and_completes_run() -> None:
     }
     assert runtime.store.runs["approval-request"]["status"] == RunStatus.COMPLETED.value
     assert runtime.store.events["approval-request"][-1]["event"] == "completed"
+    assert synced == ["approval-request"]

@@ -1,4 +1,8 @@
-from datetime import date
+from datetime import date, datetime, timezone
+import asyncio
+import time
+import copy
+from zoneinfo import ZoneInfo
 import inspect
 import json
 from pathlib import Path
@@ -24,7 +28,7 @@ class HttpClientProtocol(Protocol):
 
 
 class DailyContextInput(BaseModel):
-    target_date: date
+    target_date: Optional[date] = None
 
 
 class DailyContextOutput(BaseModel):
@@ -40,6 +44,8 @@ class DailyContextOutput(BaseModel):
     uv_index_max: Optional[float] = None
     alerts: list[str]
     source_urls: list[str]
+    cache_hit: bool = False
+    fetched_at: Optional[str] = None
 
 
 def build_get_daily_context_tool(
@@ -47,8 +53,12 @@ def build_get_daily_context_tool(
     *,
     client: Optional[HttpClientProtocol] = None,
     calendar_path: Path | None = None,
+    cache_ttl_seconds: float = 600,
+    clock=time.monotonic,
 ) -> ToolDefinition:
     holiday_path = calendar_path or Path("data/calendar/au_public_holidays_2026.json")
+    cache = {}
+    cache_lock = asyncio.Lock()
 
     async def async_runtime_handler(input_data: BaseModel, context: ToolExecutionContext) -> ToolResult:
         if not context.teacher_id or not context.class_id:
@@ -65,19 +75,38 @@ def build_get_daily_context_tool(
         )
         if inspect.isawaitable(location):
             location = await location
+        target_date = data.target_date or datetime.now(
+            ZoneInfo(location.get("timezone") or "Australia/Sydney")
+        ).date()
         holiday_data = json.loads(holiday_path.read_text(encoding="utf-8"))
         public_holiday = (
-            holiday_data.get("holidays", {}).get(data.target_date.isoformat())
+            holiday_data.get("holidays", {}).get(target_date.isoformat())
             if holiday_data.get("state") == location["state"]
             else None
         )
-        weather = await _weather(client, location, data.target_date)
+        key = tuple(str(location.get(field, "")) for field in
+                    ("centre_id", "suburb", "state", "latitude", "longitude", "timezone")) + (target_date.isoformat(),)
+        # Runtime-local cache. Resolve authorization/location before consulting it.
+        async with cache_lock:
+            cached = cache.get(key)
+            cache_hit = cached is not None and clock() < cached[0]
+            if cache_hit:
+                weather, fetched_at = copy.deepcopy(cached[1]), cached[2]
+            else:
+                weather = await _weather(client, location, target_date)
+                fetched_at = datetime.now(timezone.utc).isoformat()
+                if weather.get("weather_available"):
+                    if len(cache) >= 128:
+                        cache.pop(next(iter(cache)))
+                    cache[key] = (clock() + cache_ttl_seconds, copy.deepcopy(weather), fetched_at)
         alerts = _alerts(weather, public_holiday)
         output = DailyContextOutput(
-            target_date=data.target_date.isoformat(),
+            target_date=target_date.isoformat(),
             suburb=location["suburb"],
             state=location["state"],
             public_holiday=public_holiday,
+            cache_hit=cache_hit,
+            fetched_at=fetched_at,
             alerts=alerts,
             source_urls=[
                 "https://open-meteo.com/",
@@ -91,6 +120,8 @@ def build_get_daily_context_tool(
         name="get_daily_context",
         description=(
             "Get weather and the locally maintained public-holiday context for the "
+            "current centre. Omit target_date for today: the backend resolves the "
+            "current date in the centre timezone. Supply a date only for an explicit other day. "
             "current centre. Call it only for a date-sensitive activity, especially "
             "outdoor planning; it sends only the centre suburb to Open-Meteo."
         ),

@@ -166,7 +166,6 @@ modes are documented in [Agent evaluation](docs/agent-evaluation.md),
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
 - [Tool and Worker architecture](docs/tool-architecture.md)
 - [RAG system](docs/rag-system.md)
 - [API and operations](docs/api-and-operations.md)

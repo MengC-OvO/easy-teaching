@@ -2,6 +2,7 @@
 
 import inspect
 import json
+from app.services.observation_results import bounded_preview
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Type
 
@@ -222,7 +223,11 @@ class BoundedWorkerRunner:
                 }
                 for tool in available_tools
             ],
-            "own_tool_observations": observations,
+            "own_tool_observations": [
+                {**item, "data": bounded_preview(item.get("data", {})),
+                 "is_partial": bounded_preview(item.get("data", {})) != item.get("data", {})}
+                for item in observations
+            ],
         }
         safe_prompt, removed_instructions = sanitize_untrusted_prompt_value(prompt)
         safe_prompt["removed_instruction_count"] = removed_instructions

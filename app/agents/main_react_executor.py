@@ -130,7 +130,7 @@ class MainDecisionValidator:
                 return self._feedback("受控写操作必须单独请求并逐个确认。")
             tool = self.registry.get(controlled_writes[0].name)
             try:
-                tool.input_model.model_validate(controlled_writes[0].arguments)
+                tool.validate_arguments(controlled_writes[0].arguments)
             except Exception:
                 return self._feedback("受控写操作参数不完整，请先整理或询问教师。")
             return DecisionValidation(ExecutionRoute.APPROVAL)
@@ -199,11 +199,14 @@ class MainToolExecutor:
         class_id: Optional[str],
         session_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        allowed_tool_names: Optional[Iterable[str]] = None,
     ) -> CapabilityObservation:
         result = await self.registry.execute_async(
             call.name,
             call.arguments,
-            allowed_tool_names=self.allowed_tool_names,
+            allowed_tool_names=(self.allowed_tool_names if allowed_tool_names is None
+                                else set(allowed_tool_names) if self.allowed_tool_names is None
+                                else set(allowed_tool_names) & self.allowed_tool_names),
             execution_context=ToolExecutionContext(
                 teacher_id=teacher_id,
                 class_id=class_id,
@@ -221,6 +224,7 @@ class MainToolExecutor:
         class_id: Optional[str],
         session_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        allowed_tool_names: Optional[Iterable[str]] = None,
     ) -> List[CapabilityObservation]:
         return list(
             await asyncio.gather(
@@ -231,6 +235,7 @@ class MainToolExecutor:
                         class_id=class_id,
                         session_id=session_id,
                         request_id=request_id,
+                        allowed_tool_names=allowed_tool_names,
                     )
                     for call in calls
                 ]

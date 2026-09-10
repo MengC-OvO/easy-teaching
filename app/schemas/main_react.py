@@ -4,7 +4,7 @@ import json
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 
 class CapabilitySource(str, Enum):
@@ -55,6 +55,13 @@ class CapabilityCall(BaseModel):
     arguments: Dict[str, Any] = Field(default_factory=dict)
     result_key: str = Field(min_length=1)
 
+    @field_validator("result_key")
+    @classmethod
+    def reject_reserved_key(cls, value):
+        if value == "__replace_observations__":
+            raise ValueError("Reserved observation key")
+        return value
+
     def signature(self) -> str:
         """用于检测忽略大小写和多余空白后的重复调用。"""
 
@@ -78,6 +85,11 @@ class WorkerCall(BaseModel):
     name: WorkerName
     arguments: Dict[str, Any] = Field(default_factory=dict)
     result_key: str = Field(min_length=1)
+
+    @field_validator("result_key")
+    @classmethod
+    def reject_reserved_key(cls, value):
+        return CapabilityCall.reject_reserved_key(value)
 
     def signature(self) -> str:
         return json.dumps(
@@ -153,6 +165,15 @@ class CapabilityObservation(BaseModel):
     status: ObservationStatus
     data: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[Dict[str, Any]] = None
+    call_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    call_index: int = 0
+    summary: Optional[str] = None
+    body_ref: Optional[str] = None
+    content_hash: Optional[str] = None
+    original_size: int = 0
+    is_partial: bool = False
+    view_kind: str = "inline"
 
     @property
     def is_available(self) -> bool:

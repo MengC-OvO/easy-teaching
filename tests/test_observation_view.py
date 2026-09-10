@@ -62,8 +62,8 @@ def test_old_observations_become_summaries_while_recent_results_stay_detailed() 
 
     view = build_model_observation_view(observations)
 
-    assert "summary" in view["item-0"]
-    assert "data" not in view["item-0"]
+    assert "data" in view["item-0"]
+    assert "is_partial" in view["item-0"]
     assert view["item-5"]["data"]["records"][0]["title"] == "Record 5"
 
 

@@ -162,22 +162,6 @@ class ContextManager:
                     for item in profile_memories
                 )
             )
-        workspace_reader = getattr(
-            self.long_term_memory_reader,
-            "get_conversation_workspace",
-            None,
-        )
-        if workspace_reader is not None and session_id:
-            workspace = workspace_reader(
-                session_id=session_id,
-                teacher_id=teacher_id,
-                class_id=class_id,
-            )
-            if inspect.isawaitable(workspace):
-                workspace = await workspace
-            workspace_block = self._workspace_block(workspace)
-            if workspace_block:
-                blocks.append(workspace_block)
         return "\n\n".join(blocks)
 
     async def update_after_run_async(self, state: GraphState) -> ThreadContext:
@@ -334,7 +318,8 @@ class ContextManager:
     def _list_block(self, label: str, values: List[str]) -> str:
         return label + ":\n" + "\n".join(f"- {value}" for value in values)
 
-    def _workspace_block(self, workspace: Dict[str, object]) -> str:
+    @staticmethod
+    def _workspace_block(workspace: Dict[str, object]) -> str:
         lines = []
         artifacts = workspace.get("recent_artifacts")
         if isinstance(artifacts, list):

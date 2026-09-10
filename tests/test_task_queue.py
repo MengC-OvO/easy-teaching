@@ -50,10 +50,10 @@ class FakeOutboxStore:
             return None
         self.status = "publishing"
         self.publish_attempts += 1
-        return {"request_id": request_id, "publish_attempts": self.publish_attempts}
+        return {"request_id": request_id, "publish_attempts": self.publish_attempts, "lease_token": "publish-token"}
 
     async def finish_conversation_task_publish(
-        self, request_id, *, celery_task_id=None, error=None, retry_delay_seconds=0
+        self, request_id, *, lease_token, celery_task_id=None, error=None, retry_delay_seconds=0
     ):
         self.status = "published" if error is None else "pending"
         self.celery_task_id = celery_task_id
@@ -133,6 +133,7 @@ class FakeWorkerStore:
         return {
             "request_id": request_id,
             "execution_attempts": 1,
+            "lease_token": "execution-token",
             "payload": {
                 "request_id": request_id,
                 "session_id": "session-1",
@@ -147,8 +148,9 @@ class FakeWorkerStore:
     async def get_conversation_run(self, request_id):
         return {"request_id": request_id, "session_id": "session-1", "status": "accepted"}
 
-    async def finish_conversation_task_execution(self, request_id, *, status, error=None):
+    async def finish_conversation_task_execution(self, request_id, *, lease_token, status, error=None):
         self.finished.append((request_id, status, error))
+        return True
 
 
 class EmptyCheckpointGraph:
@@ -191,6 +193,7 @@ def test_recoverable_worker_error_releases_execution_lease_for_retry() -> None:
             "request-1",
             TimeoutError("synthetic provider timeout"),
             exhausted=False,
+            lease_token="execution-token",
         )
     )
 

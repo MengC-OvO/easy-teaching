@@ -2,6 +2,8 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Optional, Type
 
 from pydantic import BaseModel, Field, model_validator
+from jsonschema.validators import validator_for
+import copy
 
 from app.schemas import RiskLevel
 
@@ -142,6 +144,8 @@ class ToolDefinition(BaseModel):
     description: str = Field(min_length=1)
     category: ToolCategory
     input_model: Type[BaseModel]
+    remote_input_schema: Optional[Dict[str, Any]] = None
+    model_visible: bool = True
     output_model: Type[BaseModel]
     risk_level: RiskLevel
     permission: ToolPermission
@@ -195,12 +199,21 @@ class ToolDefinition(BaseModel):
         return self.risk_level
 
     def input_schema(self) -> Dict[str, Any]:
-        return self.input_model.model_json_schema()
+        return copy.deepcopy(self.remote_input_schema) if self.remote_input_schema is not None else self.input_model.model_json_schema()
+
+    def validate_arguments(self, arguments: Dict[str, Any]) -> BaseModel:
+        if self.remote_input_schema is not None:
+            validator = validator_for(self.remote_input_schema)
+            validator.check_schema(self.remote_input_schema)
+            validator(self.remote_input_schema).validate(arguments)
+        return self.input_model.model_validate(arguments)
 
     def model_input_schema(self) -> Dict[str, Any]:
         """Compact schema for model selection; runtime validation keeps full Pydantic."""
 
         schema = self.input_schema()
+        if self.remote_input_schema is not None:
+            return schema
         return _compact_model_schema(schema, schema.get("$defs", {}))
 
     def model_spec(self) -> Dict[str, Any]:

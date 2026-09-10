@@ -6,6 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    observation_inline_chars: int = Field(default=24000, ge=2000)
+    tool_schema_max_chars: int = Field(default=60000, ge=10000)
+    observation_high_chars: int = Field(default=120000, ge=24000)
+    observation_low_chars: int = Field(default=80000, ge=12000)
+    observation_snapshot_chars: int = Field(default=1000000, ge=24000)
+    observation_summary_enabled: bool = False
+    main_prompt_max_chars: int = Field(default=240000, ge=24000)
+    main_prompt_output_reserve_chars: int = Field(default=16000, ge=1000)
     app_name: str = Field(default="easy-teaching", validation_alias="APP_NAME")
     app_env: str = Field(default="local", validation_alias="APP_ENV")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
@@ -47,6 +55,9 @@ class Settings(BaseSettings):
     )
     outbox_poll_interval_seconds: float = Field(
         default=2.0, ge=0.1, validation_alias="OUTBOX_POLL_INTERVAL_SECONDS"
+    )
+    outbox_stale_published_seconds: int = Field(
+        default=1200, ge=60, validation_alias="OUTBOX_STALE_PUBLISHED_SECONDS"
     )
     api_rate_limit_enabled: bool = Field(
         default=True, validation_alias="API_RATE_LIMIT_ENABLED"

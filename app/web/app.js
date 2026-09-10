@@ -50,11 +50,15 @@ function escapeHtml(value = "") {
 }
 
 function paragraphs(value = "") {
-  return value
-    .split(/\n{2,}/)
-    .filter(Boolean)
-    .map((part) => `<p>${escapeHtml(part).replaceAll("\n", "<br>")}</p>`)
-    .join("");
+  // Escape first: model text cannot inject HTML. Render a small Markdown subset.
+  const inline = (text) => escapeHtml(text).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  return value.split(/\n{2,}/).filter(Boolean).map((block) => {
+    const lines = block.split("\n");
+    if (lines.every((line) => /^\s*[-*]\s+/.test(line))) return `<ul>${lines.map((line) => `<li>${inline(line.replace(/^\s*[-*]\s+/, ""))}</li>`).join("")}</ul>`;
+    if (lines.every((line) => /^\s*\d+[.)]\s+/.test(line))) return `<ol>${lines.map((line) => `<li>${inline(line.replace(/^\s*\d+[.)]\s+/, ""))}</li>`).join("")}</ol>`;
+    if (lines.length === 1 && /^#{1,6}\s+/.test(block)) return `<h3>${inline(block.replace(/^#{1,6}\s+/, ""))}</h3>`;
+    return `<p>${lines.map(inline).join("<br>")}</p>`;
+  }).join("");
 }
 
 function setStatus(label, kind = "ready") {
@@ -122,9 +126,9 @@ function addAssistantShell() {
   article.innerHTML = `
     <div class="avatar">E</div>
     <div class="bubble">
-      <div class="thinking"><span class="thinking-dots"><i></i><i></i><i></i></span><span>Understanding your request…</span></div>
+      <div class="thinking"><span class="thinking-dots"><i></i><i></i><i></i></span><span>正在理解你的请求…</span></div>
       <details class="trace-panel">
-        <summary>View agent activity</summary>
+        <summary>查看执行过程</summary>
         <ol class="trace-list"></ol>
       </details>
       <div class="assistant-result"></div>
@@ -135,14 +139,22 @@ function addAssistantShell() {
 }
 
 function addTrace(shell, event) {
+  const messages = {
+    initialize: "正在准备上下文…", main_react: "正在分析下一步…",
+    merge_observations: "正在整理查询结果…", context_update: "正在更新对话上下文…",
+    long_memory_update: "正在完成收尾…", finalize_draft: "正在准备回答…",
+    run_started: "请求已接收…", completed: "处理完成", draft_ready: "正在输出回答…",
+    prepare_approval: "正在准备审批预览…", decision_feedback: "正在调整执行方式…",
+  };
   const list = shell.querySelector(".trace-list");
   const item = document.createElement("li");
   const data = event.data || {};
-  item.textContent = data.message || data.step || data.phase || event.event.replaceAll("_", " ");
+  const message = messages[data.step] || messages[event.event] || data.message || data.step || "正在处理…";
+  item.textContent = message;
   list.appendChild(item);
   const thinking = shell.querySelector(".thinking span:last-child");
   if (thinking) {
-    thinking.textContent = data.message || "EasyTeaching is working…";
+    thinking.textContent = message;
   }
 }
 
@@ -207,6 +219,12 @@ function approvalHtml(approval = {}) {
     rejected: "Rejected — nothing was saved",
     failed: "The approved action could not be completed",
   };
+  if (approval.result?.execution_status === "queued") {
+    return '<div class="approval-outcome">Approved — waiting for background execution.</div>';
+  }
+  if (approval.result?.error?.code === "action_outcome_unknown") {
+    return '<div class="approval-outcome failed">Execution result needs verification. Do not repeat the action until its previous result has been checked.</div>';
+  }
   return `<div class="approval-outcome ${escapeHtml(status)}">${escapeHtml(labels[status] || fieldLabel(status))}</div>`;
 }
 
@@ -357,34 +375,130 @@ async function getDraft(shell, sessionId = state.sessionId, requestId = state.re
   }
 }
 
+function streamAnswer(shell, sessionId, requestId) {
+  if (shell._answerPromise) return shell._answerPromise;
+  shell._answerPromise = new Promise((resolve) => {
+    const source = new EventSource(`/sessions/${sessionId}/drafts/${requestId}/stream`);
+    shell._answerSource = source;
+    let text = "", offset = 0, metadata = null, failures = 0;
+    let displayed = 0, finished = false, frame = null, previousTime = null, credit = 0;
+    const characters = [];
+    // Network chunks may arrive together. Keep a visible render queue and never
+    // replace it with the full answer merely because answer_done arrived.
+    const paint = (now) => {
+      frame = null;
+      if (!shell.isConnected) { close(); resolve(); return; }
+      const elapsed = previousTime === null ? 16 : Math.min(now - previousTime, 80);
+      previousTime = now;
+      credit += elapsed * 0.05; // 50 Unicode code points per second.
+      const count = Math.floor(credit);
+      const end = Math.min(displayed + count, characters.length);
+      credit = end === characters.length ? 0 : credit - count;
+      if (end > displayed) {
+        displayed = end;
+        const copy = shell.querySelector(".assistant-copy");
+        if (copy) copy.textContent = characters.slice(0, displayed).join("");
+        scrollToBottom();
+      }
+      if (finished && displayed === characters.length) {
+        if (metadata) renderDraft(shell, {...metadata, draft: {...metadata.draft, content: text}});
+        resolve(metadata);
+        return;
+      }
+      if (displayed < characters.length) frame = requestAnimationFrame(paint);
+      else previousTime = null;
+    };
+    const schedulePaint = () => { if (frame === null) frame = requestAnimationFrame(paint); };
+    const close = () => { source.close(); shell._answerSource = null; };
+    source.addEventListener("answer_start", (event) => {
+      metadata = JSON.parse(event.data);
+      if (!shell.isConnected) { close(); resolve(); return; }
+      if (!offset) renderDraft(shell, metadata);
+      shell.querySelector(".assistant-copy")?.classList.add("streaming-answer");
+      setStatus("正在输出", "busy");
+    });
+    source.addEventListener("answer_delta", (event) => {
+      if (!shell.isConnected) { close(); resolve(); return; }
+      const data = JSON.parse(event.data);
+      if (data.offset <= offset) return;
+      text += data.text;
+      characters.push(...Array.from(data.text));
+      offset = data.offset;
+      failures = 0;
+      schedulePaint();
+    });
+    source.addEventListener("answer_done", () => {
+      close();
+      finished = true;
+      schedulePaint();
+    });
+    source.onerror = async () => {
+      if (!shell.isConnected) { close(); resolve(); return; }
+      if (++failures < 3) return;
+      close();
+      try {
+        const payload = await api(`/sessions/${sessionId}/drafts/${requestId}`);
+        if (!shell.isConnected) { resolve(); return; }
+        const fullText = payload.draft.content;
+        const visibleText = characters.slice(0, displayed).join("");
+        if (!metadata || !fullText.startsWith(visibleText)) {
+          displayed = 0;
+          renderDraft(shell, {...payload, draft: {...payload.draft, content: ""}});
+        }
+        metadata = payload;
+        text = fullText;
+        characters.length = 0;
+        for (const character of fullText) characters.push(character);
+        shell.querySelector(".assistant-copy")?.classList.add("streaming-answer");
+        finished = true;
+        schedulePaint();
+      } catch (error) {
+        if (frame !== null) cancelAnimationFrame(frame);
+        if (shell.isConnected) showRunError(shell, error.message);
+        resolve();
+      }
+    };
+  });
+  return shell._answerPromise;
+}
+
 function connectEvents(shell, afterEventId = state.lastEventId) {
   state.source?.close();
+  if (!shell.isConnected) return;
   const cursor = afterEventId ? `&after_event_id=${encodeURIComponent(afterEventId)}` : "";
-  const url = `/sessions/${state.sessionId}/events?request_id=${encodeURIComponent(state.requestId)}${cursor}`;
+  const url = `/sessions/${shell.dataset.sessionId || state.sessionId}/events?request_id=${encodeURIComponent(shell.dataset.requestId || state.requestId)}${cursor}&after_sequence=${state.lastSequence ?? -1}`;
   const source = new EventSource(url);
-  shell.dataset.sessionId = state.sessionId;
-  shell.dataset.requestId = state.requestId;
+  shell.dataset.sessionId = shell.dataset.sessionId || state.sessionId;
+  shell.dataset.requestId = shell.dataset.requestId || state.requestId;
   state.source = source;
-  let lastEventId = afterEventId;
+  let lastEventId = afterEventId, ended = false;
 
-  const handle = (event) => {
+  const handle = async (event) => {
+    if (!shell.isConnected) { source.close(); return; }
     const payload = JSON.parse(event.data);
     lastEventId = event.lastEventId || payload.event_id || lastEventId;
     state.lastEventId = lastEventId;
     state.lastSequence = payload.sequence;
     addTrace(shell, payload);
-    if (payload.event === "draft_ready") getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
+    if (payload.event === "draft_ready") streamAnswer(shell, shell.dataset.sessionId, shell.dataset.requestId);
     if (payload.event === "approval_required") {
+      ended = true;
       source.close();
-      getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
+      await shell._answerPromise;
+      if (!shell.isConnected) return;
+      await getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
       setBusy(false);
       setStatus("Review required", "review");
     }
     if (["completed", "failed", "cancelled"].includes(payload.event)) {
+      ended = true;
       source.close();
-      if (payload.event === "completed") getDraft(shell, shell.dataset.sessionId, shell.dataset.requestId);
+      if (payload.event === "completed") {
+        await streamAnswer(shell, shell.dataset.sessionId, shell.dataset.requestId);
+        if (shell.isConnected) setStatus("Ready", "ready");
+      }
       if (payload.event === "failed") showRunError(shell, "EasyTeaching could not complete this draft. Please try again.");
-      setBusy(false);
+      if (shell.isConnected) setBusy(false);
     }
   };
 
@@ -393,7 +507,7 @@ function connectEvents(shell, afterEventId = state.lastEventId) {
 
   source.onerror = () => {
     source.close();
-    if (state.busy) {
+    if (!ended && state.busy && shell.isConnected) {
       window.setTimeout(() => connectEvents(shell, lastEventId), 700);
     }
   };
@@ -411,14 +525,38 @@ async function submitApproval(shell, decision) {
   if (progress) progress.textContent = decision === "approve" ? "Saving approved fields…" : "Rejecting this action…";
   setStatus(decision === "approve" ? "Saving" : "Rejecting", "busy");
   try {
-    await api(`/sessions/${sessionId}/approvals`, {
+    const admission = await api(`/sessions/${sessionId}/approvals`, {
       method: "POST",
       body: JSON.stringify({ request_id: requestId, decision }),
     });
+    if (admission.status === "running") {
+      setBusy(true);
+      if (progress) progress.textContent = "Approved. Waiting for background execution…";
+      // Read durable state: the preceding approval_required SSE event belongs
+      // to the graph phase and must not terminate this action-phase wait.
+      while (shell.isConnected) {
+        const outcome = await api(`/sessions/${sessionId}/drafts/${requestId}`);
+        if (!["accepted", "running"].includes(outcome.status)) {
+          renderDraft(shell, outcome);
+          setBusy(false);
+          setStatus(outcome.status === "completed" ? "Ready" : "Needs attention",
+            outcome.status === "completed" ? "ready" : "error");
+          if (outcome.status === "completed") showToast("Approved action completed.");
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      return;
+    }
     await getDraft(shell, sessionId, requestId);
-    showToast(decision === "approve" ? "Approved action completed." : "Action rejected. Nothing was saved.");
-    setStatus("Ready", "ready");
+    if (admission.status === "completed") {
+      showToast(decision === "approve" ? "Approved action completed." : "Action rejected. Nothing was saved.");
+      setStatus("Ready", "ready");
+    } else {
+      setStatus("Needs attention", "error");
+    }
   } catch (error) {
+    setBusy(false);
     buttons.forEach((button) => { button.disabled = false; });
     if (progress) progress.textContent = error.message;
     setStatus("Needs attention", "error");
@@ -455,6 +593,7 @@ async function submitMessage(message) {
 
 function resetConversation() {
   state.source?.close();
+  document.querySelectorAll(".message.assistant").forEach((shell) => shell._answerSource?.close());
   state.sessionId = null;
   state.requestId = null;
   state.lastSequence = -1;

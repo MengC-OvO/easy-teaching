@@ -2,12 +2,16 @@
 
 import json
 import inspect
+import hashlib
 
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Union
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
+from app.schemas.observation_updates import replace_observations
+from app.services.observation_results import ObservationResults
+from app.tools.read_observation import build_read_observation_tool
 
 from app.agents import (
     BoundedWorkerRunner,
@@ -62,7 +66,7 @@ from app.workflows.main_react_support import (
     LongTermMemoryStoreProtocol,
     build_context_update_node,
     build_long_memory_update_node,
-    initialize,
+    build_initialize_node,
 )
 
 
@@ -151,10 +155,13 @@ def build_main_react_node(
     request_guard: RequestGuardProtocol,
     *,
     max_steps: int,
+    results=None,
 ):
     async def main_react(state: GraphStateInput) -> Dict[str, Any]:
         current = _state(state)
         if current.react_step >= max_steps:
+            if results is not None:
+                current = await results.business_state(current)
             return {
                 "decision": MainDecision(
                     reason="Main ReAct reached its bounded step limit.",
@@ -169,10 +176,13 @@ def build_main_react_node(
                 ],
             }
 
+        from app.tools.dynamic_drive import tools_for_run
+        run_tools = await tools_for_run(registry, current.observations)
         tools = available_tools_for_state(
-            registry.list_tools(),
+            run_tools,
             observations=current.observations,
             tool_attempt_counts=current.tool_attempt_counts,
+            user_message=current.user_message,
         )
         required_completion_actions = list(
             dict.fromkeys(
@@ -180,7 +190,7 @@ def build_main_react_node(
                     *current.required_completion_actions,
                     *resolve_required_controlled_tools(
                         current.user_message,
-                        registry.list_tools(),
+                        run_tools,
                     ),
                 ]
             )
@@ -200,6 +210,9 @@ def build_main_react_node(
                     teacher_id=current.teacher_id,
                 )
             )
+            workspace_block = ContextManager._workspace_block(current.workspace)
+            if workspace_block:
+                conversation_context += "\n\n" + workspace_block
             guard_result = request_guard.evaluate(
                 current.user_message,
                 conversation_context=conversation_context,
@@ -276,6 +289,8 @@ def build_main_react_node(
                 ],
             }
         except (ModelProviderError, TypeError, ValueError) as error:
+            if results is not None:
+                current = await results.business_state(current)
             safe_metadata = (
                 error.safe_metadata()
                 if isinstance(error, ModelProviderError)
@@ -402,6 +417,7 @@ def build_validate_decision_node(
         feedback = None
         normalized_safety_final = False
         normalized_safety_recheck = False
+        checked_final_candidate = None
         if (
             decision.final_answer
             and decision.requires_activity_safety
@@ -439,6 +455,7 @@ def build_validate_decision_node(
             # remember on its next turn. Check the exact candidate that Main
             # proposed instead of feeding the same instruction back into the
             # model and risking an unproductive rewrite/recheck loop.
+            checked_final_candidate = decision
             decision = MainDecision(
                 task_type=decision.task_type,
                 requires_activity_safety=True,
@@ -504,6 +521,7 @@ def build_validate_decision_node(
             "decision": decision,
             "execution_route": validation.route.value,
             "validation_feedback": validation.feedback,
+            "checked_final_candidate": checked_final_candidate,
             "trace": [
                 TraceEvent(
                     step="validate_decision",
@@ -515,7 +533,7 @@ def build_validate_decision_node(
                         "normalized_safety_recheck": normalized_safety_recheck,
                         "normalized_result_keys": normalized_result_keys,
                         "requested_tools": [
-                            call.name for call in current.decision.tool_calls
+                            call.name for call in decision.tool_calls
                         ],
                         "requested_workers": [
                             call.name.value for call in current.decision.worker_calls
@@ -546,14 +564,27 @@ def route_validated_decision(state: GraphStateInput):
                     "call": call.model_dump(mode="json"),
                     "teacher_id": current.teacher_id,
                     "class_id": current.class_id,
+                    "request_id": current.request_id,
+                    "session_id": current.session_id,
+                    "react_step": current.react_step,
+                    "call_index": index,
                 },
             )
-            for call in current.decision.worker_calls
+            for index, call in enumerate(current.decision.worker_calls)
         ]
     return route.value
 
 
-def build_single_tool_node(executor: MainToolExecutor):
+def observation_delta(observations, *, request_id, step, start_index=0):
+    batch_id = f"{request_id}:{step}"
+    return {item.result_key: item.model_copy(update={
+        "call_id": hashlib.sha256(f"{batch_id}:{item.result_key}".encode()).hexdigest(),
+        "batch_id": batch_id,
+        "call_index": start_index + index,
+    }) for index, item in enumerate(observations)}
+
+
+def build_single_tool_node(executor: MainToolExecutor, results=None):
     async def single_tool(state: GraphStateInput) -> Dict[str, Any]:
         current = _state(state)
         assert current.decision is not None
@@ -563,13 +594,17 @@ def build_single_tool_node(executor: MainToolExecutor):
                 class_id=current.class_id,
                 session_id=current.session_id,
                 request_id=current.request_id,
+                allowed_tool_names=current.available_tool_names,
         )
-        return {"pending_observations": [observation]}
+        delta = observation_delta([observation], request_id=current.request_id, step=current.react_step)
+        if results is not None:
+            delta = {key: await results.prepare(item, current) for key, item in delta.items()}
+        return {"observations": delta}
 
     return single_tool
 
 
-def build_parallel_tools_node(executor: MainToolExecutor):
+def build_parallel_tools_node(executor: MainToolExecutor, results=None):
     async def parallel_tools(state: GraphStateInput) -> Dict[str, Any]:
         current = _state(state)
         assert current.decision is not None
@@ -579,13 +614,17 @@ def build_parallel_tools_node(executor: MainToolExecutor):
                 class_id=current.class_id,
                 session_id=current.session_id,
                 request_id=current.request_id,
+                allowed_tool_names=current.available_tool_names,
         )
-        return {"pending_observations": observations}
+        delta = observation_delta(observations, request_id=current.request_id, step=current.react_step)
+        if results is not None:
+            delta = {key: await results.prepare(item, current) for key, item in delta.items()}
+        return {"observations": delta}
 
     return parallel_tools
 
 
-def build_worker_node(runner: WorkerRunnerProtocol):
+def build_worker_node(runner: WorkerRunnerProtocol, results=None):
     async def run_worker(payload: Mapping[str, Any]) -> Dict[str, Any]:
         call = WorkerCall.model_validate(payload["call"])
         observation = await runner.run(
@@ -593,7 +632,11 @@ def build_worker_node(runner: WorkerRunnerProtocol):
                 teacher_id=payload.get("teacher_id"),
                 class_id=payload.get("class_id"),
         )
-        return {"pending_observations": [observation]}
+        delta = observation_delta([observation], request_id=payload["request_id"], step=payload["react_step"], start_index=payload["call_index"])
+        if results is not None:
+            from types import SimpleNamespace
+            delta = {key: await results.prepare(item, SimpleNamespace(**payload)) for key, item in delta.items()}
+        return {"observations": delta}
 
     return run_worker
 
@@ -601,15 +644,28 @@ def build_worker_node(runner: WorkerRunnerProtocol):
 def decision_feedback(state: GraphStateInput) -> Dict[str, Any]:
     current = _state(state)
     assert current.validation_feedback is not None
-    return {"pending_observations": [current.validation_feedback]}
+    return {"observations": observation_delta([current.validation_feedback], request_id=current.request_id, step=current.react_step)}
 
 
 def merge_observations(state: GraphStateInput) -> Dict[str, Any]:
     current = _state(state)
-    new_items = current.pending_observations[current.merged_observation_count :]
     merged = dict(current.observations)
-    for observation in new_items:
+    # Drain only unmerged legacy pending results. Previously merged keys must
+    # not be counted again when an old checkpoint enters this node.
+    processed = set(current.processed_observation_keys)
+    if current.pending_observations:
+        processed.update(item.result_key for item in current.pending_observations[:current.merged_observation_count])
+    for observation in current.pending_observations[current.merged_observation_count:]:
+        if observation.result_key in merged and merged[observation.result_key] != observation:
+            raise ValueError("Legacy observation conflicts with current state")
         merged[observation.result_key] = observation
+    new_items = sorted(
+        (item for key, item in merged.items() if key not in processed),
+        key=lambda item: (item.call_index, item.result_key),
+    )
+    if not new_items:
+        return {"pending_observations": [], "merged_observation_count": 0,
+                "processed_observation_keys": sorted(processed)}
 
     repeated = dict(current.repeated_call_counts)
     attempts = dict(current.tool_attempt_counts)
@@ -640,8 +696,10 @@ def merge_observations(state: GraphStateInput) -> Dict[str, Any]:
     )
     new_citations = _citations_from_observations(new_items, current.citations)
     return {
-        "observations": merged,
-        "merged_observation_count": len(current.pending_observations),
+        "observations": replace_observations(merged),
+        "pending_observations": [],
+        "merged_observation_count": 0,
+        "processed_observation_keys": sorted(processed | {item.result_key for item in new_items}),
         "react_step": current.react_step + 1,
         "tool_call_count": current.tool_call_count + tool_increment,
         "worker_batch_count": current.worker_batch_count + worker_increment,
@@ -688,7 +746,25 @@ def route_merged_observations(state: GraphStateInput) -> str:
         and latest_rag.data.get("answerability") == "insufficient"
     ):
         return "evidence_refusal"
+    candidate = current.checked_final_candidate
+    if candidate and candidate.final_answer and not current.required_completion_actions:
+        expected = activity_content_fingerprint(candidate.final_answer)
+        if any(item.capability_name == "check_activity_safety"
+               and item.status is ObservationStatus.COMPLETED
+               and item.data.get("status") == "passed"
+               and item.data.get("content_fingerprint") == expected
+               for item in current.observations.values()):
+            return "checked_final"
     return "main_react"
+
+
+def finalize_checked_activity(state: GraphStateInput) -> Dict[str, Any]:
+    current = _state(state)
+    if route_merged_observations(current) != "checked_final":
+        raise ValueError("Final candidate has no matching passed safety check")
+    exact = current.model_copy(update={"decision": current.checked_final_candidate})
+    return {**finalize_draft(exact), "decision": current.checked_final_candidate,
+            "checked_final_candidate": None}
 
 
 def finalize_evidence_refusal(state: GraphStateInput) -> Dict[str, Any]:
@@ -817,6 +893,7 @@ def _observation_contract(
     """Non-sensitive execution facts used by traces and behavioural evals."""
 
     allowed = {
+        "cache_hit",
         "knowledge_scope",
         "strategy",
         "returned_count",
@@ -850,7 +927,7 @@ def build_prepare_approval_node(store, registry: ToolRegistry):
                 ],
             }
         try:
-            validated_input = tool.input_model.model_validate(call.arguments)
+            validated_input = tool.validate_arguments(call.arguments)
             arguments = validated_input.model_dump(mode="json")
             preview = arguments
             if tool.approval_preparation_handler is not None:
@@ -865,7 +942,7 @@ def build_prepare_approval_node(store, registry: ToolRegistry):
                 )
                 if inspect.isawaitable(prepared):
                     prepared = await prepared
-                arguments = tool.input_model.model_validate(
+                arguments = tool.validate_arguments(
                     prepared.arguments
                 ).model_dump(mode="json")
                 preview = prepared.preview
@@ -1039,6 +1116,15 @@ def build_main_react_graph(
     resolved_store = long_memory_store or _default_store()
     resolved_registry = registry or build_default_tool_registry(resolved_store)
     resolved_provider = model_provider or ChatCompletionsModelProvider()
+    results = ObservationResults(resolved_store, provider=resolved_provider)
+    def exact_node(node):
+        async def wrapped(state):
+            current = await results.business_state(_state(state))
+            output = node(current)
+            return await output if inspect.isawaitable(output) else output
+        return wrapped
+    if results.durable and resolved_registry.get("read_observation") is None:
+        resolved_registry.register(build_read_observation_tool(resolved_store))
     resolved_workers = worker_registry or WorkerRegistry(DEFAULT_WORKER_PROFILES)
     resolved_agent = main_agent or MainReActAgent(resolved_provider)
     resolved_runner = worker_runner or BoundedWorkerRunner(
@@ -1052,11 +1138,9 @@ def build_main_react_graph(
     resolved_extractor = long_memory_extractor or LLMLongTermMemoryExtractor()
     resolved_request_guard = request_guard or EasyTeachingRequestGuard()
 
-    allowed_tools = {
-        tool.name
-        for tool in resolved_registry.list_tools()
-        if tool.permission is not ToolPermission.FORBIDDEN
-    }
+    # Per-decision names are checked against state.available_tool_names above;
+    # a startup snapshot would incorrectly reject tools loaded later.
+    allowed_tools = None
     validator = MainDecisionValidator(
         resolved_registry,
         allowed_tool_names=allowed_tools,
@@ -1068,7 +1152,7 @@ def build_main_react_graph(
     )
 
     graph = StateGraph(GraphState)
-    graph.add_node("initialize", initialize)
+    graph.add_node("initialize", build_initialize_node(resolved_store))
     graph.add_node(
         "main_react",
         build_main_react_node(
@@ -1078,29 +1162,43 @@ def build_main_react_graph(
             resolved_context,
             resolved_request_guard,
             max_steps=max_steps,
+            results=results,
         ),
     )
     graph.add_node(
         "validate_decision",
-        build_validate_decision_node(
+        exact_node(build_validate_decision_node(
             validator,
             max_steps=max_steps,
             max_tool_calls=max_tool_calls,
             max_worker_batches=max_worker_batches,
             max_workers_per_batch=max_workers_per_batch,
-        ),
+        )),
     )
-    graph.add_node("single_tool", build_single_tool_node(tool_executor))
-    graph.add_node("parallel_tools", build_parallel_tools_node(tool_executor))
-    graph.add_node("run_worker", build_worker_node(resolved_runner))
+    graph.add_node("single_tool", build_single_tool_node(tool_executor, results))
+    graph.add_node("parallel_tools", build_parallel_tools_node(tool_executor, results))
+    graph.add_node("run_worker", build_worker_node(resolved_runner, results))
     graph.add_node("decision_feedback", decision_feedback)
-    graph.add_node("merge_observations", merge_observations)
-    graph.add_node("finalize_evidence_refusal", finalize_evidence_refusal)
-    graph.add_node("finalize_draft", finalize_draft)
+    async def organize_results(state):
+        current = _state(state)
+        # Citation extraction uses originals, not truncated previews. Returned
+        # state stays external; this backend-only read never enters the prompt.
+        business = await results.business_state(current)
+        update = merge_observations(business)
+        originals = current.observations
+        if current.pending_observations:
+            originals = {**originals, **{item.result_key: item for item in current.pending_observations[current.merged_observation_count:]}}
+        update["observations"] = replace_observations(await results.organize(originals, current))
+        return update
+
+    graph.add_node("merge_observations", organize_results)
+    graph.add_node("finalize_evidence_refusal", exact_node(finalize_evidence_refusal))
+    graph.add_node("finalize_draft", exact_node(finalize_draft))
+    graph.add_node("finalize_checked_activity", exact_node(finalize_checked_activity))
     graph.add_node("clarification", clarification)
     graph.add_node(
         "prepare_approval",
-        build_prepare_approval_node(resolved_store, resolved_registry),
+        exact_node(build_prepare_approval_node(resolved_store, resolved_registry)),
     )
     graph.add_node("context_update", build_context_update_node(resolved_context))
     graph.add_node(
@@ -1129,13 +1227,15 @@ def build_main_react_graph(
     graph.add_edge("decision_feedback", "merge_observations")
     graph.add_conditional_edges(
         "merge_observations",
-        route_merged_observations,
+        exact_node(route_merged_observations),
         {
             "main_react": "main_react",
             "evidence_refusal": "finalize_evidence_refusal",
+            "checked_final": "finalize_checked_activity",
         },
     )
     graph.add_edge("finalize_draft", "context_update")
+    graph.add_edge("finalize_checked_activity", "context_update")
     graph.add_edge("clarification", "context_update")
     graph.add_edge("prepare_approval", "context_update")
     graph.add_edge("finalize_evidence_refusal", "context_update")

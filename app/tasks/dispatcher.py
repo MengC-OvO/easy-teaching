@@ -31,6 +31,7 @@ async def publish_outbox_task(store: Any, request_id: str) -> bool:
         delay = min(60, 2 ** min(claimed["publish_attempts"], 6))
         await store.finish_conversation_task_publish(
             request_id,
+            lease_token=claimed["lease_token"],
             error=f"{type(error).__name__}: {error}",
             retry_delay_seconds=delay,
         )
@@ -38,6 +39,7 @@ async def publish_outbox_task(store: Any, request_id: str) -> bool:
         return False
     await store.finish_conversation_task_publish(
         request_id,
+        lease_token=claimed["lease_token"],
         celery_task_id=result.id,
     )
     return True
@@ -67,6 +69,9 @@ class OutboxRelay:
             await self._task
 
     async def relay_once(self) -> int:
+        await self.store.reconcile_stalled_conversation_tasks(
+            stale_seconds=settings.outbox_stale_published_seconds, limit=100,
+        )
         request_ids = await self.store.list_publishable_conversation_task_ids(limit=100)
         published = 0
         for request_id in request_ids:
