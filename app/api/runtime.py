@@ -209,6 +209,13 @@ async def build_api_runtime(
             official_web_search_client=official_web_search_client,
             voice_transcriber=voice_transcriber,
         )
+        if google_drive_mcp_client is not None:
+            from app.tools.dynamic_drive import configure_lazy_drive
+            configure_lazy_drive(
+                tool_registry, store, client=google_drive_mcp_client,
+                user_google_email=settings.google_drive_user_email,
+                timeout_seconds=settings.google_drive_mcp_timeout_seconds,
+            )
         graph = build_main_react_graph(
             model_provider=model_provider,
             checkpointer=checkpointer,

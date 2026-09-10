@@ -53,10 +53,13 @@ plus at least two explicit research questions.
    validated fields.
 2. The graph stores one frozen action with an argument hash and expiry, returns
    its preview, and stops at `waiting_for_approval`.
-3. Approval atomically claims that action. Concurrent/repeated approvals cannot
-   execute the side effect twice.
-4. The registered tool executes the frozen arguments in the trusted
-   teacher/class scope; the result and audit event are persisted.
+3. Approval commits consent and an approved-action Outbox task in one
+   transaction. The API returns 202 while a Celery worker claims a leased task;
+   repeated approval does not create another action.
+4. The registered tool executes the frozen arguments in the trusted scope.
+   Observation/educational-record writes, action completion and public results
+   share one database transaction. Interrupted external/file writes become
+   outcome-unknown instead of being blindly replayed.
 
 ## PostgreSQL domain tables
 

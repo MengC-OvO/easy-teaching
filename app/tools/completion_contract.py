@@ -30,6 +30,8 @@ def resolve_required_controlled_tools(
     normalized = " ".join(message.casefold().split())
     required: List[str] = []
     for tool in tools:
+        if not tool.model_visible:
+            continue
         if (
             tool.permission is not ToolPermission.REQUIRE_APPROVAL
             and tool.permission_resolver is None

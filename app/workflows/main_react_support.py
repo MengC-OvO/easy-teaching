@@ -13,6 +13,8 @@ from app.schemas import (
     WorkflowStatus,
 )
 from app.services import ModelProviderError
+from app.services.conversation_workspace import load_workspace
+from app.schemas.observation_updates import replace_observations
 
 
 GraphStateInput = Union[GraphState, Mapping[str, Any]]
@@ -73,6 +75,22 @@ async def _resolve(value):
     return await value if inspect.isawaitable(value) else value
 
 
+def build_initialize_node(store):
+    async def initialize_with_workspace(state: GraphStateInput) -> Dict[str, Any]:
+        current = _state(state)
+        update = initialize(current)
+        workspace = await load_workspace(
+            store, session_id=current.session_id,
+            teacher_id=current.teacher_id, class_id=current.class_id,
+        )
+        # Preserve restored catalogues for offline runtimes without a reader.
+        # An empty authoritative catalogue must explicitly clear stale entries.
+        if workspace is not None:
+            update["workspace"] = workspace
+        return update
+    return initialize_with_workspace
+
+
 def initialize(state: GraphStateInput) -> Dict[str, Any]:
     current = _state(state)
     thread_id = current.thread_id or current.context.thread_id or current.session_id
@@ -87,8 +105,11 @@ def initialize(state: GraphStateInput) -> Dict[str, Any]:
         "decision": None,
         "execution_route": None,
         "validation_feedback": None,
-        "observations": {},
-        "merged_observation_count": len(current.pending_observations),
+        "observations": replace_observations({}),
+        "observation_state_version": 2,
+        "pending_observations": [],
+        "merged_observation_count": 0,
+        "processed_observation_keys": [],
         "react_step": 0,
         "tool_call_count": 0,
         "worker_batch_count": 0,
@@ -96,6 +117,7 @@ def initialize(state: GraphStateInput) -> Dict[str, Any]:
         "tool_attempt_counts": {},
         "required_completion_actions": [],
         "selected_draft_request_id": None,
+        "checked_final_candidate": None,
         "available_tool_names": [],
         "run_trace_start": len(current.trace),
         "run_citation_start": len(current.citations),

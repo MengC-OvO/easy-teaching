@@ -22,6 +22,8 @@ from app.schemas import (
     StreamEventType,
 )
 from app.tools import ToolExecutionContext
+from app.services.conversation_workspace import sync_workspace_checkpoint
+from app.config import settings
 
 
 router = APIRouter(prefix="/sessions", tags=["approvals"])
@@ -57,6 +59,40 @@ async def submit_approval(
     result = await runtime.store.get_conversation_run_result(payload.request_id)
     if run is None or result is None or run["session_id"] != session_id:
         return _error("request_not_found", "The request does not exist in this session.", payload.request_id, status_code=404)
+    if callable(getattr(runtime.store, "admit_approved_action", None)):
+        try:
+            admitted = await runtime.store.admit_approved_action(
+                request_id=payload.request_id, session_id=session_id, decision=payload.decision.value,
+            )
+        except (ValueError, PermissionError) as error:
+            return _error("approval_conflict", str(error), payload.request_id)
+        if admitted["status"] == "running":
+            relay = getattr(request.app.state, "outbox_relay", None)
+            if relay is not None:
+                relay.notify()
+            if settings.task_execution_mode == "inline":
+                # Explicit development mode still uses durable admission and leases.
+                from app.tasks.worker import _execute, _prepare_retry
+                claim = await runtime.store.claim_conversation_task_for_publish(payload.request_id, lease_seconds=30)
+                if claim is not None:
+                    try:
+                        await _execute(runtime, payload.request_id)
+                    except Exception as error:
+                        token = getattr(error, "execution_lease_token", None)
+                        if token is None:
+                            raise
+                        await _prepare_retry(runtime, payload.request_id, error,
+                            exhausted=True, lease_token=token)
+                current = await runtime.store.get_conversation_run(payload.request_id)
+                admitted["status"] = current["status"]
+        response = ApprovalSubmitResponse(session_id=session_id, request_id=payload.request_id,
+            decision=payload.decision, status=RunStatus(admitted["status"]))
+        return JSONResponse(status_code=202 if admitted["status"] == "running" else 200,
+            content=response.model_dump(mode="json"))
+    if settings.task_execution_mode == "celery":
+        return _error("approval_outbox_unavailable", "Durable approval execution is unavailable.",
+            payload.request_id, status_code=503)
+    # Compatibility for lightweight inline test adapters only.
     if run["status"] != RunStatus.WAITING_FOR_APPROVAL.value:
         return _error("approval_conflict", "The request is not waiting for approval.", payload.request_id)
     approval = result["approval"]
@@ -183,6 +219,9 @@ async def submit_approval(
         draft=result["draft"],
         approval=approval,
         citations=result["citations"],
+    )
+    await sync_workspace_checkpoint(
+        runtime, session_id=session_id, request_id=payload.request_id,
     )
     await runtime.store.update_conversation_run_status(
         payload.request_id, RunStatus.COMPLETED.value

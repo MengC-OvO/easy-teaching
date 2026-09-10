@@ -201,14 +201,14 @@ def test_context_manager_exposes_trusted_artifact_and_record_references() -> Non
         long_term_memory_reader=StubLongTermMemoryReader(),
     )
 
-    prompt_context = asyncio.run(
-        manager.build_model_context_async(
-            ThreadContext(),
+    workspace = asyncio.run(
+        manager.long_term_memory_reader.get_conversation_workspace(
             teacher_id="teacher-001",
             class_id="kangaroo-room",
             session_id="session-001",
         )
     )
+    prompt_context = manager._workspace_block(workspace)
 
     assert "source_request_id=request-draft-001" in prompt_context
     assert "source_request_id=request-draft-002" in prompt_context

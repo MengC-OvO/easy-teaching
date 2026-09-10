@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 
 from app.api.checkpoint_config import checkpoint_config
 from app.api.execution import execute_checkpoint_resume, persist_run_outcome
-from app.schemas import GraphState, RunStatus, WorkflowStatus
+from app.api.recovery_state import checkpoint_belongs_to_run, completed_snapshot_status
+from app.schemas import GraphState, RunStatus
 if TYPE_CHECKING:
     from app.api.runtime import ApiRuntime
 
@@ -34,6 +35,13 @@ async def recover_incomplete_runs(runtime: ApiRuntime) -> None:
 async def _recover_run(runtime: ApiRuntime, run: dict) -> None:
     request_id = run["request_id"]
     session_id = run["session_id"]
+    task_reader = getattr(runtime.store, "get_conversation_task", None)
+    if task_reader is not None:
+        task = await task_reader(request_id)
+        if task and task["payload"].get("kind") == "approved_action":
+            # The completed graph checkpoint describes the pre-approval phase.
+            # Its outcome must not overwrite an admitted action's durable state.
+            return
     conversation = await runtime.store.get_conversation_session(session_id)
     if conversation is None:
         raise ValueError("Conversation session does not exist")
@@ -43,9 +51,11 @@ async def _recover_run(runtime: ApiRuntime, run: dict) -> None:
     if not snapshot.values:
         raise ValueError("Recovery checkpoint does not exist")
 
-    state = GraphState.model_validate(snapshot.values)
-    if state.request_id != request_id or state.session_id != session_id:
+    if not checkpoint_belongs_to_run(
+        snapshot.values, request_id=request_id, session_id=session_id
+    ):
         raise ValueError("Recovery checkpoint belongs to another run")
+    state = GraphState.model_validate(snapshot.values)
 
     if snapshot.next:
         await runtime.store.update_conversation_run_status(
@@ -60,7 +70,7 @@ async def _recover_run(runtime: ApiRuntime, run: dict) -> None:
         )
         return
 
-    final_status = _completed_snapshot_status(state)
+    final_status = completed_snapshot_status(state)
     await persist_run_outcome(
         runtime=runtime,
         request_id=request_id,
@@ -70,9 +80,4 @@ async def _recover_run(runtime: ApiRuntime, run: dict) -> None:
     )
 
 
-def _completed_snapshot_status(state: GraphState) -> RunStatus:
-    if state.workflow_status is WorkflowStatus.COMPLETED:
-        return RunStatus.COMPLETED
-    if state.workflow_status is WorkflowStatus.FAILED:
-        return RunStatus.FAILED
-    raise ValueError("Checkpoint has no next node but the run is not terminal")
+_completed_snapshot_status = completed_snapshot_status

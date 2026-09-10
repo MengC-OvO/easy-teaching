@@ -24,6 +24,45 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_real_postgres_outbox_takeover_and_stale_publisher_fencing():
+    async def scenario():
+        store = AsyncEasyTeachingStore(DATABASE_URL)
+        session_id = f"it-session-{uuid4()}"
+        request_id = f"it-request-{uuid4()}"
+        try:
+            await store.create_conversation_session(
+                session_id=session_id, thread_id=f"it-thread-{uuid4()}",
+                teacher_id=None, class_id=None,
+            )
+            await store.create_conversation_run(
+                request_id=request_id, session_id=session_id, task_payload={"message": "synthetic"},
+            )
+            publisher = await store.claim_conversation_task_for_publish(request_id, lease_seconds=30)
+            claims = await asyncio.gather(*(
+                store.claim_conversation_task_for_execution(request_id, lease_seconds=60)
+                for _ in range(10)
+            ))
+            owners = [claim for claim in claims if claim is not None]
+            assert len(owners) == 1
+            assert not await store.finish_conversation_task_publish(
+                request_id, lease_token=publisher["lease_token"], celery_task_id=request_id,
+            )
+            async with store.engine.begin() as connection:
+                await connection.execute(text(
+                    "UPDATE conversation_task_outbox SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' "
+                    "WHERE request_id = :request_id"
+                ), {"request_id": request_id})
+            await store.reconcile_stalled_conversation_tasks(stale_seconds=1200)
+            assert not await store.finish_conversation_task_execution(
+                request_id, lease_token=owners[0]["lease_token"], status="completed",
+            )
+            assert (await store.get_conversation_task(request_id))["status"] == "pending"
+        finally:
+            await _cleanup(store, session_id=session_id, request_ids=[request_id])
+            await store.close()
+    run_async(scenario())
+
+
 async def _cleanup(store, *, session_id, request_ids):
     async with store.engine.begin() as connection:
         await connection.execute(

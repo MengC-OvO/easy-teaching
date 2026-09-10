@@ -3,6 +3,7 @@ import inspect
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from pydantic import ValidationError
+from jsonschema.exceptions import ValidationError as JsonSchemaError
 
 from app.schemas import RiskLevel
 from app.tools.definition import (
@@ -99,14 +100,14 @@ class ToolRegistry:
             )
 
         try:
-            validated_args = tool.input_model.model_validate(raw_args)
-        except ValidationError as error:
+            validated_args = tool.validate_arguments(raw_args)
+        except (ValidationError, JsonSchemaError) as error:
             return ToolResult.fail(
                 code=ToolErrorCode.VALIDATION_ERROR,
                 message=f"Invalid arguments for tool: {tool.name}",
                 risk_level=risk_level,
                 recoverable=True,
-                details={"errors": error.errors()},
+                details={"errors": error.errors() if isinstance(error, ValidationError) else [{"message": error.message}]},
                 trace=trace,
             )
 
@@ -210,6 +211,17 @@ class ToolRegistry:
                 recoverable=False,
                 details={"tool_name": name},
             )
+        if name.startswith("drive__") and self.get(name) is None:
+            loader = getattr(self, "ensure_drive_tools", None)
+            if loader is not None:
+                try:
+                    # Approved frozen actions and resumed tool nodes can arrive
+                    # in a different API/worker process with an unloaded catalog.
+                    await loader()
+                except Exception as error:
+                    return ToolResult.fail(code=ToolErrorCode.EXECUTION_ERROR,
+                        message=f"Could not load Drive definitions: {error}",
+                        risk_level=RiskLevel.L3_FORBIDDEN, recoverable=True)
         tool = self.get(name)
         if tool is None:
             return ToolResult.fail(
@@ -239,13 +251,13 @@ class ToolRegistry:
                 trace=trace,
             )
         try:
-            validated_args = tool.input_model.model_validate(raw_args)
-        except ValidationError as error:
+            validated_args = tool.validate_arguments(raw_args)
+        except (ValidationError, JsonSchemaError) as error:
             return ToolResult.fail(
                 code=ToolErrorCode.VALIDATION_ERROR,
                 message=f"Invalid arguments for tool: {tool.name}",
                 risk_level=risk_level,
-                details={"errors": error.errors()},
+                details={"errors": error.errors() if isinstance(error, ValidationError) else [{"message": error.message}]},
                 trace=trace,
             )
         try:

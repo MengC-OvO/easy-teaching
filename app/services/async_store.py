@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 import hashlib
 import json
+import base64
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.errors import ConversationSessionBusyError
+from app.services.task_lease import execution_lease, LeaseLostError
+from app.services.approved_actions import ApprovedActionStoreMixin
 from app.schemas.long_memory import (
     LongTermMemoryAction,
     LongTermMemoryOperation,
@@ -35,6 +38,7 @@ from app.services.models import (
     TeacherClassMembershipRecord,
     TeacherRecord,
     ToolActionRequest,
+    ToolResultSnapshot,
 )
 
 
@@ -84,7 +88,7 @@ ACTIVE_CONVERSATION_RUN_STATUSES = (
 )
 
 
-class AsyncEasyTeachingStore:
+class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
     """Async SQLAlchemy store; production schema ownership remains with Alembic."""
 
     def __init__(self, database_url: str) -> None:
@@ -335,6 +339,7 @@ class AsyncEasyTeachingStore:
             if record is None:
                 return None
             record.status = "publishing"
+            record.lease_token = str(uuid4())
             record.publish_attempts += 1
             record.lease_until = now + timedelta(seconds=lease_seconds)
             record.updated_at = now
@@ -367,23 +372,35 @@ class AsyncEasyTeachingStore:
         self,
         request_id: str,
         *,
+        lease_token: str,
         celery_task_id: Optional[str] = None,
         error: Optional[str] = None,
         retry_delay_seconds: int = 0,
-    ) -> None:
+    ) -> bool:
         now = datetime.utcnow()
         async with self.session_factory() as session:
-            record = await session.get(ConversationTaskOutboxRecord, request_id)
+            record = (await session.execute(
+                select(ConversationTaskOutboxRecord).where(
+                    ConversationTaskOutboxRecord.request_id == request_id,
+                    ConversationTaskOutboxRecord.status == "publishing",
+                    ConversationTaskOutboxRecord.lease_token == lease_token,
+                    ConversationTaskOutboxRecord.lease_until > now,
+                ).with_for_update()
+            )).scalar_one_or_none()
             if record is None:
-                raise ValueError("Conversation task outbox does not exist")
+                return False
+            if record.lease_until <= datetime.utcnow():
+                return False
             record.status = "published" if error is None else "pending"
             if error is None:
                 record.celery_task_id = celery_task_id
             record.last_error = None if error is None else error[:2000]
             record.available_at = now + timedelta(seconds=max(0, retry_delay_seconds))
             record.lease_until = None
+            record.lease_token = None
             record.updated_at = now
             await session.commit()
+            return True
 
     async def claim_conversation_task_for_execution(
         self, request_id: str, *, lease_seconds: int
@@ -397,7 +414,7 @@ class AsyncEasyTeachingStore:
                     .where(
                         ConversationTaskOutboxRecord.request_id == request_id,
                         or_(
-                            ConversationTaskOutboxRecord.status == "published",
+                            ConversationTaskOutboxRecord.status.in_(["published", "publishing"]),
                             (
                                 (ConversationTaskOutboxRecord.status == "running")
                                 & (ConversationTaskOutboxRecord.lease_until < now)
@@ -410,6 +427,7 @@ class AsyncEasyTeachingStore:
             if record is None:
                 return None
             record.status = "running"
+            record.lease_token = str(uuid4())
             record.execution_attempts += 1
             record.lease_until = now + timedelta(seconds=lease_seconds)
             record.last_error = None
@@ -421,20 +439,115 @@ class AsyncEasyTeachingStore:
         self,
         request_id: str,
         *,
+        lease_token: str,
         status: str,
         error: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         if status not in {"published", "completed", "dead"}:
             raise ValueError("Invalid conversation task status")
         async with self.session_factory() as session:
-            record = await session.get(ConversationTaskOutboxRecord, request_id)
+            now = datetime.utcnow()
+            record = (await session.execute(
+                select(ConversationTaskOutboxRecord).where(
+                    ConversationTaskOutboxRecord.request_id == request_id,
+                    ConversationTaskOutboxRecord.status == "running",
+                    ConversationTaskOutboxRecord.lease_token == lease_token,
+                    ConversationTaskOutboxRecord.lease_until > now,
+                ).with_for_update()
+            )).scalar_one_or_none()
             if record is None:
-                raise ValueError("Conversation task outbox does not exist")
+                return False
+            if record.lease_until <= datetime.utcnow():
+                return False
             record.status = status
             record.last_error = None if error is None else error[:2000]
             record.lease_until = None
+            record.lease_token = None
             record.updated_at = datetime.utcnow()
             await session.commit()
+            return True
+
+    async def reconcile_stalled_conversation_tasks(self, *, stale_seconds: int, limit: int = 100) -> int:
+        """Recover lost broker messages; claims and reconciliation share row locks."""
+        now = datetime.utcnow()
+        async with self.session_factory() as session:
+            records = (await session.execute(
+                select(ConversationTaskOutboxRecord).where(or_(
+                    (ConversationTaskOutboxRecord.status == "published")
+                    & (ConversationTaskOutboxRecord.updated_at < now - timedelta(seconds=stale_seconds)),
+                    (ConversationTaskOutboxRecord.status.in_(["running", "publishing"]))
+                    & (ConversationTaskOutboxRecord.lease_until < now),
+                )).order_by(ConversationTaskOutboxRecord.updated_at)
+                .limit(limit).with_for_update(skip_locked=True)
+            )).scalars().all()
+            for record in records:
+                run = await session.get(ConversationRunRecord, record.request_id)
+                if run is None:
+                    record.status = "dead"
+                elif run.status in {"completed", "failed", "waiting_for_approval", "cancelled"}:
+                    record.status = "completed"
+                else:
+                    record.status = "pending"
+                record.lease_token = None
+                record.lease_until = None
+                record.available_at = now
+                record.updated_at = now
+            await session.commit()
+            return len(records)
+
+    async def _guard_execution_write(self, session: AsyncSession) -> None:
+        """Lock the owning task until this business transaction commits."""
+        owner = execution_lease.get()
+        if owner is None:
+            return
+        request_id, token = owner
+        record = (await session.execute(
+            select(ConversationTaskOutboxRecord).where(
+                ConversationTaskOutboxRecord.request_id == request_id,
+                ConversationTaskOutboxRecord.status == "running",
+                ConversationTaskOutboxRecord.lease_token == token,
+                ConversationTaskOutboxRecord.lease_until > datetime.utcnow(),
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if record is None or record.lease_until <= datetime.utcnow():
+            raise LeaseLostError("Execution lease is expired or superseded")
+
+    async def save_tool_result_snapshot(self, *, body_ref, request_id, session_id, teacher_id, class_id, result_key, content_hash, body):
+        from app.services.observation_results import fingerprint
+        if fingerprint(body) != content_hash:
+            raise ValueError("Snapshot body does not match its hash")
+        async with self.session_factory() as session:
+            await self._guard_execution_write(session)
+            run = await session.get(ConversationRunRecord, request_id)
+            # Serialize same-session snapshot writes, including non-Celery runs.
+            conversation = (await session.execute(select(ConversationSessionRecord).where(
+                ConversationSessionRecord.session_id == session_id
+            ).with_for_update())).scalar_one_or_none()
+            if (run is None or run.session_id != session_id or conversation is None
+                    or conversation.teacher_id != teacher_id or conversation.class_id != class_id):
+                raise PermissionError("Snapshot scope does not match the conversation")
+            existing = await session.get(ToolResultSnapshot, body_ref)
+            if existing is not None:
+                if (existing.content_hash != content_hash or existing.request_id != request_id
+                        or existing.session_id != session_id or existing.teacher_id != teacher_id
+                        or existing.class_id != class_id or existing.result_key != result_key):
+                    raise ValueError("Snapshot identity conflict")
+                return body_ref
+            session.add(ToolResultSnapshot(body_ref=body_ref, request_id=request_id, session_id=session_id,
+                teacher_id=teacher_id, class_id=class_id, result_key=result_key, content_hash=content_hash, body=body))
+            await session.commit()
+            return body_ref
+
+    async def read_tool_result_snapshot(self, *, body_ref, session_id, teacher_id, class_id):
+        async with self.session_factory() as session:
+            item = await session.get(ToolResultSnapshot, body_ref)
+            conversation = await session.get(ConversationSessionRecord, session_id)
+            if (item is None or conversation is None or item.session_id != session_id
+                    or item.teacher_id != teacher_id or item.class_id != class_id
+                    or conversation.teacher_id != teacher_id or conversation.class_id != class_id):
+                raise PermissionError("Result snapshot is missing or outside the trusted scope")
+            return {"body": item.body, "content_hash": item.content_hash, "result_key": item.result_key,
+                    "request_id": item.request_id, "body_ref": item.body_ref}
 
     async def get_conversation_task(self, request_id: str) -> Optional[Dict[str, Any]]:
         async with self.session_factory() as session:
@@ -475,6 +588,7 @@ class AsyncEasyTeachingStore:
         self, request_id: str, status: str
     ) -> Dict[str, Any]:
         async with self.session_factory() as session:
+            await self._guard_execution_write(session)
             record = await session.get(ConversationRunRecord, request_id)
             if record is None:
                 raise ValueError("Conversation run does not exist")
@@ -493,6 +607,7 @@ class AsyncEasyTeachingStore:
         citations: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         async with self.session_factory() as session:
+            await self._guard_execution_write(session)
             record = await session.get(ConversationRunResultRecord, request_id)
             if record is None:
                 record = ConversationRunResultRecord(
@@ -687,6 +802,7 @@ class AsyncEasyTeachingStore:
         data: Dict[str, Any],
     ) -> Dict[str, Any]:
         async with self.session_factory() as session:
+            await self._guard_execution_write(session)
             last_sequence = (
                 await session.execute(
                     select(func.max(ConversationEventRecord.sequence)).where(
@@ -829,6 +945,7 @@ class AsyncEasyTeachingStore:
         if operation.action is LongTermMemoryAction.NOOP:
             return {"action": operation.action.value}
         async with self.session_factory() as session:
+            await self._guard_execution_write(session)
             if operation.action is LongTermMemoryAction.INSERT:
                 assert operation.candidate is not None
                 candidate = operation.candidate
@@ -881,7 +998,29 @@ class AsyncEasyTeachingStore:
         date_to: Optional[datetime] = None,
         status: Optional[str] = None,
         limit: int = 20,
+        cursor: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        limit = min(51, max(1, limit))
+        position = None
+        if cursor:
+            try:
+                raw = json.loads(base64.urlsafe_b64decode(cursor))
+                if not isinstance(raw, list) or len(raw) != 3 or raw[1] not in {"observation", "educational_record"} or not isinstance(raw[2], str):
+                    raise ValueError()
+                position = (datetime.fromisoformat(raw[0]), raw[1], raw[2])
+            except Exception as error:
+                raise ValueError("Invalid record cursor") from error
+
+        def after_cursor(statement, model, kind, id_column):
+            if position is None:
+                return statement
+            moment, previous_kind, previous_id = position
+            same_time = model.created_at == moment
+            if kind == previous_kind:
+                same_time = same_time & (id_column < previous_id)
+            elif kind > previous_kind:
+                return statement.where(model.created_at < moment)
+            return statement.where(or_(model.created_at < moment, same_time))
         async with self.session_factory() as session:
             await self._require_class_access(session, teacher_id, class_id)
             if child_id is not None:
@@ -894,6 +1033,7 @@ class AsyncEasyTeachingStore:
                 statement = select(ObservationRecord).where(
                     ObservationRecord.class_id == class_id
                 )
+                statement = after_cursor(statement, ObservationRecord, "observation", ObservationRecord.observation_id)
                 if child_id:
                     statement = statement.join(ObservationChildRecord).where(
                         ObservationChildRecord.child_id == child_id
@@ -915,7 +1055,7 @@ class AsyncEasyTeachingStore:
                     )
                 observations = (
                     await session.execute(
-                        statement.order_by(ObservationRecord.observed_at.desc()).limit(limit)
+                        statement.order_by(ObservationRecord.created_at.desc(), ObservationRecord.observation_id.desc()).limit(limit)
                     )
                 ).scalars().all()
                 for item in observations:
@@ -933,9 +1073,10 @@ class AsyncEasyTeachingStore:
                 statement = select(EducationalRecord).where(
                     EducationalRecord.class_id == class_id
                 )
+                statement = after_cursor(statement, EducationalRecord, "educational_record", EducationalRecord.record_id)
                 if child_id:
-                    statement = (
-                        statement.join(EducationalRecordObservation)
+                    matching_record_ids = (
+                        select(EducationalRecordObservation.record_id)
                         .join(
                             ObservationChildRecord,
                             ObservationChildRecord.observation_id
@@ -943,6 +1084,7 @@ class AsyncEasyTeachingStore:
                         )
                         .where(ObservationChildRecord.child_id == child_id)
                     )
+                    statement = statement.where(EducationalRecord.record_id.in_(matching_record_ids))
                 if date_from:
                     statement = statement.where(EducationalRecord.created_at >= date_from)
                 if date_to:
@@ -959,7 +1101,7 @@ class AsyncEasyTeachingStore:
                     )
                 records = (
                     await session.execute(
-                        statement.order_by(EducationalRecord.created_at.desc()).limit(limit)
+                        statement.order_by(EducationalRecord.created_at.desc(), EducationalRecord.record_id.desc()).limit(limit)
                     )
                 ).scalars().unique().all()
                 for item in records:
@@ -974,7 +1116,9 @@ class AsyncEasyTeachingStore:
                         self._educational_record_to_dict(item, list(observation_ids))
                     )
 
-        return sorted(results, key=lambda item: item["created_at"], reverse=True)[:limit]
+        return sorted(results, key=lambda item: (item["created_at"],
+            "observation" if "observation_id" in item else "educational_record",
+            item.get("observation_id") or item["record_id"]), reverse=True)[:limit]
 
     async def save_observation(
         self,
@@ -990,7 +1134,8 @@ class AsyncEasyTeachingStore:
         source_request_id: Optional[str],
         idempotency_key: str,
     ) -> Dict[str, Any]:
-        async with self.session_factory() as session:
+        async with self._record_write_session() as session:
+            await self._guard_execution_write(session)
             centre_id = await self._require_class_access(session, teacher_id, class_id)
             existing = (
                 await session.execute(
@@ -1033,6 +1178,8 @@ class AsyncEasyTeachingStore:
                 version=1,
             )
             session.add(record)
+            # Persist the parent before FK links; mappings have no ORM relationship.
+            await session.flush()
             for child_id in child_ids:
                 session.add(
                     ObservationChildRecord(
@@ -1051,7 +1198,7 @@ class AsyncEasyTeachingStore:
                     tool_name="save_observation",
                 )
             )
-            await session.commit()
+            await self._commit_record_write(session)
         return self._observation_to_dict(record, child_ids)
 
     async def save_educational_record(
@@ -1069,7 +1216,8 @@ class AsyncEasyTeachingStore:
         source_request_id: Optional[str],
         idempotency_key: str,
     ) -> Dict[str, Any]:
-        async with self.session_factory() as session:
+        async with self._record_write_session() as session:
+            await self._guard_execution_write(session)
             centre_id = await self._require_class_access(session, teacher_id, class_id)
             existing = (
                 await session.execute(
@@ -1115,6 +1263,7 @@ class AsyncEasyTeachingStore:
                 approved_at=now if status == "final" else None,
             )
             session.add(record)
+            await session.flush()
             for observation_id in observation_ids:
                 session.add(
                     EducationalRecordObservation(
@@ -1133,7 +1282,7 @@ class AsyncEasyTeachingStore:
                     tool_name="save_educational_record",
                 )
             )
-            await session.commit()
+            await self._commit_record_write(session)
         return self._educational_record_to_dict(record, observation_ids)
 
     async def get_exportable_records(
@@ -1189,6 +1338,7 @@ class AsyncEasyTeachingStore:
         checksum: str,
     ) -> Dict[str, Any]:
         async with self.session_factory() as session:
+            await self._guard_execution_write(session)
             await self._require_class_access(session, teacher_id, class_id)
             record = RecordExport(
                 export_id=str(uuid4()),
@@ -1282,6 +1432,7 @@ class AsyncEasyTeachingStore:
             expires_at=datetime.utcnow() + timedelta(minutes=ttl_minutes),
         )
         async with self.session_factory() as session:
+            await self._guard_execution_write(session)
             existing = (
                 await session.execute(
                     select(ToolActionRequest).where(
@@ -1453,6 +1604,7 @@ class AsyncEasyTeachingStore:
             "status": record.status,
             "publish_attempts": record.publish_attempts,
             "execution_attempts": record.execution_attempts,
+            "lease_token": record.lease_token,
             "celery_task_id": record.celery_task_id,
             "last_error": record.last_error,
         }

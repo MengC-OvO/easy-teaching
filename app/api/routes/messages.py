@@ -3,7 +3,7 @@
 from typing import Optional, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
@@ -61,6 +61,7 @@ async def create_message(
     session_id: str,
     payload: MessageCreateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> Union[MessageAcceptedResponse, JSONResponse]:
     runtime = get_runtime(request)
@@ -236,7 +237,7 @@ async def create_message(
     else:
         # Explicit inline mode is retained for deterministic tests and local
         # debugging; production config uses Celery and the durable Outbox.
-        await execute_message(
+        background_tasks.add_task(execute_message,
             runtime=runtime,
             request_id=request_id,
             session_id=session_id,

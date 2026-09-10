@@ -6,9 +6,11 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
 from app.api.checkpoint_config import checkpoint_config
+from app.api.recovery_state import checkpoint_belongs_to_run
 from app.integrations.privacy_gateway_client import PrivacyGatewayUnavailableError
 from app.schemas import GraphState, RunStatus, StreamEventType, TraceEvent, WorkflowStatus
 from safety_gateway.contracts import RestoreRequest
+from app.services.conversation_workspace import sync_workspace_checkpoint
 if TYPE_CHECKING:
     from app.api.runtime import ApiRuntime
 
@@ -62,7 +64,9 @@ async def execute_message(
         state = GraphState.model_validate(result)
         final_status = _run_status(state.workflow_status)
     except Exception:
-        state = await _state_from_checkpoint(runtime, thread_id)
+        state = await _state_from_checkpoint(
+            runtime, thread_id, request_id=request_id, session_id=session_id
+        )
         if propagate_incomplete_error and _checkpoint_is_incomplete(state):
             raise
         final_status = _recovered_run_status(state)
@@ -97,7 +101,9 @@ async def execute_checkpoint_resume(
         state = GraphState.model_validate(result)
         final_status = _run_status(state.workflow_status)
     except Exception:
-        state = await _state_from_checkpoint(runtime, thread_id)
+        state = await _state_from_checkpoint(
+            runtime, thread_id, request_id=request_id, session_id=session_id
+        )
         if propagate_incomplete_error and _checkpoint_is_incomplete(state):
             raise
         final_status = _recovered_run_status(state)
@@ -133,6 +139,8 @@ async def persist_run_outcome(
             await _discard_mapping_best_effort(runtime, mapping_id)
     elif mapping_id is not None:
         await _discard_mapping_best_effort(runtime, mapping_id)
+    if public_result_saved:
+        await sync_workspace_checkpoint(runtime, session_id=session_id, request_id=request_id)
     await runtime.store.update_conversation_run_status(request_id, final_status.value)
     if state is not None:
         await _publish_state_events(
@@ -206,10 +214,15 @@ async def _discard_mapping_best_effort(
 async def _state_from_checkpoint(
     runtime: ApiRuntime,
     thread_id: str,
+    *,
+    request_id: str,
+    session_id: str,
 ) -> Optional[GraphState]:
     try:
         snapshot = await runtime.graph.aget_state(checkpoint_config(thread_id))
-        if not snapshot.values:
+        if not checkpoint_belongs_to_run(
+            snapshot.values, request_id=request_id, session_id=session_id
+        ):
             return None
         return GraphState.model_validate(snapshot.values)
     except Exception:
@@ -271,6 +284,9 @@ async def _publish_graph_trace(runtime: ApiRuntime, state: GraphState) -> None:
     # Production progress is already emitted node-by-node to Redis Streams.
     # Inline/test mode keeps the durable trace path for backwards compatibility.
     if getattr(runtime, "event_bus", None) is not None:
+        return
+    existing_events = await runtime.store.list_conversation_events(request_id=state.request_id)
+    if any(event["data"].get("origin") == "live_graph" for event in existing_events):
         return
     existing_indexes: Set[int] = {
         event["data"]["trace_index"]
@@ -445,11 +461,58 @@ _NODE_PROGRESS_MESSAGES = {
     "merge_observations": "Organising the evidence…",
     "finalize_evidence_refusal": "Checking whether the evidence is sufficient…",
     "finalize_draft": "Preparing the draft…",
+    "finalize_checked_activity": "活动检查通过，正在准备回答…",
     "clarification": "Preparing a clarification question…",
     "prepare_approval": "Preparing the review step…",
     "context_update": "Updating conversation context…",
     "long_memory_update": "Finishing the request…",
 }
+
+_TOOL_PROGRESS_LABELS = {
+    "get_class_context": "读取班级信息", "get_daily_context": "查询天气和节假日",
+    "retrieve_knowledge": "检索政策与课程资料", "query_records": "查询教学记录",
+    "read_draft_artifact": "读取历史草稿", "check_activity_safety": "检查活动安全",
+    "search_official_web": "搜索官方资料", "read_uploaded_document": "读取上传文档",
+    "ingest_uploaded_document": "导入知识库", "transcribe_voice_note": "转写语音",
+    "load_drive_tools": "加载 Drive 工具", "read_observation": "补读工具结果",
+    "save_observation": "准备保存观察记录", "save_educational_record": "准备保存教育记录",
+    "export_records": "准备导出记录",
+}
+
+
+def _node_progress(node_name, delta):
+    data = {"origin": "live_graph", "step": str(node_name),
+            "message": _NODE_PROGRESS_MESSAGES[str(node_name)]}
+    if not isinstance(delta, dict):
+        return data
+    if node_name == "validate_decision" and delta.get("execution_route") in {"single_tool", "parallel_tools", "prepare_approval"}:
+        decision = delta.get("decision")
+        if hasattr(decision, "model_dump"):
+            decision = decision.model_dump()
+        names = [call.get("name", "") for call in (decision or {}).get("tool_calls", [])]
+        labels = [_TOOL_PROGRESS_LABELS.get(name, "访问 Drive" if name.startswith("drive__") else "执行工具") for name in names]
+        if labels:
+            data["message"] = "正在" + "、".join(labels) + "…"
+    elif node_name in {"single_tool", "parallel_tools", "run_worker"}:
+        entries = delta.get("observations", {})
+        labels = []
+        for value in entries.values():
+            if hasattr(value, "model_dump"):
+                value = value.model_dump(mode="json")
+            if not isinstance(value, dict):
+                continue
+            name = value.get("capability_name", "")
+            label = _TOOL_PROGRESS_LABELS.get(name, "研究任务" if name.endswith("_worker") else "外部工具")
+            body = value.get("data", {})
+            suffix = "完成" if value.get("status") == "completed" else "未完成"
+            if name == "get_daily_context" and body.get("cache_hit"):
+                suffix = "完成（复用10分钟内的天气）"
+            if name == "check_activity_safety" and body.get("status") == "passed":
+                suffix = "通过"
+            labels.append(label + suffix)
+        if labels:
+            data["message"] = "；".join(labels)
+    return data
 
 
 async def _invoke_graph_with_progress(
@@ -461,7 +524,7 @@ async def _invoke_graph_with_progress(
     session_id: str,
 ) -> Dict[str, Any]:
     event_bus = getattr(runtime, "event_bus", None)
-    if event_bus is None or not hasattr(runtime.graph, "astream"):
+    if not hasattr(runtime.graph, "astream"):
         return await runtime.graph.ainvoke(graph_input, config=config)
 
     async for update in runtime.graph.astream(
@@ -475,17 +538,13 @@ async def _invoke_graph_with_progress(
             message = _NODE_PROGRESS_MESSAGES.get(str(node_name))
             if message is None:
                 continue
-            await publish_progress_best_effort(
-                runtime,
-                request_id=request_id,
-                session_id=session_id,
-                event=StreamEventType.TRACE.value,
-                data={
-                    "origin": "graph",
-                    "step": str(node_name),
-                    "message": message,
-                },
-            )
+            data = _node_progress(node_name, update[node_name])
+            if event_bus is not None:
+                await publish_progress_best_effort(runtime, request_id=request_id,
+                    session_id=session_id, event=StreamEventType.TRACE.value, data=data)
+            else:
+                await runtime.store.append_conversation_event(request_id=request_id,
+                    session_id=session_id, event=StreamEventType.TRACE.value, data=data)
 
     snapshot = await runtime.graph.aget_state(config)
     if not snapshot.values:
