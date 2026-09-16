@@ -196,6 +196,9 @@ class ConversationRunResultRecord(Base):
     """Public draft snapshot produced by one conversation run."""
 
     __tablename__ = "conversation_run_results"
+    __table_args__ = (
+        Index("ix_run_results_session_created", "session_id", "created_at"),
+    )
 
     request_id: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
@@ -415,6 +418,15 @@ class RecordExport(Base):
 
 class ToolActionRequest(Base):
     __tablename__ = "tool_action_requests"
+    __table_args__ = (
+        Index(
+            "ix_tool_actions_session_status_tool_created",
+            "session_id",
+            "status",
+            "tool_name",
+            "created_at",
+        ),
+    )
 
     action_id: Mapped[str] = mapped_column(String, primary_key=True)
     request_id: Mapped[str] = mapped_column(

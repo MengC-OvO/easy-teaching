@@ -179,6 +179,12 @@ new records without repeatedly querying PostgreSQL. A reconnecting browser
 supplies `after_event_id` (or the standard `Last-Event-ID`) and resumes after the
 last Redis record it received.
 
+An empty Redis read does not immediately poll PostgreSQL. By default the SSE
+path checks the durable Run after four consecutive empty blocking reads. This
+keeps PostgreSQL as the recovery authority while avoiding one database query
+per idle Redis wait. Configure the interval with
+`REDIS_DURABLE_CHECK_EVERY_EMPTY_READS`.
+
 PostgreSQL stores the run, final draft, approval, citations, checkpoints and
 important lifecycle events. It does not store ordinary node progress in Celery
 mode. If Redis progress is unavailable, SSE degrades to a one-second durable
