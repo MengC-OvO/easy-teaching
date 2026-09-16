@@ -269,7 +269,10 @@ def test_sse_reads_redis_batch_and_stops_on_terminal_event() -> None:
     assert "event: completed" in frames[1]
 
 
-def test_100_idle_sse_connections_do_one_db_status_check_per_redis_wait_cycle() -> None:
+def test_100_idle_sse_connections_do_not_query_db_after_one_empty_redis_wait(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.events.settings.redis_durable_check_every_empty_reads", 4
+    )
     class EmptyBus:
         def __init__(self):
             self.reads = 0
@@ -316,8 +319,97 @@ def test_100_idle_sse_connections_do_one_db_status_check_per_redis_wait_cycle() 
     frames = asyncio.run(scenario())
 
     assert bus.reads == 100
-    assert store.status_checks == 100
+    assert store.status_checks == 0
     assert all(items == [": heartbeat\n\n"] for items in frames)
+
+
+def test_idle_sse_connection_checks_durable_status_at_configured_interval(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.events.settings.redis_durable_check_every_empty_reads", 4
+    )
+    class EmptyBus:
+        def __init__(self):
+            self.reads = 0
+
+        async def read(self, *args, **kwargs):
+            self.reads += 1
+            return []
+
+    class CountingStore:
+        def __init__(self):
+            self.status_checks = 0
+
+        async def get_conversation_run(self, request_id):
+            self.status_checks += 1
+            return {"request_id": request_id, "status": "running"}
+
+    class BoundedRequest:
+        def __init__(self):
+            self.checks = 0
+
+        async def is_disconnected(self):
+            self.checks += 1
+            return self.checks > 4
+
+    bus = EmptyBus()
+    store = CountingStore()
+    runtime = SimpleNamespace(event_bus=bus, store=store)
+
+    async def collect():
+        return [
+            frame
+            async for frame in _redis_event_stream(
+                runtime=runtime,
+                request=BoundedRequest(),
+                request_id="request-1",
+                after_event_id="0-0",
+                after_sequence=-1,
+            )
+        ]
+
+    frames = asyncio.run(collect())
+
+    assert bus.reads == 4
+    assert store.status_checks == 1
+    assert frames == [": heartbeat\n\n"] * 4
+
+
+def test_sse_replays_durable_terminal_event_after_reduced_status_checks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.events.settings.redis_durable_check_every_empty_reads", 4
+    )
+
+    class EmptyBus:
+        async def read(self, *args, **kwargs):
+            return []
+
+    class TerminalStore:
+        async def get_conversation_run(self, request_id):
+            return {"request_id": request_id, "status": "completed"}
+
+        async def list_conversation_events(self, **kwargs):
+            return [{
+                "event_id": "event-1", "event": "completed", "sequence": 1,
+                "session_id": "session-1", "request_id": "request-1",
+                "data": {"status": "completed"},
+            }]
+
+    async def collect():
+        return [
+            frame
+            async for frame in _redis_event_stream(
+                runtime=SimpleNamespace(event_bus=EmptyBus(), store=TerminalStore()),
+                request=ConnectedRequest(),
+                request_id="request-1",
+                after_event_id="0-0",
+                after_sequence=-1,
+            )
+        ]
+
+    frames = asyncio.run(collect())
+
+    assert frames[:3] == [": heartbeat\n\n"] * 3
+    assert "event: completed" in frames[3]
 
 
 def test_production_mode_does_not_duplicate_graph_trace_into_postgres() -> None:

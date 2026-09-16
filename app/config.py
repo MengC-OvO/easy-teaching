@@ -35,6 +35,21 @@ class Settings(BaseSettings):
     redis_progress_block_ms: int = Field(
         default=15000, ge=1000, le=30000, validation_alias="REDIS_PROGRESS_BLOCK_MS"
     )
+    redis_durable_check_every_empty_reads: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+        validation_alias="REDIS_DURABLE_CHECK_EVERY_EMPTY_READS",
+    )
+    redis_read_cache_enabled: bool = Field(
+        default=True, validation_alias="REDIS_READ_CACHE_ENABLED"
+    )
+    redis_read_cache_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        validation_alias="REDIS_READ_CACHE_TTL_SECONDS",
+    )
     celery_broker_url: str = Field(
         default="", validation_alias="CELERY_BROKER_URL"
     )

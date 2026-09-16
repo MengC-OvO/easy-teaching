@@ -247,7 +247,11 @@ async def build_api_runtime(
     redis_rate_limiter = None
     redis_progress_client = None
     event_bus = None
-    if settings.api_rate_limit_enabled or settings.task_execution_mode == "celery":
+    if (
+        settings.api_rate_limit_enabled
+        or settings.task_execution_mode == "celery"
+        or settings.redis_read_cache_enabled
+    ):
         from redis.asyncio import Redis
 
         redis_client = Redis.from_url(
@@ -263,6 +267,11 @@ async def build_api_runtime(
                 redis_client,
                 limit=settings.api_rate_limit_requests,
                 window_seconds=settings.api_rate_limit_window_seconds,
+            )
+        if settings.redis_read_cache_enabled:
+            store.configure_read_cache(
+                redis_client,
+                ttl_seconds=settings.redis_read_cache_ttl_seconds,
             )
     if settings.task_execution_mode == "celery":
         from redis.asyncio import Redis

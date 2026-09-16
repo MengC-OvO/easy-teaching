@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import hashlib
 import json
 import base64
+import logging
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -87,6 +88,9 @@ ACTIVE_CONVERSATION_RUN_STATUSES = (
     "waiting_for_approval",
 )
 
+logger = logging.getLogger(__name__)
+_PROFILE_MEMORY_CACHE_LIMIT = 8
+
 
 class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
     """Async SQLAlchemy store; production schema ownership remains with Alembic."""
@@ -106,6 +110,71 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
             bind=self.engine,
             expire_on_commit=False,
         )
+        self._read_cache = None
+        self._read_cache_ttl_seconds = 300
+
+    def configure_read_cache(self, redis_client: Any, *, ttl_seconds: int = 300) -> None:
+        """Attach an optional best-effort Redis cache for scoped read-only data."""
+        self._read_cache = redis_client
+        self._read_cache_ttl_seconds = max(30, int(ttl_seconds))
+
+    @staticmethod
+    def _profile_memory_cache_key(teacher_id: str) -> str:
+        # Do not expose a teacher/account identifier in Redis key names.
+        digest = hashlib.sha256(teacher_id.encode("utf-8")).hexdigest()
+        return f"easyteaching:profile-memory:v1:{digest}"
+
+    async def _get_cached_profile_memories(
+        self, teacher_id: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        cache = getattr(self, "_read_cache", None)
+        if cache is None:
+            return None
+        try:
+            raw = await cache.get(self._profile_memory_cache_key(teacher_id))
+            if raw is None:
+                return None
+            value = json.loads(raw)
+            if not isinstance(value, list) or not all(
+                isinstance(item, dict)
+                and item.get("scope") == "teacher"
+                and item.get("scope_id") == teacher_id
+                and item.get("memory_type") == "teacher_preference"
+                and item.get("retrieval_mode") == MemoryRetrievalMode.PROFILE.value
+                and isinstance(item.get("content"), str)
+                for item in value
+            ):
+                return None
+            return value
+        except Exception:
+            logger.warning("Profile-memory cache read failed; using PostgreSQL", exc_info=True)
+            return None
+
+    async def _set_cached_profile_memories(
+        self, teacher_id: str, memories: List[Dict[str, Any]]
+    ) -> None:
+        cache = getattr(self, "_read_cache", None)
+        if cache is None:
+            return
+        try:
+            await cache.set(
+                self._profile_memory_cache_key(teacher_id),
+                json.dumps(memories, ensure_ascii=False, separators=(",", ":")),
+                ex=self._read_cache_ttl_seconds,
+            )
+        except Exception:
+            logger.warning("Profile-memory cache write failed; continuing without cache", exc_info=True)
+
+    async def _invalidate_profile_memory_cache(self, teacher_id: Optional[str]) -> None:
+        cache = getattr(self, "_read_cache", None)
+        if cache is None or not teacher_id:
+            return
+        try:
+            await cache.delete(self._profile_memory_cache_key(teacher_id))
+        except Exception:
+            # The short TTL repairs invalidation failures. The committed database
+            # write remains authoritative and must never be rolled back for cache IO.
+            logger.warning("Profile-memory cache invalidation failed", exc_info=True)
 
     async def initialize(self) -> None:
         async with self.engine.connect() as connection:
@@ -710,59 +779,82 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
             if class_id is not None and conversation.class_id != class_id:
                 raise ValueError("Conversation workspace belongs to another class")
 
-            results = (
-                await session.execute(
-                    select(ConversationRunResultRecord)
-                    .where(ConversationRunResultRecord.session_id == session_id)
-                    .order_by(ConversationRunResultRecord.created_at.asc())
+            reusable_artifact = (
+                ConversationRunResultRecord.session_id == session_id,
+                ConversationRunResultRecord.approval["status"].as_string()
+                == "not_required",
+                func.coalesce(
+                    ConversationRunResultRecord.draft["is_draft"].as_boolean(), True
+                ).is_(True),
+                func.length(
+                    func.trim(ConversationRunResultRecord.draft["content"].as_string())
                 )
-            ).scalars().all()
+                > 0,
+            )
+            saved_action_exists = (
+                select(ToolActionRequest.action_id)
+                .where(
+                    ToolActionRequest.session_id == session_id,
+                    ToolActionRequest.status == "executed",
+                    ToolActionRequest.tool_name.in_(
+                        ("save_observation", "save_educational_record")
+                    ),
+                    ToolActionRequest.arguments["source_request_id"].as_string()
+                    == ConversationRunResultRecord.request_id,
+                )
+                .exists()
+            )
+            result_rows = (
+                await session.execute(
+                    select(
+                        ConversationRunResultRecord,
+                        func.count().over().label("artifact_total"),
+                        saved_action_exists.label("is_saved"),
+                    )
+                    .where(*reusable_artifact)
+                    .order_by(ConversationRunResultRecord.created_at.desc())
+                    .limit(8)
+                )
+            ).all()
             artifacts = []
-            for result in results:
-                approval_status = (result.approval or {}).get("status")
+            for position, (result, artifact_total, is_saved) in enumerate(result_rows):
                 draft = result.draft or {}
                 content = str(draft.get("content", "")).strip()
-                # Clarification/error messages are conversation turns, not reusable
-                # generated artefacts. Historical content itself is not projected
-                # back into model context; only the immutable reference metadata is.
-                if (
-                    approval_status == "not_required"
-                    and bool(draft.get("is_draft", True))
-                    and content
-                ):
-                    artifacts.append({
-                        "artifact_number": len(artifacts) + 1,
-                        "source_request_id": result.request_id,
-                        "title": draft.get("title"),
-                        "is_draft": True,
-                        "content_chars": len(content),
-                        "created_at": result.created_at.isoformat(),
-                    })
-            recent_artifacts = artifacts[-8:]
-            for offset, artifact in enumerate(reversed(recent_artifacts)):
-                artifact["position_from_latest"] = offset
-            current_artifact = artifacts[-1] if artifacts else None
+                artifacts.append({
+                    "artifact_number": int(artifact_total) - position,
+                    "position_from_latest": position,
+                    "source_request_id": result.request_id,
+                    "title": draft.get("title"),
+                    "is_draft": True,
+                    "content_chars": len(content),
+                    "created_at": result.created_at.isoformat(),
+                    "status": "saved" if is_saved else "unsaved",
+                })
+            recent_artifacts = list(reversed(artifacts))
+            current_artifact = artifacts[0] if artifacts else None
 
-            actions = (
+            action_rows = (
                 await session.execute(
-                    select(ToolActionRequest)
+                    select(
+                        ToolActionRequest,
+                        func.count().over().label("saved_action_total"),
+                    )
                     .where(
                         ToolActionRequest.session_id == session_id,
                         ToolActionRequest.status == "executed",
+                        ToolActionRequest.tool_name.in_(
+                            ("save_observation", "save_educational_record")
+                        ),
                     )
-                    .order_by(ToolActionRequest.created_at.asc())
+                    .order_by(ToolActionRequest.created_at.desc())
+                    .limit(8)
                 )
-            ).scalars().all()
+            ).all()
             saved_records = []
-            for action in actions:
-                if action.tool_name not in {
-                    "save_observation",
-                    "save_educational_record",
-                }:
-                    continue
+            for position, (action, saved_action_total) in enumerate(action_rows):
                 result = action.result or {}
                 saved_records.append({
-                    "save_number": len(saved_records) + 1,
+                    "save_number": int(saved_action_total) - position,
                     "tool_name": action.tool_name,
                     "source_request_id": (action.arguments or {}).get(
                         "source_request_id"
@@ -773,19 +865,8 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
                     "title": result.get("title"),
                     "created_at": action.created_at.isoformat(),
                 })
-            recent_saved_records = saved_records[-8:]
-            recent_saved_record = saved_records[-1] if saved_records else None
-            saved_source_ids = {
-                item["source_request_id"]
-                for item in saved_records
-                if item.get("source_request_id")
-            }
-            for artifact in artifacts:
-                artifact["status"] = (
-                    "saved"
-                    if artifact["source_request_id"] in saved_source_ids
-                    else "unsaved"
-                )
+            recent_saved_records = list(reversed(saved_records))
+            recent_saved_record = saved_records[0] if saved_records else None
         return {
             "current_artifact": current_artifact,
             "recent_saved_record": recent_saved_record,
@@ -847,6 +928,11 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
     ) -> List[Dict[str, str]]:
         if not teacher_id:
             return []
+        if limit <= _PROFILE_MEMORY_CACHE_LIMIT:
+            cached = await self._get_cached_profile_memories(teacher_id)
+            if cached is not None:
+                return cached[:limit]
+        query_limit = max(limit, _PROFILE_MEMORY_CACHE_LIMIT)
         async with self.session_factory() as session:
             records = (
                 (
@@ -864,13 +950,18 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
                             LongTermMemoryRecord.importance.desc(),
                             LongTermMemoryRecord.updated_at.desc(),
                         )
-                        .limit(limit)
+                        .limit(query_limit)
                     )
                 )
                 .scalars()
                 .all()
             )
-        return [self._long_term_memory_to_dict(item) for item in records]
+        result = [self._long_term_memory_to_dict(item) for item in records]
+        if limit <= _PROFILE_MEMORY_CACHE_LIMIT:
+            await self._set_cached_profile_memories(
+                teacher_id, result[:_PROFILE_MEMORY_CACHE_LIMIT]
+            )
+        return result[:limit]
 
     async def list_memories_for_owners(
         self,
@@ -984,6 +1075,8 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
                     memory.is_active = True
                     memory.updated_at = datetime.utcnow()
             await session.commit()
+        if memory.scope == "teacher":
+            await self._invalidate_profile_memory_cache(memory.scope_id)
         return {"action": operation.action.value, **self._long_term_memory_to_dict(memory)}
 
     async def query_records(

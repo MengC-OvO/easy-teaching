@@ -117,6 +117,7 @@ async def _redis_event_stream(
     after_sequence: int,
 ) -> AsyncIterator[str]:
     cursor = after_event_id
+    empty_reads = 0
     while True:
         if await request.is_disconnected():
             return
@@ -164,24 +165,28 @@ async def _redis_event_stream(
                 return
 
         if records:
+            empty_reads = 0
             continue
-        run = await runtime.store.get_conversation_run(request_id)
-        if run is None or run["status"] in _STREAM_END_STATUSES:
-            # The terminal Redis notification may have expired or failed. Replay
-            # the durable lifecycle record once before closing the connection.
-            durable = await runtime.store.list_conversation_events(
-                request_id=request_id,
-                after_sequence=after_sequence,
-            )
-            for item in durable:
-                if item["event"] in {
-                    "approval_required",
-                    "completed",
-                    "failed",
-                    "cancelled",
-                }:
-                    yield _sse_frame(_public_event(item))
-            return
+        empty_reads += 1
+        if empty_reads >= settings.redis_durable_check_every_empty_reads:
+            empty_reads = 0
+            run = await runtime.store.get_conversation_run(request_id)
+            if run is None or run["status"] in _STREAM_END_STATUSES:
+                # The terminal Redis notification may have expired or failed. Replay
+                # the durable lifecycle record once before closing the connection.
+                durable = await runtime.store.list_conversation_events(
+                    request_id=request_id,
+                    after_sequence=after_sequence,
+                )
+                for item in durable:
+                    if item["event"] in {
+                        "approval_required",
+                        "completed",
+                        "failed",
+                        "cancelled",
+                    }:
+                        yield _sse_frame(_public_event(item))
+                return
         yield ": heartbeat\n\n"
 
 

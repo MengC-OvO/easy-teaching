@@ -11,18 +11,19 @@ from app.tasks import worker
 
 class FakeRedis:
     def __init__(self):
-        self.values = {}
+        self.replies = iter([[1, 1, 0], [1, 0, 0], [0, 0, 60], [1, 1, 0]])
         self.last_key = None
 
-    async def eval(self, script, key_count, key, window):
-        assert "INCR" in script
+    async def eval(self, script, key_count, key, window_ms, limit, member):
+        assert "ZREMRANGEBYSCORE" in script
         assert key_count == 1
+        assert window_ms == 60000 and limit == 2
+        assert len(member) == 32
         self.last_key = key
-        self.values[key] = self.values.get(key, 0) + 1
-        return [self.values[key], window]
+        return next(self.replies)
 
 
-def test_redis_rate_limit_is_shared_by_identity_and_returns_retry_after() -> None:
+def test_redis_rate_limit_decodes_script_decision_and_hashes_identity() -> None:
     redis = FakeRedis()
     limiter = RedisRateLimiter(redis, limit=2, window_seconds=60)
 
