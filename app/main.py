@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 from pathlib import Path
 import inspect
 from typing import Any, Awaitable, Callable, Optional, Union
@@ -18,6 +19,7 @@ from app.api.routes import (
     uploads_router,
 )
 from app.config import settings
+from app.api.security import RequestBoundaryMiddleware
 from app.tasks.dispatcher import OutboxRelay
 
 
@@ -45,31 +47,36 @@ def create_app(runtime_factory: Optional[RuntimeFactory] = None) -> FastAPI:
         )
         app.state.runtime = runtime
         outbox_relay = None
-        if settings.task_execution_mode == "celery" and hasattr(
-            runtime.store, "list_publishable_conversation_task_ids"
-        ):
-            outbox_relay = OutboxRelay(runtime.store)
-            outbox_relay.start()
-            app.state.outbox_relay = outbox_relay
-            outbox_relay.notify()
-        else:
-            await recover_incomplete_runs(runtime)
         try:
+            if settings.task_execution_mode == "celery" and hasattr(
+                runtime.store, "list_publishable_conversation_task_ids"
+            ):
+                outbox_relay = OutboxRelay(runtime.store)
+                outbox_relay.start()
+                app.state.outbox_relay = outbox_relay
+                outbox_relay.notify()
+            else:
+                await recover_incomplete_runs(runtime)
             yield
         finally:
-            if outbox_relay is not None:
-                await outbox_relay.close()
-            await runtime.close()
+            try:
+                if outbox_relay is not None:
+                    await outbox_relay.close()
+            finally:
+                await runtime.close()
 
     application = FastAPI(
         title="EasyTeaching",
         description=(
-            "Safety-aware AI agent backend for synthetic Australian early "
-            "childhood education scenarios."
+            "Planning, documentation and policy support for early childhood educators."
         ),
         version="0.1.0",
         lifespan=lifespan,
+        docs_url="/docs" if settings.app_env.lower() in {"local", "test", "development"} else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if settings.app_env.lower() in {"local", "test", "development"} else None,
     )
+    application.add_middleware(RequestBoundaryMiddleware)
     application.include_router(sessions_router)
     application.include_router(auth_router)
     application.include_router(messages_router)
@@ -101,20 +108,21 @@ def create_app(runtime_factory: Optional[RuntimeFactory] = None) -> FastAPI:
         checks = {"postgres": "ok", "redis": "ok", "redis_progress": "ok"}
         try:
             if hasattr(runtime.store, "healthcheck"):
-                await runtime.store.healthcheck()
+                if not await asyncio.wait_for(runtime.store.healthcheck(), settings.readiness_timeout_seconds):
+                    raise ConnectionError("PostgreSQL check failed")
         except Exception:
             checks["postgres"] = "unavailable"
         redis_client = getattr(runtime, "redis_client", None)
         if settings.task_execution_mode == "celery" or settings.api_rate_limit_enabled:
             try:
-                if redis_client is None or not await redis_client.ping():
+                if redis_client is None or not await asyncio.wait_for(redis_client.ping(), settings.readiness_timeout_seconds):
                     raise ConnectionError("Redis ping failed")
             except Exception:
                 checks["redis"] = "unavailable"
         if settings.task_execution_mode == "celery":
             try:
                 progress_client = getattr(runtime, "redis_progress_client", None)
-                if progress_client is None or not await progress_client.ping():
+                if progress_client is None or not await asyncio.wait_for(progress_client.ping(), settings.readiness_timeout_seconds):
                     raise ConnectionError("Redis progress ping failed")
             except Exception:
                 checks["redis_progress"] = "unavailable"

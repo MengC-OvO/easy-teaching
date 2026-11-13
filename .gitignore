@@ -4,6 +4,15 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+/docs/interview-production-budgets.md
+**/resume*.png
+**/resume*.pdf
+**/resume*.docx
+**/*简历*
 .DS_Store
 .pytest_cache/
 .test-tmp/

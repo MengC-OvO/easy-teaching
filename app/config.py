@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     app_name: str = Field(default="easy-teaching", validation_alias="APP_NAME")
     app_env: str = Field(default="local", validation_alias="APP_ENV")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    public_origin: str = Field(default="", validation_alias="PUBLIC_ORIGIN")
+    readiness_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    request_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024)
+    redis_max_connections: int = Field(default=256, ge=16, le=2048)
     task_execution_mode: Literal["inline", "celery"] = Field(
         default="celery", validation_alias="TASK_EXECUTION_MODE"
     )
@@ -288,6 +292,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Official web search requires its API key and engine ID when enabled"
             )
+        if self.app_env.lower() not in {"local", "test", "development"}:
+            if not self.auth_enabled:
+                raise ValueError("AUTH_ENABLED must be true outside local development")
+            origin = urlparse(self.public_origin)
+            if (origin.scheme != "https" or not origin.hostname or origin.username
+                    or origin.password or origin.path not in {"", "/"}
+                    or origin.query or origin.fragment):
+                raise ValueError("PUBLIC_ORIGIN must be an HTTPS origin without a path")
+            if not self.api_rate_limit_enabled or self.task_execution_mode != "celery":
+                raise ValueError("Production requires Redis rate limiting and Celery execution")
+            for name in ("supabase_url", "supabase_publishable_key", "database_url",
+                         "checkpoint_database_url", "model_base_url", "model_api_key",
+                         "embedding_api_key"):
+                value = getattr(self, name)
+                if not value or "replace-with" in value or "your-" in value:
+                    raise ValueError(f"Production requires a configured {name.upper()}")
+            if urlparse(self.supabase_url).scheme != "https":
+                raise ValueError("Production SUPABASE_URL must use HTTPS")
         return self
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

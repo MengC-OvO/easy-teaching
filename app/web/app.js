@@ -6,10 +6,24 @@ const state = {
   source: null,
   busy: false,
   authConfig: null,
-  authClient: null,
   user: null,
-  conversations: JSON.parse(localStorage.getItem("easyteaching-conversations") || "[]"),
+  conversations: [],
 };
+
+function conversationStorageKey() {
+  return `easyteaching-conversations:${state.user?.user_id || "local"}`;
+}
+
+function loadConversations() {
+  try {
+    const items = JSON.parse(sessionStorage.getItem(conversationStorageKey()) || "[]");
+    state.conversations = Array.isArray(items) ? items.filter((item) => item &&
+      typeof item.sessionId === "string" && typeof item.title === "string").slice(0, 8) : [];
+  } catch (_error) {
+    state.conversations = [];
+  }
+  renderConversationList();
+}
 
 const LOCAL_DEMO_SCOPE = {
   teacher_id: "teacher-001",
@@ -38,6 +52,7 @@ const ui = {
   userMenu: document.querySelector("#user-menu"),
   userEmail: document.querySelector("#user-email"),
   logout: document.querySelector("#logout-button"),
+  classSelect: document.querySelector("#class-select"),
 };
 
 function escapeHtml(value = "") {
@@ -70,6 +85,7 @@ function setBusy(busy) {
   state.busy = busy;
   ui.input.disabled = busy;
   ui.attach.disabled = busy;
+  ui.classSelect.disabled = busy;
   ui.send.disabled = busy || !ui.input.value.trim();
   setStatus(busy ? "Working" : "Ready", busy ? "busy" : "ready");
 }
@@ -87,7 +103,11 @@ function showToast(message) {
 }
 
 function saveConversations() {
-  localStorage.setItem("easyteaching-conversations", JSON.stringify(state.conversations.slice(0, 8)));
+  try {
+    sessionStorage.setItem(conversationStorageKey(), JSON.stringify(state.conversations.slice(0, 8)));
+  } catch (_error) {
+    // The current conversation remains usable when browser storage is unavailable.
+  }
   renderConversationList();
 }
 
@@ -245,6 +265,7 @@ function renderDraft(shell, payload) {
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
+    signal: AbortSignal.timeout(20000),
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
@@ -258,6 +279,8 @@ async function api(path, options = {}) {
 
 function showLogin(message = "") {
   state.source?.close();
+  state.conversations = [];
+  resetConversation();
   state.user = null;
   ui.userMenu.hidden = true;
   ui.loginError.textContent = message;
@@ -265,64 +288,58 @@ function showLogin(message = "") {
   ui.loginEmail.focus();
 }
 
-function showAuthenticatedApp(user) {
+async function showAuthenticatedApp(user) {
+  const payload = await api("/auth/classes");
   state.user = user;
+  ui.classSelect.innerHTML = '<option value="">General workspace</option>' + payload.classes.map(
+    (item) => `<option value="${escapeHtml(item.class_id)}">${escapeHtml(item.name)}</option>`
+  ).join("");
+  ui.classSelect.hidden = false;
+  loadConversations();
   ui.loginScreen.hidden = true;
   ui.userEmail.textContent = user.email || "Teacher";
   ui.userMenu.hidden = false;
 }
 
-async function loadSupabaseSdk() {
-  if (window.supabase) return;
-  await new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
-    script.onload = resolve;
-    script.onerror = () => reject(new Error("Supabase login library could not be loaded."));
-    document.head.appendChild(script);
-  });
-}
-
 async function initializeAuth() {
   try {
+    // Remove the older shared persistent cache before loading an account workspace.
+    try { localStorage.removeItem("easyteaching-conversations"); } catch (_error) {}
     const config = await api("/auth/config");
     state.authConfig = config;
-    if (!config.enabled) return;
-    await loadSupabaseSdk();
-    state.authClient = window.supabase.createClient(
-      config.supabase_url,
-      config.supabase_publishable_key,
-      { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
-    );
+    if (!config.enabled) { ui.loginScreen.hidden = true; loadConversations(); return; }
     try {
       const user = await api("/auth/me");
-      showAuthenticatedApp(user);
+      await showAuthenticatedApp(user);
     } catch (_error) {
       showLogin();
     }
   } catch (error) {
-    showToast(error.message);
+    showLogin("Unable to connect. Refresh this page to try again.");
   }
 }
 
 async function submitLogin(event) {
   event.preventDefault();
-  if (!state.authClient) return;
+  if (!state.authConfig?.enabled) return;
   ui.loginButton.disabled = true;
   ui.loginError.textContent = "";
   try {
-    const { data, error } = await state.authClient.auth.signInWithPassword({
-      email: ui.loginEmail.value.trim(),
-      password: ui.loginPassword.value,
+    const response = await fetch(`${state.authConfig.supabase_url.replace(/\/$/, "")}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: state.authConfig.supabase_publishable_key },
+      body: JSON.stringify({ email: ui.loginEmail.value.trim(), password: ui.loginPassword.value }),
+      signal: AbortSignal.timeout(15000),
     });
-    if (error) throw error;
+    const data = await response.json();
+    if (!response.ok || !data.access_token) throw new Error("Sign in failed. Check your email and password, then try again.");
     const user = await api("/auth/session", {
       method: "POST",
-      body: JSON.stringify({ access_token: data.session.access_token }),
+      body: JSON.stringify({ access_token: data.access_token }),
     });
     ui.loginPassword.value = "";
     resetConversation();
-    showAuthenticatedApp(user);
+    await showAuthenticatedApp(user);
   } catch (error) {
     showLogin(error.message || "Sign in failed.");
   } finally {
@@ -335,17 +352,18 @@ async function logout() {
   try {
     await api("/auth/session", { method: "DELETE" });
   } catch (_error) {
-    // The local login screen still closes access if the remote session is unavailable.
+    showToast("Sign out could not be completed. Please try again.");
+    return;
   }
+  try { sessionStorage.removeItem(conversationStorageKey()); } catch (_error) {}
   state.conversations = [];
-  localStorage.removeItem("easyteaching-conversations");
   resetConversation();
   showLogin();
 }
 
 async function ensureSession() {
   if (state.sessionId) return state.sessionId;
-  const sessionScope = state.authConfig?.enabled ? {} : LOCAL_DEMO_SCOPE;
+  const sessionScope = state.authConfig?.enabled ? { class_id: ui.classSelect.value || null } : LOCAL_DEMO_SCOPE;
   const session = await api("/sessions", {
     method: "POST",
     body: JSON.stringify(sessionScope),
@@ -355,6 +373,9 @@ async function ensureSession() {
 }
 
 async function uploadFile(file) {
+  if (state.authConfig?.enabled && !state.sessionId && !ui.classSelect.value) {
+    throw new Error("Select an assigned class before uploading a document.");
+  }
   const sessionId = await ensureSession();
   const body = new FormData();
   body.append("file", file);
@@ -642,10 +663,14 @@ document.querySelector("#open-sidebar").addEventListener("click", () => ui.sideb
 document.querySelector("#close-sidebar").addEventListener("click", () => ui.sidebar.classList.remove("open"));
 ui.loginForm.addEventListener("submit", submitLogin);
 ui.logout.addEventListener("click", logout);
+ui.classSelect.addEventListener("change", resetConversation);
 
 ui.conversations.addEventListener("click", (event) => {
   const sessionId = event.target.dataset.sessionId;
   if (!sessionId || sessionId === state.sessionId) return;
+  state.source?.close();
+  document.querySelectorAll(".message.assistant").forEach((shell) => shell._answerSource?.close());
+  setBusy(false);
   const remembered = state.conversations.find((item) => item.sessionId === sessionId);
   state.sessionId = sessionId;
   state.requestId = event.target.dataset.requestId || remembered?.requestId || null;
@@ -663,7 +688,7 @@ ui.conversations.addEventListener("click", (event) => {
       }
     });
   } else {
-    showToast("Session restored. Send a message to continue its LangGraph thread.");
+    showToast("Conversation restored. You can continue where you left off.");
   }
   ui.sidebar.classList.remove("open");
 });

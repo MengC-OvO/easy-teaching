@@ -27,6 +27,11 @@ class ModelRequest(BaseModel):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     timeout_seconds: Optional[float] = Field(default=None, gt=0)
     response_model: Optional[Type[BaseModel]] = None
+    # OpenAI-compatible native function calling.  These schemas travel in the
+    # request envelope, not inside an untrusted/natural-language message.
+    tools: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_choice: Optional[str] = None
+    parallel_tool_calls: Optional[bool] = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -38,9 +43,18 @@ class ModelResponse(BaseModel):
     usage: ModelUsage = Field(default_factory=ModelUsage)
     raw_response: Dict[str, Any] = Field(default_factory=dict)
     structured: Optional[BaseModel] = None
+    tool_calls: List["ModelToolCall"] = Field(default_factory=list)
 
     model_config = {"arbitrary_types_allowed": True}
 
 
 class ModelJSONParseResult(BaseModel):
     data: Dict[str, Any]
+
+
+class ModelToolCall(BaseModel):
+    """Provider-neutral representation of one native function call."""
+
+    id: Optional[str] = None
+    name: str = Field(min_length=1)
+    arguments: Dict[str, Any] = Field(default_factory=dict)

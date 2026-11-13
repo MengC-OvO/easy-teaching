@@ -12,11 +12,13 @@ RUN apt-get update \
 
 RUN addgroup --system easyteaching && adduser --system --ingroup easyteaching easyteaching
 
-COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY requirements-linux.lock ./
+RUN pip install --upgrade pip && pip install -r requirements-linux.lock
 
 COPY . .
-RUN mkdir -p /app/data/local /app/data/exports && chown -R easyteaching:easyteaching /app
+RUN python scripts/build_lexical_index.py \
+    && mkdir -p /app/data/local /app/data/exports /app/data/chroma \
+    && chown -R easyteaching:easyteaching /app
 
 USER easyteaching
 

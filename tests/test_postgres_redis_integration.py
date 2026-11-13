@@ -163,7 +163,7 @@ def test_real_postgres_rolls_back_run_when_outbox_payload_cannot_be_serialized()
 
 def test_real_redis_stream_is_ordered_replayable_capped_and_expiring():
     async def scenario():
-        client = Redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+        client = Redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True, max_connections=256)
         request_id = f"it-progress-{uuid4()}"
         bus = RedisEventBus(client, maxlen=500, ttl_seconds=120)
         try:
@@ -200,7 +200,12 @@ def test_real_redis_stream_is_ordered_replayable_capped_and_expiring():
     run_async(scenario())
 
 
-def test_real_outbox_relay_publishes_request_id_to_redis_broker():
+def test_real_outbox_relay_publishes_request_id_to_redis_broker(monkeypatch):
+    from celery import Celery
+    from app.tasks import dispatcher
+    test_celery = Celery("integration", broker=REDIS_URL)
+    monkeypatch.setattr(dispatcher, "celery_app", test_celery)
+    monkeypatch.setattr(settings, "celery_queue_name", f"integration-{uuid4()}")
     async def scenario():
         store = AsyncEasyTeachingStore(DATABASE_URL)
         broker = Redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)

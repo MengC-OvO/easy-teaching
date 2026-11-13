@@ -23,6 +23,7 @@ from app.services.model_types import (
     ModelRequest,
     ModelResponse,
     ModelRole,
+    ModelToolCall,
     ModelUsage,
 )
 from app.services.context_manager import ContextManager
@@ -71,6 +72,7 @@ __all__ = [
     "ModelRequest",
     "ModelResponse",
     "ModelRole",
+    "ModelToolCall",
     "ModelTimeoutError",
     "ModelUsage",
     "ObservationRedactor",

@@ -13,7 +13,7 @@ from app.schemas import (
     RiskLevel,
     TaskType,
 )
-from app.services import ModelResponse
+from app.services import ModelResponse, ModelToolCall
 from app.tools import (
     ToolCategory,
     ToolDefinition,
@@ -54,10 +54,21 @@ class StubProvider:
         self.decision = decision
         self.messages = None
         self.response_model = None
+        self.tools = None
 
-    def generate_structured(self, *, messages, response_model, temperature=0.0):
+    def generate_structured(
+        self,
+        *,
+        messages,
+        response_model,
+        temperature=0.0,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
         self.messages = messages
         self.response_model = response_model
+        self.tools = tools
         return ModelResponse(
             content=self.decision.model_dump_json(),
             structured=self.decision,
@@ -94,7 +105,43 @@ def test_main_agent_requests_current_structured_decision() -> None:
     assert result.tool_calls[0].name == "search_eylf"
     assert provider.response_model is MainDecision
     assert "Never" in provider.messages[0].content
-    assert "search_eylf" in provider.messages[1].content
+    assert "search_eylf" not in provider.messages[1].content
+    assert provider.tools == [make_tool().function_calling_spec()]
+
+
+def test_main_agent_adapts_native_tool_calls_to_internal_decision() -> None:
+    class NativeToolProvider:
+        def generate_structured(self, **_kwargs):
+            return ModelResponse(
+                content="",
+                tool_calls=[
+                    ModelToolCall(
+                        id="call_1",
+                        name="search_eylf",
+                        arguments={"query": "Outcome 4"},
+                    )
+                ],
+            )
+
+    decision = asyncio.run(
+        MainReActAgent(NativeToolProvider()).decide(
+            user_message="查询 Outcome 4。",
+            conversation_context="",
+            observations={},
+            available_tools=[make_tool()],
+            available_workers=[],
+            current_step=0,
+            max_steps=8,
+        )
+    )
+
+    assert decision.tool_calls == [
+        CapabilityCall(
+            name="search_eylf",
+            arguments={"query": "Outcome 4"},
+            result_key="search_eylf_1",
+        )
+    ]
 
 
 def test_main_agent_prompt_contains_observation_and_workers() -> None:

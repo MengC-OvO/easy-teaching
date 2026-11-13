@@ -108,8 +108,10 @@ class UploadedDocumentReader:
             use_ocr=False,
             force_ocr=False,
             force_text=True,
-            header=False,
-            footer=False,
+            # Short observations can be classified entirely as a page header.
+            # Uploaded educator content must be preserved, including marginal text.
+            header=True,
+            footer=True,
             write_images=False,
             embed_images=False,
             show_progress=False,

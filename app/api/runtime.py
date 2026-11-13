@@ -171,6 +171,9 @@ async def build_api_runtime(
         model_provider = ChatCompletionsModelProvider()
         vector_store = ChromaVectorStore()
         lexical_index = SQLiteFTS5KnowledgeIndex(settings.lexical_index_path)
+        if settings.app_env.lower() not in {"local", "test", "development"}:
+            if vector_store.count() == 0 or lexical_index.count() == 0:
+                raise ValueError("Knowledge indexes are empty. Build the vector and lexical indexes before starting production.")
         knowledge_retriever = KnowledgeRetriever(
             embedding_provider=embedding_provider,
             vector_store=vector_store,
@@ -256,6 +259,7 @@ async def build_api_runtime(
 
         redis_client = Redis.from_url(
             settings.redis_url,
+            max_connections=settings.redis_max_connections,
             encoding="utf-8",
             decode_responses=True,
             socket_connect_timeout=3,
@@ -278,6 +282,7 @@ async def build_api_runtime(
 
         redis_progress_client = Redis.from_url(
             settings.redis_progress_url or settings.redis_url,
+            max_connections=settings.redis_max_connections,
             encoding="utf-8",
             decode_responses=True,
             socket_connect_timeout=3,

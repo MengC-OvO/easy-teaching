@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.errors import ConversationSessionBusyError
+from app.config import settings
 from app.services.task_lease import execution_lease, LeaseLostError
 from app.services.approved_actions import ApprovedActionStoreMixin
 from app.schemas.long_memory import (
@@ -179,6 +180,8 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
     async def initialize(self) -> None:
         async with self.engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
+        if settings.app_env.lower() not in {"local", "test", "development"}:
+            return
         async with self.session_factory() as session:
             if await session.get(CentreRecord, SYNTHETIC_CENTRE["centre_id"]) is None:
                 session.add(CentreRecord(**SYNTHETIC_CENTRE))
@@ -222,6 +225,22 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+    async def list_teacher_classes(self, teacher_id: str) -> List[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            rows = await session.execute(
+                select(ClassRecord.class_id, ClassRecord.name)
+                .join(TeacherClassMembershipRecord, TeacherClassMembershipRecord.class_id == ClassRecord.class_id)
+                .join(TeacherRecord, TeacherRecord.teacher_id == TeacherClassMembershipRecord.teacher_id)
+                .join(CentreRecord, CentreRecord.centre_id == ClassRecord.centre_id)
+                .where(TeacherRecord.teacher_id == teacher_id,
+                       TeacherRecord.active.is_(True), ClassRecord.active.is_(True),
+                       CentreRecord.active.is_(True),
+                       TeacherRecord.centre_id == ClassRecord.centre_id,
+                       TeacherClassMembershipRecord.active.is_(True))
+                .order_by(ClassRecord.name, ClassRecord.class_id)
+            )
+            return [dict(row._mapping) for row in rows]
 
     async def healthcheck(self) -> bool:
         async with self.engine.connect() as connection:
@@ -1640,6 +1659,11 @@ class AsyncEasyTeachingStore(ApprovedActionStoreMixin):
         class_record = await session.get(ClassRecord, class_id)
         if class_record is None or not class_record.active:
             raise ValueError("Class is unavailable")
+        teacher = await session.get(TeacherRecord, teacher_id)
+        centre = await session.get(CentreRecord, class_record.centre_id)
+        if (teacher is None or not teacher.active or centre is None or not centre.active
+                or teacher.centre_id != class_record.centre_id):
+            raise ValueError("Teacher is not authorised for the trusted centre scope")
         return class_record.centre_id
 
     async def _active_conversation_run(

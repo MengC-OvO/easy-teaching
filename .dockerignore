@@ -5,6 +5,14 @@
 __pycache__
 *.pyc
 .env
+.env.*
+!.env.example
+private-backups/
+docs/interview-production-budgets.md
+data/exports/
+*.pem
+*.key
+*.log
 .safety-gateway.env
 tmp/
 .agents/

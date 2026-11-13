@@ -230,6 +230,22 @@ class ToolDefinition(BaseModel):
             "input_schema": self.model_input_schema(),
         }
 
+    def function_calling_spec(self) -> Dict[str, Any]:
+        """OpenAI-compatible native function-calling schema.
+
+        Runtime policy fields intentionally stay server-side.  The model needs
+        only the callable name, a description, and argument structure.
+        """
+
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.model_input_schema(),
+            },
+        }
+
     def output_schema(self) -> Dict[str, Any]:
         return self.output_model.model_json_schema()
 

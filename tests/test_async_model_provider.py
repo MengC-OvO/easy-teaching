@@ -154,3 +154,70 @@ def test_async_provider_accepts_one_json_object_wrapped_in_provider_text():
             await provider.client.aclose()
 
     asyncio.run(run())
+
+
+def test_async_provider_sends_native_tools_and_normalizes_tool_calls():
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["tools"] == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_class_context",
+                    "description": "Read class context.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        assert payload["tool_choice"] == "auto"
+        assert payload["parallel_tool_calls"] is True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_class_context",
+                                        "arguments": '{"detail_level":"summary"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+
+    async def run():
+        provider = _provider(handler)
+        try:
+            return await provider.generate_structured(
+                messages=[ModelMessage(role=ModelRole.USER, content="Read context")],
+                response_model=StructuredAnswer,
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_class_context",
+                            "description": "Read class context.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                tool_choice="auto",
+                parallel_tool_calls=True,
+            )
+        finally:
+            await provider.client.aclose()
+
+    response = asyncio.run(run())
+    assert response.content == ""
+    assert response.structured is None
+    assert response.tool_calls[0].name == "get_class_context"
+    assert response.tool_calls[0].arguments == {"detail_level": "summary"}

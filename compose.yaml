@@ -73,6 +73,16 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - easyteaching_local_data:/app/data/local
+      - easyteaching_vector_data:/app/data/chroma
+      - easyteaching_exports:/app/data/exports
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=12)"]
+      interval: 30s
+      timeout: 15s
+      start_period: 60s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -101,6 +111,11 @@ services:
       TASK_EXECUTION_MODE: celery
     volumes:
       - easyteaching_local_data:/app/data/local
+      - easyteaching_vector_data:/app/data/chroma
+      - easyteaching_exports:/app/data/exports
+    stop_grace_period: 16m
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -111,3 +126,5 @@ volumes:
   easyteaching_postgres_data:
   easyteaching_redis_data:
   easyteaching_local_data:
+  easyteaching_vector_data:
+  easyteaching_exports:

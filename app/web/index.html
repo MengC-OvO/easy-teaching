@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="EasyTeaching early-childhood education AI agent" />
+    <meta name="description" content="Planning, records and policy support for early childhood educators." />
     <title>EasyTeaching</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <section class="login-screen" id="login-screen" hidden>
+    <section class="login-screen" id="login-screen">
       <form class="login-card" id="login-form">
         <div class="welcome-mark" aria-hidden="true">E</div>
         <p class="eyebrow">EASYTEACHING</p>
         <h1>Teacher sign in</h1>
-        <p class="login-copy">Use the educator account created in Supabase.</p>
+        <p class="login-copy">Sign in with your educator account to access your workspace.</p>
         <label>
           Email
           <input id="login-email" type="email" autocomplete="email" required />
@@ -49,8 +49,8 @@
         <div class="sidebar-footer">
           <div class="privacy-dot" aria-hidden="true"></div>
           <div>
-            <strong>Privacy-aware drafts</strong>
-            <span>Synthetic or de-identified data only</span>
+            <strong>Your teaching workspace</strong>
+            <span>Use de-identified information</span>
           </div>
         </div>
       </aside>
@@ -67,6 +67,7 @@
             Ready
           </div>
           <div class="user-menu" id="user-menu" hidden>
+            <select id="class-select" aria-label="Select your class" hidden></select>
             <span id="user-email"></span>
             <button id="logout-button" type="button">Sign out</button>
           </div>
@@ -76,25 +77,25 @@
           <div class="welcome" id="welcome">
             <div class="welcome-mark" aria-hidden="true">E</div>
             <p class="eyebrow">AUSTRALIAN EARLY CHILDHOOD EDUCATION</p>
-            <h1>What can we work on?</h1>
+            <h1>Ready for your teaching day</h1>
             <p class="welcome-copy">
-              Create educator-ready drafts, explore EYLF policy, and plan learning experiences with evidence and safety checks built in.
+              Plan activities, prepare records and find policy guidance for your classroom.
             </p>
             <div class="prompt-grid">
               <button class="prompt-card" data-prompt="Create a play-based learning activity for preschool children using natural materials.">
-                <span class="prompt-icon">✦</span>
+                <span class="prompt-icon" aria-hidden="true">01</span>
                 <strong>Plan an activity</strong>
                 <small>Build an EYLF-aligned learning experience</small>
               </button>
               <button class="prompt-card" data-prompt="What does the EYLF say about play-based learning?">
-                <span class="prompt-icon">⌕</span>
+                <span class="prompt-icon" aria-hidden="true">02</span>
                 <strong>Ask about policy</strong>
                 <small>Get an evidence-backed answer with citations</small>
               </button>
               <button class="prompt-card" data-prompt="Draft a learning record from this de-identified observation: [CHILD_1] shared blocks with a peer and explained how they built a bridge.">
-                <span class="prompt-icon">□</span>
+                <span class="prompt-icon" aria-hidden="true">03</span>
                 <strong>Draft a learning record</strong>
-                <small>Turn a safe observation into a reviewable draft</small>
+                <small>Prepare an observation for your review</small>
               </button>
             </div>
           </div>
@@ -114,12 +115,12 @@
             ></textarea>
             <button class="send-button" id="send-button" type="submit" aria-label="Send message">↑</button>
           </form>
-          <p class="composer-note">EasyTeaching creates drafts, not professional medical or legal advice. Review before use.</p>
+          <p class="composer-note">Review content before use. Remove names and identifying details from documents and messages.</p>
         </section>
       </main>
     </div>
 
     <div class="toast" id="toast" role="status"></div>
-    <script src="/assets/app.js?v=20260910-stream-3" defer></script>
+    <script src="/assets/app.js?v=20261113" defer></script>
   </body>
 </html>

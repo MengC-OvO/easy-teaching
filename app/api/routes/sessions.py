@@ -3,7 +3,7 @@
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_runtime
@@ -37,6 +37,10 @@ async def create_session(
     request: Request,
     current_user: Optional[CurrentUser] = Depends(get_current_user),
 ) -> SessionCreateResponse:
+    if current_user and payload.class_id:
+        classes = await get_runtime(request).store.list_teacher_classes(current_user.teacher_id)
+        if payload.class_id not in {item["class_id"] for item in classes}:
+            raise HTTPException(status_code=403, detail="You do not have access to this class.")
     record = await get_runtime(request).store.create_conversation_session(
         session_id=str(uuid4()),
         thread_id=str(uuid4()),

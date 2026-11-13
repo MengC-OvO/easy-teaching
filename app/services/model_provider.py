@@ -19,6 +19,7 @@ from app.services.model_types import (
     ModelRequest,
     ModelResponse,
     ModelRole,
+    ModelToolCall,
     ModelUsage,
 )
 from app.services.retry import RetryPolicy
@@ -60,9 +61,10 @@ class ChatCompletionsModelProvider:
         response = await self._post_with_retry(request, payload, started_at=started_at)
 
         raw_response = self._parse_response_json(response)
-        content = self._extract_content(raw_response)
+        tool_calls = self._extract_tool_calls(raw_response)
+        content = self._extract_content(raw_response, allow_empty=bool(tool_calls))
         structured = None
-        if request.response_model is not None:
+        if request.response_model is not None and not tool_calls:
             structured = self._parse_structured_content(
                 content,
                 request.response_model,
@@ -75,6 +77,7 @@ class ChatCompletionsModelProvider:
             usage=self._extract_usage(raw_response),
             raw_response=raw_response,
             structured=structured,
+            tool_calls=tool_calls,
         )
 
     async def _post_with_retry(
@@ -159,6 +162,9 @@ class ChatCompletionsModelProvider:
         model: Optional[str] = None,
         temperature: float = 0.0,
         timeout_seconds: Optional[float] = None,
+        tools: Optional[list[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+        parallel_tool_calls: Optional[bool] = None,
     ) -> ModelResponse:
         started_at = self._clock()
         attempt_messages = list(messages)
@@ -171,6 +177,9 @@ class ChatCompletionsModelProvider:
                         temperature=temperature,
                         timeout_seconds=timeout_seconds,
                         response_model=response_model,
+                        tools=tools or [],
+                        tool_choice=tool_choice,
+                        parallel_tool_calls=parallel_tool_calls,
                     ),
                     started_at=started_at,
                 )
@@ -236,11 +245,17 @@ class ChatCompletionsModelProvider:
                     ),
                 }
             )
-        return {
+        payload = {
             "model": request.model or self.settings.model_name,
             "messages": messages,
             "temperature": request.temperature,
         }
+        if request.tools:
+            payload["tools"] = request.tools
+            payload["tool_choice"] = request.tool_choice or "auto"
+            if request.parallel_tool_calls is not None:
+                payload["parallel_tool_calls"] = request.parallel_tool_calls
+        return payload
 
     def _structured_repair_instruction(self, error: ModelInvalidResponseError) -> str:
         validation_errors = []
@@ -281,7 +296,12 @@ class ChatCompletionsModelProvider:
             )
         return raw_response
 
-    def _extract_content(self, raw_response: Dict[str, Any]) -> str:
+    def _extract_content(
+        self,
+        raw_response: Dict[str, Any],
+        *,
+        allow_empty: bool = False,
+    ) -> str:
         try:
             content = raw_response["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as error:
@@ -290,12 +310,70 @@ class ChatCompletionsModelProvider:
                 details={"response_keys": list(raw_response.keys())},
             ) from error
 
-        if not isinstance(content, str) or not content:
+        if content is None and allow_empty:
+            return ""
+        if not isinstance(content, str) or (not content and not allow_empty):
             raise ModelInvalidResponseError(
                 "Model provider message content must be a non-empty string.",
                 details={"content_type": type(content).__name__},
             )
         return content
+
+    def _extract_tool_calls(self, raw_response: Dict[str, Any]) -> list[ModelToolCall]:
+        """Normalize OpenAI-compatible native calls at the provider boundary."""
+
+        try:
+            raw_calls = raw_response["choices"][0]["message"].get("tool_calls", [])
+        except (KeyError, IndexError, TypeError) as error:
+            raise ModelInvalidResponseError(
+                "Model provider response did not include choices[0].message.",
+                details={"response_keys": list(raw_response.keys())},
+            ) from error
+        if raw_calls is None:
+            return []
+        if not isinstance(raw_calls, list):
+            raise ModelInvalidResponseError("Model tool_calls must be a list.")
+
+        normalized: list[ModelToolCall] = []
+        for index, raw_call in enumerate(raw_calls):
+            if not isinstance(raw_call, dict) or not isinstance(raw_call.get("function"), dict):
+                raise ModelInvalidResponseError(
+                    "Model tool call must contain a function object.",
+                    details={"index": index},
+                )
+            function = raw_call["function"]
+            arguments_text = function.get("arguments", "{}")
+            if not isinstance(arguments_text, str):
+                raise ModelInvalidResponseError(
+                    "Model tool-call arguments must be a JSON string.",
+                    details={"index": index},
+                )
+            try:
+                arguments = json.loads(arguments_text)
+            except json.JSONDecodeError as error:
+                raise ModelInvalidResponseError(
+                    "Model tool-call arguments were not valid JSON.",
+                    details={"index": index, "arguments": arguments_text[:500]},
+                ) from error
+            if not isinstance(arguments, dict):
+                raise ModelInvalidResponseError(
+                    "Model tool-call arguments must decode to an object.",
+                    details={"index": index},
+                )
+            try:
+                normalized.append(
+                    ModelToolCall(
+                        id=raw_call.get("id"),
+                        name=function.get("name"),
+                        arguments=arguments,
+                    )
+                )
+            except ValidationError as error:
+                raise ModelInvalidResponseError(
+                    "Model tool call did not include a valid function name.",
+                    details={"index": index, "errors": error.errors()},
+                ) from error
+        return normalized
 
     def _extract_finish_reason(self, raw_response: Dict[str, Any]) -> Optional[str]:
         try:

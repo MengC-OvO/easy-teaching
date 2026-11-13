@@ -1,0 +1,3 @@
+# Deployment target: Linux x86_64, Python 3.12, CPU inference.
+-r requirements.txt
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=0955c7e3446326293f48af18fad67872fa31dee5a36a87690eb9e5be8b465be3

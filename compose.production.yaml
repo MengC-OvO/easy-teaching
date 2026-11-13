@@ -1,0 +1,28 @@
+# Use together with compose.yaml. SITE_HOST is the public DNS name, without https://.
+services:
+  api:
+    environment:
+      # The API is reachable only through the private proxy network or host loopback.
+      FORWARDED_ALLOW_IPS: "*"
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_HOST: ${SITE_HOST:?Set SITE_HOST to your public DNS name}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - easyteaching_caddy_data:/data
+      - easyteaching_caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  easyteaching_caddy_data:
+  easyteaching_caddy_config:

@@ -89,6 +89,8 @@ class SupabaseAuthClient:
                 detail="Authentication service is unavailable.",
             ) from error
 
+        if response.status_code == 429 or response.status_code >= 500:
+            raise HTTPException(status_code=503, detail="Authentication service is unavailable.")
         if response.status_code != status.HTTP_200_OK:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -96,7 +98,12 @@ class SupabaseAuthClient:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        payload: dict[str, Any] = response.json()
+        try:
+            payload: dict[str, Any] = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError
+        except ValueError as error:
+            raise HTTPException(status_code=503, detail="Authentication service is unavailable.") from error
         user_id = payload.get("id")
         if not isinstance(user_id, str) or not user_id:
             raise HTTPException(
@@ -129,14 +136,11 @@ def _auth_client() -> SupabaseAuthClient:
 
 
 def _request_token(request: Request) -> Optional[str]:
-    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
-    if cookie_token:
-        return cookie_token
     authorization = request.headers.get("Authorization", "")
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() == "bearer" and token:
         return token
-    return None
+    return request.cookies.get(AUTH_COOKIE_NAME)
 
 
 async def get_current_user(request: Request) -> Optional[CurrentUser]:
@@ -181,6 +185,11 @@ def require_session_owner(
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/classes")
+async def get_authorized_classes(request: Request, user: CurrentUser = Depends(require_authenticated_user)):
+    return {"classes": await request.app.state.runtime.store.list_teacher_classes(user.teacher_id)}
 
 
 @router.get("/config", response_model=AuthConfigResponse)
