@@ -23,6 +23,7 @@ def main():
         unexpected = []
         for dependency in findings["dependencies"]:
             if dependency.get("skip_reason"):
+                print(f"Unaudited: {dependency['name']}: {dependency['skip_reason']}")
                 unexpected.append(f"{dependency['name']}: could not audit")
             for vulnerability in dependency.get("vulns", []):
                 reviewed = dependency["name"] == "chromadb" and vulnerability["id"] in EMBEDDED_CHROMA_EXCEPTIONS
