@@ -1,6 +1,7 @@
 """Reject private documents and generated files from the Git index."""
 
 from pathlib import PurePosixPath
+import argparse
 import re
 import subprocess
 
@@ -31,8 +32,14 @@ def forbidden_path(path: str) -> bool:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--history", action="store_true", help="Also check every commit reachable from HEAD")
+    args = parser.parse_args()
     paths = subprocess.check_output(["git", "ls-files", "-z"]).decode("utf-8").split("\0")
-    blocked = [path for path in paths if path and forbidden_path(path)]
+    if args.history:
+        for commit in subprocess.check_output(["git", "rev-list", "HEAD"]).decode().splitlines():
+            paths.extend(subprocess.check_output(["git", "ls-tree", "-r", "--name-only", "-z", commit]).decode("utf-8").split("\0"))
+    blocked = sorted({path for path in paths if path and forbidden_path(path)})
     if blocked:
         print("Private or generated files must not be committed:")
         print("\n".join(blocked))
