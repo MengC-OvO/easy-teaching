@@ -18,21 +18,25 @@ EMBEDDED_CHROMA_EXCEPTIONS = {
 
 def audit_official_cpu_torch(dependency, folder):
     """Audit a hash-verified official CPU wheel against its upstream release."""
-    if dependency["name"] != "torch" or Version(dependency.get("version", "0")).local != "cpu":
+    if dependency["name"] != "torch":
+        return False
+    installed = distribution("torch")
+    version = installed.version
+    if Version(version).local != "cpu" or dependency.get("version", version) != version:
         return False
     expected = next((line.partition(" @ ")[2] for line in
                      (Path(__file__).resolve().parents[1] / "requirements-linux.in").read_text().splitlines()
                      if line.startswith("torch @ ")), "")
     if not expected.startswith("https://download-r2.pytorch.org/whl/cpu/torch-"):
         return False
-    provenance = json.loads(distribution("torch").read_text("direct_url.json") or "{}")
+    provenance = json.loads(installed.read_text("direct_url.json") or "{}")
     url = urlsplit(expected)
     if unquote(provenance.get("url", "")) != unquote(expected.split("#")[0]):
         return False
     sha = url.fragment.removeprefix("sha256=")
     if len(sha) != 64 or provenance.get("archive_info", {}).get("hashes", {}).get("sha256") != sha:
         return False
-    upstream = Version(dependency["version"]).public
+    upstream = Version(version).public
     requirement = Path(folder) / "cpu-torch.txt"
     report = Path(folder) / "cpu-audit.json"
     requirement.write_text(f"torch=={upstream}\n", encoding="utf-8")
